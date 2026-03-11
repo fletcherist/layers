@@ -1,0 +1,20 @@
+[package]
+name = "layers"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+wgpu = "24"
+winit = "0.30"
+pollster = "0.4"
+bytemuck = { version = "1", features = ["derive"] }
+hound = "3.5"
+cpal = "0.15"
+symphonia = { version = "0.5", features = ["mp3", "wav", "ogg", "flac", "isomp4", "aac"] }
+env_logger = "0.11"
+log = "0.4"
+surrealdb = { version = "3", features = ["kv-rocksdb"] }
+tokio = { version = "1", features = ["rt-multi-thread"] }
+dirs = "6"
+glyphon = "0.8"
+rfd = "0.15"

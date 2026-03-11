@@ -1,0 +1,8 @@
+---
+description: Update CHANGELOG.md after completing tasks
+alwaysApply: true
+---
+
+# Changelog Rule
+
+After completing each task, append a short entry to `CHANGELOG.md` in the project root describing what was done. Each entry should include today's date and a brief description. Format: `- YYYY-MM-DD: description`. keep it really simple. like one line not more.

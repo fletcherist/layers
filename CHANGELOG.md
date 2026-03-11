@@ -1,0 +1,7 @@
+- 2026-03-11: Extract waveform rendering to `src/waveform.rs`; fix blinking by making bar count adaptive to zoom level
+- 2026-03-11: Add master volume fader command to palette with draggable slider and live RMS metering
+- 2026-03-11: Fix browser panel scroll performance (decouple text reshaping from scroll), add smooth scroll, persist browser visibility and expanded folders across sessions
+- 2026-03-11: Recording uses last canvas click position for placement (not button position); add Cmd+R shortcut to toggle recording
+- Add Sample Browser panel: file tree overlay on the left side with folder expand/collapse, scrolling, hover highlights, resizable width, drag-to-canvas for audio files, Cmd+B toggle, Cmd+Shift+A add folder, persistence of root folders and panel width
+- 2026-03-11: Refactor command palette (Cmd+K) business logic into separate `src/palette.rs` module
+- 2026-03-11: Refactor context menu into separate `src/context_menu.rs` module
