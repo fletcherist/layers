@@ -1,6 +1,7 @@
 use crate::settings::{AdaptiveGridSize, FixedGrid, GridMode, Settings};
 use crate::ui::palette::CommandAction;
 use crate::InstanceRaw;
+use crate::WAVEFORM_COLORS;
 
 pub const CTX_MENU_WIDTH: f32 = 220.0;
 pub const CTX_MENU_ITEM_HEIGHT: f32 = 32.0;
@@ -9,9 +10,13 @@ pub const CTX_MENU_SEPARATOR_HEIGHT: f32 = 9.0;
 pub const CTX_MENU_PADDING: f32 = 4.0;
 pub const CTX_MENU_BORDER_RADIUS: f32 = 8.0;
 pub const CTX_MENU_INLINE_HEIGHT: f32 = 28.0;
+pub const CTX_MENU_SWATCH_HEIGHT: f32 = 30.0;
 const INLINE_PILL_PAD_X: f32 = 7.0;
 const INLINE_PILL_GAP: f32 = 2.0;
 const INLINE_PILL_HEIGHT: f32 = 22.0;
+const COLOR_SWATCH_SIZE: f32 = 18.0;
+const COLOR_SWATCH_GAP: f32 = 6.0;
+const COLOR_SWATCH_RING: f32 = 2.0;
 
 #[derive(Clone, Copy, PartialEq)]
 pub enum MenuContext {
@@ -20,6 +25,7 @@ pub enum MenuContext {
     Selection {
         has_waveforms: bool,
         has_effect_region: bool,
+        current_waveform_color: Option<[f32; 4]>,
     },
     ComponentDef,
     ComponentInstance,
@@ -39,11 +45,19 @@ pub struct InlinePill {
     pub active: bool,
 }
 
+#[derive(Clone)]
+pub struct ColorSwatch {
+    pub color: [f32; 4],
+    pub action: CommandAction,
+    pub active: bool,
+}
+
 pub enum ContextMenuEntry {
     Item(ContextMenuItem),
     Separator,
     SectionHeader(&'static str),
     InlineGroup(Vec<InlinePill>),
+    ColorSwatchGroup(Vec<ColorSwatch>),
 }
 
 pub struct ContextMenu {
@@ -190,6 +204,7 @@ fn entry_height(entry: &ContextMenuEntry, scale: f32) -> f32 {
         ContextMenuEntry::Separator => CTX_MENU_SEPARATOR_HEIGHT * scale,
         ContextMenuEntry::SectionHeader(_) => CTX_MENU_SECTION_HEIGHT * scale,
         ContextMenuEntry::InlineGroup(_) => CTX_MENU_INLINE_HEIGHT * scale,
+        ContextMenuEntry::ColorSwatchGroup(_) => CTX_MENU_SWATCH_HEIGHT * scale,
     }
 }
 
@@ -248,6 +263,7 @@ impl ContextMenu {
             MenuContext::Selection {
                 has_waveforms,
                 has_effect_region,
+                current_waveform_color,
             } => {
                 let mut entries = vec![];
                 if has_effect_region {
@@ -265,6 +281,30 @@ impl ContextMenu {
                         action: CommandAction::RenameSample,
                         checked: false,
                     }));
+                    entries.push(ContextMenuEntry::Separator);
+                }
+                if has_waveforms {
+                    fn colors_match(a: [f32; 4], b: [f32; 4]) -> bool {
+                        (a[0] - b[0]).abs() < 0.01
+                            && (a[1] - b[1]).abs() < 0.01
+                            && (a[2] - b[2]).abs() < 0.01
+                    }
+                    let all_swatches: Vec<ColorSwatch> = WAVEFORM_COLORS
+                        .iter()
+                        .enumerate()
+                        .map(|(i, &c)| ColorSwatch {
+                            color: c,
+                            action: CommandAction::SetSampleColor(i),
+                            active: current_waveform_color
+                                .map_or(false, |cur| colors_match(cur, c)),
+                        })
+                        .collect();
+                    let mid = all_swatches.len() / 2;
+                    let row2 = all_swatches[mid..].to_vec();
+                    let row1 = all_swatches[..mid].to_vec();
+                    entries.push(ContextMenuEntry::SectionHeader("Color:"));
+                    entries.push(ContextMenuEntry::ColorSwatchGroup(row1));
+                    entries.push(ContextMenuEntry::ColorSwatchGroup(row2));
                     entries.push(ContextMenuEntry::Separator);
                 }
                 entries.push(ContextMenuEntry::Item(ContextMenuItem {
@@ -404,12 +444,28 @@ impl ContextMenu {
                         }
                         return None;
                     }
+                    ContextMenuEntry::ColorSwatchGroup(swatches) => {
+                        let sz = COLOR_SWATCH_SIZE * scale;
+                        let swatch_y = y + (rh - sz) * 0.5;
+                        if pos[1] < swatch_y || pos[1] > swatch_y + sz {
+                            return None;
+                        }
+                        let mut px = rp[0] + pad + 4.0 * scale;
+                        for (si, _) in swatches.iter().enumerate() {
+                            if pos[0] >= px && pos[0] < px + sz {
+                                return Some(item_i + si);
+                            }
+                            px += sz + COLOR_SWATCH_GAP * scale;
+                        }
+                        return None;
+                    }
                     _ => return None,
                 }
             }
             match entry {
                 ContextMenuEntry::Item(_) => item_i += 1,
                 ContextMenuEntry::InlineGroup(pills) => item_i += pills.len(),
+                ContextMenuEntry::ColorSwatchGroup(swatches) => item_i += swatches.len(),
                 _ => {}
             }
             y += rh;
@@ -431,6 +487,14 @@ impl ContextMenu {
                     for pill in pills {
                         if item_i == index {
                             return Some(pill.action);
+                        }
+                        item_i += 1;
+                    }
+                }
+                ContextMenuEntry::ColorSwatchGroup(swatches) => {
+                    for swatch in swatches {
+                        if item_i == index {
+                            return Some(swatch.action);
                         }
                         item_i += 1;
                     }
@@ -528,6 +592,32 @@ impl ContextMenu {
                         px += pw + INLINE_PILL_GAP * scale;
                     }
                     item_i += pills.len();
+                }
+                ContextMenuEntry::ColorSwatchGroup(swatches) => {
+                    let sz = COLOR_SWATCH_SIZE * scale;
+                    let r = sz * 0.5;
+                    let swatch_y = y + (rh - sz) * 0.5;
+                    let mut px = pos[0] + pad + 4.0 * scale;
+                    for (si, swatch) in swatches.iter().enumerate() {
+                        let is_hovered = Some(item_i + si) == self.hovered_index;
+                        if swatch.active || is_hovered {
+                            let ring = COLOR_SWATCH_RING * scale;
+                            out.push(InstanceRaw {
+                                position: [px - ring, swatch_y - ring],
+                                size: [sz + ring * 2.0, sz + ring * 2.0],
+                                color: [1.0, 1.0, 1.0, if swatch.active { 0.9 } else { 0.4 }],
+                                border_radius: r + ring,
+                            });
+                        }
+                        out.push(InstanceRaw {
+                            position: [px, swatch_y],
+                            size: [sz, sz],
+                            color: swatch.color,
+                            border_radius: r,
+                        });
+                        px += sz + COLOR_SWATCH_GAP * scale;
+                    }
+                    item_i += swatches.len();
                 }
             }
             y += rh;

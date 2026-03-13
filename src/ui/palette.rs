@@ -45,6 +45,9 @@ pub enum CommandAction {
     SetSampleVolume,
     SplitSample,
     AddLoopArea,
+    AddEffectsArea,
+    AddRenderArea,
+    SetSampleColor(usize),
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -194,6 +197,20 @@ pub const COMMANDS: &[CommandDef] = &[
         shortcut: "⌘L",
         category: "Audio",
         action: CommandAction::AddLoopArea,
+        dev_only: false,
+    },
+    CommandDef {
+        name: "Add Effects Area",
+        shortcut: "",
+        category: "Audio",
+        action: CommandAction::AddEffectsArea,
+        dev_only: false,
+    },
+    CommandDef {
+        name: "Add Render Area",
+        shortcut: "",
+        category: "Audio",
+        action: CommandAction::AddRenderArea,
         dev_only: false,
     },
     CommandDef {

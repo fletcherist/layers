@@ -14,7 +14,7 @@ use crate::effects;
 use crate::settings::{Settings, SettingsWindow};
 use crate::ui::context_menu::{
     ContextMenu, ContextMenuEntry, CTX_MENU_INLINE_HEIGHT, CTX_MENU_ITEM_HEIGHT, CTX_MENU_PADDING,
-    CTX_MENU_SECTION_HEIGHT, CTX_MENU_SEPARATOR_HEIGHT, CTX_MENU_WIDTH,
+    CTX_MENU_SECTION_HEIGHT, CTX_MENU_SEPARATOR_HEIGHT, CTX_MENU_SWATCH_HEIGHT, CTX_MENU_WIDTH,
 };
 use crate::ui::palette::{
     CommandPalette, PaletteMode, PaletteRow, COMMANDS, PALETTE_INPUT_HEIGHT, PALETTE_ITEM_HEIGHT,
@@ -730,17 +730,6 @@ impl Gpu {
             is_recording,
         ));
 
-        overlay_instances.extend(TransportPanel::build_fx_button_instances(
-            w,
-            h,
-            self.scale_factor,
-        ));
-
-        overlay_instances.extend(TransportPanel::build_export_button_instances(
-            w,
-            h,
-            self.scale_factor,
-        ));
 
         overlay_instances.extend(toast_manager.build_instances(w, h, self.scale_factor));
 
@@ -1223,6 +1212,9 @@ impl Gpu {
                             px += pw + pill_gap;
                         }
                         y += row_h;
+                    }
+                    ContextMenuEntry::ColorSwatchGroup(_) => {
+                        y += CTX_MENU_SWATCH_HEIGHT * scale;
                     }
                 }
             }

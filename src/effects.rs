@@ -177,6 +177,7 @@ pub struct PluginSlot {
     pub plugin_path: PathBuf,
     pub bypass: bool,
     pub instance: Arc<Mutex<Option<Box<dyn PluginInstance>>>>,
+    pub gui: Arc<Mutex<Option<vst3_gui::Vst3Gui>>>,
 }
 
 pub struct PluginRegistryEntry {
@@ -302,11 +303,14 @@ pub const PLUGIN_LABEL_COLOR: [f32; 4] = [0.55, 0.28, 0.85, 0.55];
 pub const PLUGIN_LABEL_W: f32 = 80.0;
 pub const PLUGIN_LABEL_H: f32 = 16.0;
 pub const PLUGIN_LABEL_GAP: f32 = 4.0;
+pub const PLUGIN_CLOSE_SIZE: f32 = 14.0;
 
 #[allow(dead_code)]
 pub struct PluginLabelRect {
     pub position: [f32; 2],
     pub size: [f32; 2],
+    pub close_position: [f32; 2],
+    pub close_size: [f32; 2],
     pub region_idx: usize,
     pub slot_idx: usize,
 }
@@ -317,6 +321,7 @@ pub fn plugin_label_rects(region: &EffectRegion, camera: &Camera) -> Vec<PluginL
     let y = region.position[1] + 4.0 / camera.zoom;
     let pill_w = PLUGIN_LABEL_W / camera.zoom;
     let gap = PLUGIN_LABEL_GAP / camera.zoom;
+    let close_sz = PLUGIN_CLOSE_SIZE / camera.zoom;
 
     region
         .chain
@@ -324,10 +329,14 @@ pub fn plugin_label_rects(region: &EffectRegion, camera: &Camera) -> Vec<PluginL
         .enumerate()
         .map(|(i, _slot)| {
             let x = start_x + i as f32 * (pill_w + gap);
+            let close_x = x + pill_w - close_sz - 1.0 / camera.zoom;
+            let close_y = y + (badge_h - close_sz) * 0.5;
             PluginLabelRect {
                 position: [x, y],
                 size: [pill_w, badge_h],
-                region_idx: 0, // caller should patch this
+                close_position: [close_x, close_y],
+                close_size: [close_sz, close_sz],
+                region_idx: 0,
                 slot_idx: i,
             }
         })
@@ -394,6 +403,13 @@ pub fn build_effect_region_instances(
             size: rect.size,
             color: PLUGIN_LABEL_COLOR,
             border_radius: rect.size[1] * 0.5,
+        });
+        // Close button circle on the right edge
+        out.push(InstanceRaw {
+            position: rect.close_position,
+            size: rect.close_size,
+            color: [0.45, 0.20, 0.75, 0.60],
+            border_radius: rect.close_size[1] * 0.5,
         });
     }
 

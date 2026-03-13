@@ -296,6 +296,7 @@ enum EffectRegionHover {
     CornerSW(usize),
     CornerSE(usize),
     PluginLabel(usize, usize),
+    PluginClose(usize, usize),
 }
 
 #[derive(Clone)]
@@ -326,12 +327,23 @@ impl Clipboard {
 // Constants
 // ---------------------------------------------------------------------------
 
-const WAVEFORM_COLORS: &[[f32; 4]] = &[
-    [0.40, 0.72, 1.00, 1.0],
-    [1.00, 0.55, 0.35, 1.0],
-    [0.45, 0.92, 0.55, 1.0],
-    [0.92, 0.45, 0.80, 1.0],
-    [1.00, 0.85, 0.32, 1.0],
+pub(crate) const WAVEFORM_COLORS: &[[f32; 4]] = &[
+    [1.00, 0.24, 0.19, 1.0], // red
+    [1.00, 0.42, 0.24, 1.0], // orange-red
+    [1.00, 0.58, 0.00, 1.0], // orange
+    [1.00, 0.72, 0.00, 1.0], // amber
+    [1.00, 0.84, 0.00, 1.0], // yellow
+    [0.78, 0.90, 0.19, 1.0], // lime
+    [0.30, 0.85, 0.39, 1.0], // green
+    [0.19, 0.84, 0.55, 1.0], // mint
+    [0.19, 0.78, 0.71, 1.0], // teal
+    [0.19, 0.78, 0.90, 1.0], // cyan
+    [0.35, 0.78, 0.98, 1.0], // sky blue
+    [0.00, 0.48, 1.00, 1.0], // blue
+    [0.35, 0.34, 0.84, 1.0], // indigo
+    [0.69, 0.32, 0.87, 1.0], // violet
+    [0.88, 0.25, 0.63, 1.0], // magenta
+    [1.00, 0.18, 0.33, 1.0], // rose
 ];
 
 const SEL_COLOR: [f32; 4] = [0.35, 0.65, 1.0, 0.8];
@@ -1310,37 +1322,41 @@ impl App {
         self.project_dirty = true;
     }
 
-    fn new() -> Self {
+    fn new(skip_load: bool) -> Self {
         let base_path = default_base_path();
         println!("  Storage: {}", base_path.display());
 
         let mut storage = Storage::open(&base_path);
 
-        // Try to open the most recently updated project, or create a temp one
         let mut opened_project = false;
         if let Some(s) = &mut storage {
-            let projects = s.list_projects();
-            if !projects.is_empty() {
-                println!("  Projects:");
-                for p in &projects {
-                    println!("    - {} ({})", p.name, p.path);
-                }
-                // Open the most recently updated project
-                let best = projects.iter().max_by_key(|p| p.updated_at).unwrap();
-                let path = PathBuf::from(&best.path);
-                if path.exists() && s.open_project(&path) {
-                    opened_project = true;
-                }
-            }
-            if !opened_project {
-                // Create a fresh temp project
+            if skip_load {
                 if s.create_temp_project().is_some() {
                     opened_project = true;
+                }
+                println!("  Starting with empty project (--empty)");
+            } else {
+                let projects = s.list_projects();
+                if !projects.is_empty() {
+                    println!("  Projects:");
+                    for p in &projects {
+                        println!("    - {} ({})", p.name, p.path);
+                    }
+                    let best = projects.iter().max_by_key(|p| p.updated_at).unwrap();
+                    let path = PathBuf::from(&best.path);
+                    if path.exists() && s.open_project(&path) {
+                        opened_project = true;
+                    }
+                }
+                if !opened_project {
+                    if s.create_temp_project().is_some() {
+                        opened_project = true;
+                    }
                 }
             }
         }
 
-        let loaded = if opened_project {
+        let loaded = if opened_project && !skip_load {
             storage.as_ref().and_then(|s| s.load_project_state())
         } else {
             None
@@ -1552,6 +1568,7 @@ impl App {
                         plugin_path: std::path::PathBuf::new(),
                         bypass: false,
                         instance: Arc::new(std::sync::Mutex::new(None)),
+                        gui: Arc::new(std::sync::Mutex::new(None)),
                     });
                 }
                 region
@@ -2016,6 +2033,7 @@ impl App {
                         plugin_path: std::path::PathBuf::new(),
                         bypass: false,
                         instance: Arc::new(std::sync::Mutex::new(None)),
+                        gui: Arc::new(std::sync::Mutex::new(None)),
                     });
                 }
                 region
@@ -2208,6 +2226,7 @@ impl App {
                         plugin_path: std::path::PathBuf::new(),
                         bypass: false,
                         instance: Arc::new(std::sync::Mutex::new(instance)),
+                        gui: Arc::new(std::sync::Mutex::new(None)),
                     });
                 }
                 region
@@ -2347,6 +2366,62 @@ impl App {
         self.selected.clear();
         self.selected.push(HitTarget::LoopRegion(idx));
         self.sync_loop_region();
+        self.mark_dirty();
+        self.request_redraw();
+    }
+
+    fn add_effect_area(&mut self) {
+        self.push_undo();
+        let (pos, size) = if let Some(sa) = self.select_area.take() {
+            let x0 = snap_to_grid(sa.position[0], &self.settings, self.camera.zoom, self.bpm);
+            let x1 = snap_to_grid(
+                sa.position[0] + sa.size[0],
+                &self.settings,
+                self.camera.zoom,
+                self.bpm,
+            );
+            ([x0, sa.position[1]], [x1 - x0, sa.size[1]])
+        } else {
+            let (sw, sh, _) = self.screen_info();
+            let center = self.camera.screen_to_world([sw * 0.5, sh * 0.5]);
+            let w = effects::EFFECT_REGION_DEFAULT_WIDTH;
+            let h = effects::EFFECT_REGION_DEFAULT_HEIGHT;
+            ([center[0] - w * 0.5, center[1] - h * 0.5], [w, h])
+        };
+        self.effect_regions
+            .push(effects::EffectRegion::new(pos, size));
+        let idx = self.effect_regions.len() - 1;
+        self.selected.clear();
+        self.selected.push(HitTarget::EffectRegion(idx));
+        self.mark_dirty();
+        self.request_redraw();
+    }
+
+    fn add_render_area(&mut self) {
+        self.push_undo();
+        let (pos, size) = if let Some(sa) = self.select_area.take() {
+            let x0 = snap_to_grid(sa.position[0], &self.settings, self.camera.zoom, self.bpm);
+            let x1 = snap_to_grid(
+                sa.position[0] + sa.size[0],
+                &self.settings,
+                self.camera.zoom,
+                self.bpm,
+            );
+            ([x0, sa.position[1]], [x1 - x0, sa.size[1]])
+        } else {
+            let (sw, sh, _) = self.screen_info();
+            let center = self.camera.screen_to_world([sw * 0.5, sh * 0.5]);
+            let w = EXPORT_REGION_DEFAULT_WIDTH;
+            let h = EXPORT_REGION_DEFAULT_HEIGHT;
+            ([center[0] - w * 0.5, center[1] - h * 0.5], [w, h])
+        };
+        self.export_regions.push(ExportRegion {
+            position: pos,
+            size,
+        });
+        let idx = self.export_regions.len() - 1;
+        self.selected.clear();
+        self.selected.push(HitTarget::ExportRegion(idx));
         self.mark_dirty();
         self.request_redraw();
     }
@@ -2564,7 +2639,7 @@ impl App {
                 match &self.drag {
                     DragState::Panning { .. } => CursorIcon::Grabbing,
                     DragState::MovingSelection { .. } => CursorIcon::Grabbing,
-                    DragState::Selecting { .. } => CursorIcon::Crosshair,
+                    DragState::Selecting { .. } => CursorIcon::Default,
                     DragState::DraggingFromBrowser { .. } => CursorIcon::Grabbing,
                     DragState::DraggingPlugin { .. } => CursorIcon::Grabbing,
                     DragState::ResizingBrowser => CursorIcon::EwResize,
@@ -2625,7 +2700,8 @@ impl App {
                                     | EffectRegionHover::CornerSE(_) => CursorIcon::NwseResize,
                                     EffectRegionHover::CornerNE(_)
                                     | EffectRegionHover::CornerSW(_) => CursorIcon::NeswResize,
-                                    EffectRegionHover::PluginLabel(_, _) => CursorIcon::Pointer,
+                                    EffectRegionHover::PluginLabel(_, _)
+                                    | EffectRegionHover::PluginClose(_, _) => CursorIcon::Pointer,
                                     EffectRegionHover::None => match self.export_hover {
                                         ExportHover::CornerNW(_) | ExportHover::CornerSE(_) => {
                                             CursorIcon::NwseResize
@@ -2688,7 +2764,7 @@ impl App {
 
         self.component_def_hover = ComponentDefHover::None;
         for (ci, def) in self.components.iter().enumerate() {
-            let handle_sz = 12.0 / self.camera.zoom;
+            let handle_sz = 24.0 / self.camera.zoom;
             let hs = handle_sz * 0.5;
             let p = def.position;
             let s = def.size;
@@ -2713,8 +2789,14 @@ impl App {
 
         self.effect_region_hover = EffectRegionHover::None;
         'er_hover: for (i, er) in self.effect_regions.iter().enumerate() {
-            // Check plugin label pills first
             let labels = effects::plugin_label_rects(er, &self.camera);
+            // Check close buttons before pill body
+            for rect in &labels {
+                if point_in_rect(world, rect.close_position, rect.close_size) {
+                    self.effect_region_hover = EffectRegionHover::PluginClose(i, rect.slot_idx);
+                    break 'er_hover;
+                }
+            }
             for rect in &labels {
                 if point_in_rect(world, rect.position, rect.size) {
                     self.effect_region_hover = EffectRegionHover::PluginLabel(i, rect.slot_idx);
@@ -2722,7 +2804,7 @@ impl App {
                 }
             }
 
-            let handle_sz = 12.0 / self.camera.zoom;
+            let handle_sz = 24.0 / self.camera.zoom;
             let hs = handle_sz * 0.5;
             let p = er.position;
             let s = er.size;
@@ -2747,7 +2829,7 @@ impl App {
 
         self.export_hover = ExportHover::None;
         for (i, er) in self.export_regions.iter().enumerate() {
-            let handle_sz = 12.0 / self.camera.zoom;
+            let handle_sz = 24.0 / self.camera.zoom;
             let hs = handle_sz * 0.5;
             let p = er.position;
             let s = er.size;
@@ -2785,7 +2867,7 @@ impl App {
             if !lr.enabled {
                 continue;
             }
-            let handle_sz = 12.0 / self.camera.zoom;
+            let handle_sz = 24.0 / self.camera.zoom;
             let hs = handle_sz * 0.5;
             let p = lr.position;
             let s = lr.size;
@@ -3208,6 +3290,21 @@ impl App {
             }
             CommandAction::AddLoopArea => {
                 self.add_loop_area();
+            }
+            CommandAction::AddEffectsArea => {
+                self.add_effect_area();
+            }
+            CommandAction::AddRenderArea => {
+                self.add_render_area();
+            }
+            CommandAction::SetSampleColor(idx) => {
+                if let Some(&color) = WAVEFORM_COLORS.get(idx) {
+                    for target in self.selected.clone() {
+                        if let HitTarget::Waveform(i) = target {
+                            self.waveforms[i].color = color;
+                        }
+                    }
+                }
             }
         }
         self.request_redraw();
@@ -3975,7 +4072,7 @@ impl App {
                     sample_rate: loaded.sample_rate,
                     filename,
                 }),
-                position: [world[0] - loaded.width * 0.5, world[1] - height * 0.5],
+                position: [snap_to_grid(world[0], &self.settings, self.camera.zoom, self.bpm), world[1] - height * 0.5],
                 size: [loaded.width, height],
                 color: WAVEFORM_COLORS[color_idx],
                 border_radius: 8.0,
@@ -4064,6 +4161,15 @@ impl App {
         let sample_rate = 48000.0;
         let block_size = 512;
 
+        // Look up plugin path from registry
+        let plugin_path = self
+            .plugin_registry
+            .plugins
+            .iter()
+            .find(|e| e.info.unique_id == plugin_id)
+            .map(|e| e.info.path.clone())
+            .unwrap_or_default();
+
         if let Some(instance) = self
             .plugin_registry
             .load_plugin(plugin_id, sample_rate, block_size)
@@ -4071,9 +4177,10 @@ impl App {
             let slot = effects::PluginSlot {
                 plugin_id: plugin_id.to_string(),
                 plugin_name: plugin_name.to_string(),
-                plugin_path: std::path::PathBuf::new(),
+                plugin_path,
                 bypass: false,
                 instance: Arc::new(std::sync::Mutex::new(Some(instance))),
+                gui: Arc::new(std::sync::Mutex::new(None)),
             };
             if region_idx < self.effect_regions.len() {
                 self.effect_regions[region_idx].chain.push(slot);
@@ -4349,6 +4456,7 @@ impl ApplicationHandler for App {
                         cm.update_hover(self.mouse_pos, sw, sh, scale);
                     }
                     self.request_redraw();
+                    return;
                 }
 
                 {
@@ -4474,9 +4582,11 @@ impl ApplicationHandler for App {
                     let world = self.camera.screen_to_world(self.mouse_pos);
                     if region_idx < self.effect_regions.len() {
                         let min_size = 40.0;
-                        let x0 = anchor[0].min(world[0]);
+                        let snapped_wx = snap_to_grid(world[0], &self.settings, self.camera.zoom, self.bpm);
+                        let snapped_ax = snap_to_grid(anchor[0], &self.settings, self.camera.zoom, self.bpm);
+                        let x0 = snapped_ax.min(snapped_wx);
                         let y0 = anchor[1].min(world[1]);
-                        let x1 = anchor[0].max(world[0]);
+                        let x1 = snapped_ax.max(snapped_wx);
                         let y1 = anchor[1].max(world[1]);
                         self.effect_regions[region_idx].position = [x0, y0];
                         self.effect_regions[region_idx].size =
@@ -4638,6 +4748,9 @@ impl ApplicationHandler for App {
             WindowEvent::MouseInput { state, button, .. } => match button {
                 MouseButton::Middle => match state {
                     ElementState::Pressed => {
+                        if self.context_menu.is_some() {
+                            return;
+                        }
                         self.command_palette = None;
                         self.drag = DragState::Panning {
                             start_mouse: self.mouse_pos,
@@ -4717,9 +4830,17 @@ impl ApplicationHandler for App {
                                     .selected
                                     .iter()
                                     .any(|t| matches!(t, HitTarget::EffectRegion(_)));
+                                let current_waveform_color = self
+                                    .selected
+                                    .iter()
+                                    .find_map(|t| match t {
+                                        HitTarget::Waveform(i) => Some(self.waveforms[*i].color),
+                                        _ => None,
+                                    });
                                 MenuContext::Selection {
                                     has_waveforms,
                                     has_effect_region,
+                                    current_waveform_color,
                                 }
                             }
                             None => {
@@ -5061,48 +5182,6 @@ impl ApplicationHandler for App {
                             }
                         }
 
-                        // --- Export button click ---
-                        {
-                            let (sw, sh, scale) = self.screen_info();
-                            if TransportPanel::hit_export_button(self.mouse_pos, sw, sh, scale) {
-                                let center = self.camera.screen_to_world([sw * 0.5, sh * 0.5]);
-                                self.export_regions.push(ExportRegion {
-                                    position: [
-                                        center[0] - EXPORT_REGION_DEFAULT_WIDTH * 0.5,
-                                        center[1] - EXPORT_REGION_DEFAULT_HEIGHT * 0.5,
-                                    ],
-                                    size: [
-                                        EXPORT_REGION_DEFAULT_WIDTH,
-                                        EXPORT_REGION_DEFAULT_HEIGHT,
-                                    ],
-                                });
-                                println!("  Created export region");
-                                self.request_redraw();
-                                return;
-                            }
-                        }
-
-                        // --- FX button click ---
-                        {
-                            let (sw, sh, scale) = self.screen_info();
-                            if TransportPanel::hit_fx_button(self.mouse_pos, sw, sh, scale) {
-                                let center = self.camera.screen_to_world([sw * 0.5, sh * 0.5]);
-                                let w = effects::EFFECT_REGION_DEFAULT_WIDTH;
-                                let h = effects::EFFECT_REGION_DEFAULT_HEIGHT;
-                                self.push_undo();
-                                self.effect_regions.push(effects::EffectRegion::new(
-                                    [center[0] - w * 0.5, center[1] - h * 0.5],
-                                    [w, h],
-                                ));
-                                let idx = self.effect_regions.len() - 1;
-                                self.selected.clear();
-                                self.selected.push(HitTarget::EffectRegion(idx));
-                                println!("  Created effect region");
-                                self.request_redraw();
-                                return;
-                            }
-                        }
-
                         // --- transport panel click ---
                         {
                             let (sw, sh, scale) = self.screen_info();
@@ -5135,7 +5214,7 @@ impl ApplicationHandler for App {
 
                         // --- component def corner resize ---
                         {
-                            let handle_sz = 12.0 / self.camera.zoom;
+                            let handle_sz = 24.0 / self.camera.zoom;
                             let mut corner_hit: Option<(usize, [f32; 2], bool)> = None;
                             for (ci, def) in self.components.iter().enumerate() {
                                 let p = def.position;
@@ -5171,13 +5250,39 @@ impl ApplicationHandler for App {
                             }
                         }
 
-                        // --- plugin label click (opens parameter editor) ---
+                        // --- plugin label click (opens native GUI or parameter editor) ---
                         if let EffectRegionHover::PluginLabel(ri, si) = self.effect_region_hover {
                             if ri < self.effect_regions.len()
                                 && si < self.effect_regions[ri].chain.len()
                             {
                                 let slot = &self.effect_regions[ri].chain[si];
                                 let name = slot.plugin_name.clone();
+                                let uid = slot.plugin_id.clone();
+                                let path = slot.plugin_path.to_string_lossy().to_string();
+
+                                // Try to open native VST3 GUI first
+                                if !path.is_empty() {
+                                    // Check if GUI is already open
+                                    let already_open = slot.gui.lock()
+                                        .ok()
+                                        .map_or(false, |g| g.as_ref().map_or(false, |gui| gui.is_open()));
+
+                                    if !already_open {
+                                        if let Some(gui) = vst3_gui::Vst3Gui::open(&path, &uid, &name) {
+                                            println!("  Opened native GUI for '{}'", name);
+                                            if let Ok(mut g) = slot.gui.lock() {
+                                                *g = Some(gui);
+                                            }
+                                            self.request_redraw();
+                                            return;
+                                        }
+                                    } else {
+                                        // GUI already open, do nothing
+                                        return;
+                                    }
+                                }
+
+                                // Fallback: open parameter editor
                                 let mut params = Vec::new();
                                 if let Ok(guard) = slot.instance.lock() {
                                     if let Some(inst) = guard.as_ref() {
@@ -5211,7 +5316,7 @@ impl ApplicationHandler for App {
 
                         // --- effect region corner resize ---
                         {
-                            let handle_sz = 12.0 / self.camera.zoom;
+                            let handle_sz = 24.0 / self.camera.zoom;
                             let mut corner_hit: Option<(usize, [f32; 2], bool)> = None;
                             for (i, er) in self.effect_regions.iter().enumerate() {
                                 let p = er.position;
@@ -5249,7 +5354,7 @@ impl ApplicationHandler for App {
 
                         // --- export region corner resize ---
                         {
-                            let handle_sz = 12.0 / self.camera.zoom;
+                            let handle_sz = 24.0 / self.camera.zoom;
                             let mut corner_hit: Option<(usize, [f32; 2], bool)> = None;
                             for (i, er) in self.export_regions.iter().enumerate() {
                                 let p = er.position;
@@ -5300,7 +5405,7 @@ impl ApplicationHandler for App {
 
                         // --- loop region corner resize ---
                         {
-                            let handle_sz = 12.0 / self.camera.zoom;
+                            let handle_sz = 24.0 / self.camera.zoom;
                             let mut corner_hit: Option<(usize, [f32; 2], bool)> = None;
                             for (i, lr) in self.loop_regions.iter().enumerate() {
                                 if !lr.enabled {
@@ -5631,12 +5736,7 @@ impl ApplicationHandler for App {
                             let min_sz = 5.0 / self.camera.zoom;
                             if rs[0] < min_sz && rs[1] < min_sz {
                                 self.selected.clear();
-                                let snapped_x = if self.settings.grid_enabled && self.settings.snap_to_grid {
-                                    let bar_spacing = pixels_per_beat(self.bpm) * 4.0;
-                                    (current[0] / bar_spacing).round() * bar_spacing
-                                } else {
-                                    current[0]
-                                };
+                                let snapped_x = snap_to_grid(current[0], &self.settings, self.camera.zoom, self.bpm);
                                 if let Some(engine) = &self.audio_engine {
                                     let secs = snapped_x as f64 / PIXELS_PER_SECOND as f64;
                                     engine.seek_to_seconds(secs);
@@ -6130,7 +6230,7 @@ impl ApplicationHandler for App {
 
             // --- scroll = pan, Cmd+scroll = zoom, pinch = zoom ---
             WindowEvent::MouseWheel { delta, .. } => {
-                if self.command_palette.is_some() {
+                if self.command_palette.is_some() || self.context_menu.is_some() {
                     return;
                 }
                 let is_pixel_delta = matches!(delta, MouseScrollDelta::PixelDelta(_));
@@ -6167,7 +6267,7 @@ impl ApplicationHandler for App {
             }
 
             WindowEvent::PinchGesture { delta, .. } => {
-                if self.command_palette.is_some() {
+                if self.command_palette.is_some() || self.context_menu.is_some() {
                     return;
                 }
                 let factor = (1.0 + delta as f32).clamp(0.5, 2.0);
@@ -6460,9 +6560,11 @@ fn main() {
     println!("║  Cmd + Shift + A    →  Add folder           ║");
     println!("╚════════════════════════════════════════════╝");
 
+    let skip_load = std::env::args().any(|a| a == "--empty");
+
     let event_loop = EventLoop::new().unwrap();
 
-    let mut app = App::new();
+    let mut app = App::new(skip_load);
     let menu_state = build_app_menu(app.storage.as_ref());
     app.menu_state = Some(menu_state);
 
