@@ -1,3 +1,5 @@
+- Clip volume fader: up/down arrow keys adjust by 1 dB; vertical layout, dB scale (-inf to +6 dB), gain boost (16.3k loc)
+- Non-destructive clip edge resizing by dragging left/right edges with grid snap and min-width enforcement (16.1k loc)
 - Refactor area corner-resize into shared helpers; component resize now snaps to grid (15.8k loc)
 - Add scroll support for command palette rows (keyboard and mouse wheel) (15.7k loc)
 - Add close "x" button on plugin label pills to remove plugins from effect chain (15.6k loc)

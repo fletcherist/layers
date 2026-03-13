@@ -24,6 +24,7 @@ pub struct StoredWaveform {
     pub sample_rate: u32,
     pub volume: f32,
     pub disabled: bool,
+    pub sample_offset_px: f32,
 }
 
 #[derive(Clone, SurrealValue)]

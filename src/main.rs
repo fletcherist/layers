@@ -19,6 +19,7 @@ use settings::GridMode;
 use ui::context_menu::{ContextMenu, MenuContext};
 use ui::palette::{
     CommandAction, CommandPalette, PaletteMode, PaletteRow, COMMANDS, PALETTE_ITEM_HEIGHT,
+    db_to_gain, gain_to_db,
 };
 pub(crate) use ui::waveform::WaveformView;
 use ui::waveform::{AudioData, WaveformPeaks, WaveformVertex};
@@ -279,6 +280,13 @@ enum DragState {
         anchor: [f32; 2],
         nwse: bool,
     },
+    ResizingWaveform {
+        waveform_idx: usize,
+        is_left_edge: bool,
+        initial_position_x: f32,
+        initial_size_w: f32,
+        initial_offset_px: f32,
+    },
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -297,6 +305,13 @@ enum EffectRegionHover {
     CornerNE(usize),
     CornerSW(usize),
     CornerSE(usize),
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum WaveformEdgeHover {
+    None,
+    LeftEdge(usize),
+    RightEdge(usize),
 }
 
 #[derive(Clone)]
@@ -481,12 +496,43 @@ fn compute_resize(
     ([x0, y0], [(x1 - x0).max(min_size), (y1 - y0).max(min_size)])
 }
 
+const WAVEFORM_MIN_WIDTH_PX: f32 = 10.0;
+
+fn full_audio_width_px(wf: &WaveformView) -> f32 {
+    let total_samples = wf.audio.left_samples.len().max(wf.audio.right_samples.len());
+    total_samples as f32 / (wf.audio.sample_rate as f32 / audio::PIXELS_PER_SECOND)
+}
+
 fn canonical_rect(a: [f32; 2], b: [f32; 2]) -> ([f32; 2], [f32; 2]) {
     let x = a[0].min(b[0]);
     let y = a[1].min(b[1]);
     let w = (a[0] - b[0]).abs();
     let h = (a[1] - b[1]).abs();
     ([x, y], [w, h])
+}
+
+const WAVEFORM_EDGE_HIT_PX: f32 = 5.0;
+
+fn hit_test_waveform_edge(
+    waveforms: &[WaveformView],
+    world_pos: [f32; 2],
+    camera: &Camera,
+) -> WaveformEdgeHover {
+    let margin = WAVEFORM_EDGE_HIT_PX / camera.zoom;
+    for (i, wf) in waveforms.iter().enumerate().rev() {
+        if world_pos[1] < wf.position[1] || world_pos[1] > wf.position[1] + wf.size[1] {
+            continue;
+        }
+        let left_edge = wf.position[0];
+        let right_edge = wf.position[0] + wf.size[0];
+        if (world_pos[0] - left_edge).abs() < margin {
+            return WaveformEdgeHover::LeftEdge(i);
+        }
+        if (world_pos[0] - right_edge).abs() < margin {
+            return WaveformEdgeHover::RightEdge(i);
+        }
+    }
+    WaveformEdgeHover::None
 }
 
 /// Returns (waveform_index, is_fade_in) if the cursor is over a fade handle.
@@ -1351,6 +1397,7 @@ struct App {
     hovered: Option<HitTarget>,
     fade_handle_hovered: Option<(usize, bool)>,
     fade_curve_hovered: Option<(usize, bool)>,
+    waveform_edge_hover: WaveformEdgeHover,
     file_hovering: bool,
     modifiers: ModifiersState,
     command_palette: Option<CommandPalette>,
@@ -1517,6 +1564,7 @@ impl App {
                         fade_out_curve: sw.fade_out_curve,
                         volume: if sw.volume > 0.0 { sw.volume } else { 1.0 },
                         disabled: sw.disabled,
+                        sample_offset_px: sw.sample_offset_px,
                     })
                     .collect();
 
@@ -1758,6 +1806,7 @@ impl App {
             hovered: None,
             fade_handle_hovered: None,
             fade_curve_hovered: None,
+            waveform_edge_hover: WaveformEdgeHover::None,
             file_hovering: false,
             modifiers: ModifiersState::empty(),
             command_palette: None,
@@ -1883,6 +1932,7 @@ impl App {
                     sample_rate: wf.audio.sample_rate,
                     volume: wf.volume,
                     disabled: wf.disabled,
+                    sample_offset_px: wf.sample_offset_px,
                 })
                 .collect();
 
@@ -2137,6 +2187,7 @@ impl App {
                 fade_out_curve: sw.fade_out_curve,
                 volume: if sw.volume > 0.0 { sw.volume } else { 1.0 },
                 disabled: sw.disabled,
+                sample_offset_px: sw.sample_offset_px,
             })
             .collect();
 
@@ -2511,6 +2562,7 @@ impl App {
             let mut fade_in_curves: Vec<f32> = Vec::new();
             let mut fade_out_curves: Vec<f32> = Vec::new();
             let mut volumes: Vec<f32> = Vec::new();
+            let mut sample_offsets: Vec<f32> = Vec::new();
 
             for (i, wf) in self.waveforms.iter().enumerate() {
                 if wf.disabled || i >= self.audio_clips.len() {
@@ -2524,6 +2576,7 @@ impl App {
                 fade_in_curves.push(wf.fade_in_curve);
                 fade_out_curves.push(wf.fade_out_curve);
                 volumes.push(wf.volume);
+                sample_offsets.push(wf.sample_offset_px);
             }
 
             // Add virtual clips for each component instance
@@ -2554,13 +2607,14 @@ impl App {
                             fade_in_curves.push(wf.fade_in_curve);
                             fade_out_curves.push(wf.fade_out_curve);
                             volumes.push(wf.volume);
+                            sample_offsets.push(wf.sample_offset_px);
                         }
                     }
                 }
             }
 
             let owned_clips: Vec<AudioClipData> = clips.iter().map(|c| (*c).clone()).collect();
-            engine.update_clips(&positions, &sizes, &owned_clips, &fade_ins, &fade_outs, &fade_in_curves, &fade_out_curves, &volumes);
+            engine.update_clips(&positions, &sizes, &owned_clips, &fade_ins, &fade_outs, &fade_in_curves, &fade_out_curves, &volumes, &sample_offsets);
 
             let regions: Vec<audio::AudioEffectRegion> = self
                 .effect_regions
@@ -2754,6 +2808,7 @@ impl App {
                 fade_out_curve: 0.0,
                 volume: 1.0,
                 disabled: false,
+                sample_offset_px: 0.0,
             });
             self.audio_clips.push(AudioClipData {
                 samples: Arc::new(Vec::new()),
@@ -2829,7 +2884,7 @@ impl App {
                 buffer: clip.samples.clone(),
                 source_sample_rate: clip.sample_rate,
                 start_time_secs: wf.position[0] as f64 / audio::PIXELS_PER_SECOND as f64,
-                duration_secs: clip.duration_secs as f64,
+                duration_secs: wf.size[0] as f64 / audio::PIXELS_PER_SECOND as f64,
                 position_y: wf.position[1],
                 height: wf.size[1],
                 fade_in_secs: (wf.fade_in_px / audio::PIXELS_PER_SECOND) as f64,
@@ -2837,6 +2892,7 @@ impl App {
                 fade_in_curve: wf.fade_in_curve,
                 fade_out_curve: wf.fade_out_curve,
                 volume: wf.volume,
+                buffer_offset_secs: wf.sample_offset_px as f64 / audio::PIXELS_PER_SECOND as f64,
             })
             .collect();
 
@@ -2896,6 +2952,7 @@ impl App {
                         }
                     }
                     DragState::DraggingFade { .. } => CursorIcon::EwResize,
+                    DragState::ResizingWaveform { .. } => CursorIcon::EwResize,
                     DragState::DraggingFadeCurve { .. } => CursorIcon::NsResize,
                     DragState::ResizingComponentDef { nwse, .. } => {
                         if *nwse {
@@ -2920,6 +2977,8 @@ impl App {
                     }
                     DragState::None => {
                         if self.sample_browser.visible && self.sample_browser.resize_hovered {
+                            CursorIcon::EwResize
+                        } else if self.waveform_edge_hover != WaveformEdgeHover::None {
                             CursorIcon::EwResize
                         } else if self.fade_handle_hovered.is_some() {
                             CursorIcon::EwResize
@@ -2986,8 +3045,13 @@ impl App {
             }
         }
         let world = self.camera.screen_to_world(self.mouse_pos);
-        self.fade_handle_hovered = hit_test_fade_handle(&self.waveforms, world, &self.camera);
-        self.fade_curve_hovered = if self.fade_handle_hovered.is_none() {
+        self.waveform_edge_hover = hit_test_waveform_edge(&self.waveforms, world, &self.camera);
+        self.fade_handle_hovered = if self.waveform_edge_hover == WaveformEdgeHover::None {
+            hit_test_fade_handle(&self.waveforms, world, &self.camera)
+        } else {
+            None
+        };
+        self.fade_curve_hovered = if self.fade_handle_hovered.is_none() && self.waveform_edge_hover == WaveformEdgeHover::None {
             hit_test_fade_curve_dot(&self.waveforms, world, &self.camera)
         } else {
             None
@@ -3574,6 +3638,7 @@ impl App {
 
         let pos = self.waveforms[wf_idx].position;
         let size = self.waveforms[wf_idx].size;
+        let offset_px = self.waveforms[wf_idx].sample_offset_px;
         let split_x = snap_to_grid(world[0], &self.settings, self.camera.zoom, self.bpm);
         let t = ((split_x - pos[0]) / size[0]).clamp(0.01, 0.99);
 
@@ -3584,9 +3649,22 @@ impl App {
             return;
         }
 
-        let split_mono = (t * total_mono as f32) as usize;
-        let split_left = (t * audio.left_samples.len() as f32) as usize;
-        let split_right = (t * audio.right_samples.len() as f32) as usize;
+        let full_w = full_audio_width_px(&self.waveforms[wf_idx]);
+        let vis_start_frac = if full_w > 0.0 { offset_px / full_w } else { 0.0 };
+        let vis_end_frac = if full_w > 0.0 { (offset_px + size[0]) / full_w } else { 1.0 };
+        let split_frac = vis_start_frac + t * (vis_end_frac - vis_start_frac);
+
+        let vis_start_mono = (vis_start_frac * total_mono as f32) as usize;
+        let vis_end_mono = (vis_end_frac * total_mono as f32).min(total_mono as f32) as usize;
+        let split_mono = (split_frac * total_mono as f32) as usize;
+
+        let vis_start_left = (vis_start_frac * audio.left_samples.len() as f32) as usize;
+        let vis_end_left = (vis_end_frac * audio.left_samples.len() as f32).min(audio.left_samples.len() as f32) as usize;
+        let split_left = (split_frac * audio.left_samples.len() as f32) as usize;
+
+        let vis_start_right = (vis_start_frac * audio.right_samples.len() as f32) as usize;
+        let vis_end_right = (vis_end_frac * audio.right_samples.len() as f32).min(audio.right_samples.len() as f32) as usize;
+        let split_right = (split_frac * audio.right_samples.len() as f32) as usize;
 
         let orig_color = self.waveforms[wf_idx].color;
         let orig_border_radius = self.waveforms[wf_idx].border_radius;
@@ -3601,12 +3679,12 @@ impl App {
         let sample_rate = audio.sample_rate;
         let filename = audio.filename.clone();
 
-        let left_mono: Vec<f32> = mono_samples[..split_mono].to_vec();
-        let right_mono: Vec<f32> = mono_samples[split_mono..].to_vec();
-        let left_l: Vec<f32> = audio.left_samples[..split_left].to_vec();
-        let left_r: Vec<f32> = audio.right_samples[..split_right].to_vec();
-        let right_l: Vec<f32> = audio.left_samples[split_left..].to_vec();
-        let right_r: Vec<f32> = audio.right_samples[split_right..].to_vec();
+        let left_mono: Vec<f32> = mono_samples[vis_start_mono..split_mono].to_vec();
+        let right_mono: Vec<f32> = mono_samples[split_mono..vis_end_mono].to_vec();
+        let left_l: Vec<f32> = audio.left_samples[vis_start_left..split_left].to_vec();
+        let left_r: Vec<f32> = audio.right_samples[vis_start_right..split_right].to_vec();
+        let right_l: Vec<f32> = audio.left_samples[split_left..vis_end_left].to_vec();
+        let right_r: Vec<f32> = audio.right_samples[split_right..vis_end_right].to_vec();
 
         let left_duration = left_mono.len() as f32 / sample_rate as f32;
         let right_duration = right_mono.len() as f32 / sample_rate as f32;
@@ -3638,6 +3716,7 @@ impl App {
             fade_out_curve: 0.0,
             volume: orig_volume,
             disabled: false,
+            sample_offset_px: 0.0,
         };
 
         let right_clip = AudioClipData {
@@ -3665,6 +3744,7 @@ impl App {
             fade_out_curve: orig_fade_out_curve,
             volume: orig_volume,
             disabled: false,
+            sample_offset_px: 0.0,
         };
 
         self.waveforms[wf_idx] = left_waveform;
@@ -4358,6 +4438,7 @@ impl App {
                 fade_out_curve: 0.0,
                 volume: 1.0,
                 disabled: false,
+                sample_offset_px: 0.0,
             });
             self.audio_clips.push(AudioClipData {
                 samples: loaded.samples,
@@ -4765,6 +4846,7 @@ impl ApplicationHandler for App {
                             fade_out_curve: 0.0,
                             volume: 1.0,
                             disabled: false,
+                            sample_offset_px: 0.0,
                         });
                         self.audio_clips.push(AudioClipData {
                             samples: loaded.samples,
@@ -4874,11 +4956,11 @@ impl ApplicationHandler for App {
                         .map_or(false, |p| p.fader_dragging);
                     if is_dragging_fader {
                         let (sw, sh, scale) = self.screen_info();
-                        let mx = self.mouse_pos[0];
                         if let Some(p) = &mut self.command_palette {
-                            p.fader_drag(mx, sw, sh, scale);
                             match p.mode {
                                 PaletteMode::SampleVolumeFader => {
+                                    let my = self.mouse_pos[1];
+                                    p.sample_fader_drag(my, sw, sh, scale);
                                     if let Some(idx) = p.fader_target_waveform {
                                         if idx < self.waveforms.len() {
                                             self.waveforms[idx].volume = p.fader_value;
@@ -4887,6 +4969,8 @@ impl ApplicationHandler for App {
                                     }
                                 }
                                 _ => {
+                                    let mx = self.mouse_pos[0];
+                                    p.fader_drag(mx, sw, sh, scale);
                                     if let Some(engine) = &self.audio_engine {
                                         engine.set_master_volume(p.fader_value);
                                     }
@@ -4990,6 +5074,75 @@ impl ApplicationHandler for App {
                         self.loop_regions[region_idx].size = size;
                     }
                     self.sync_loop_region();
+                    self.mark_dirty();
+                    self.request_redraw();
+                    return;
+                }
+
+                // Resizing waveform edge
+                if let DragState::ResizingWaveform {
+                    waveform_idx,
+                    is_left_edge,
+                    initial_position_x,
+                    initial_size_w,
+                    initial_offset_px,
+                } = self.drag
+                {
+                    let world = self.camera.screen_to_world(self.mouse_pos);
+                    if let Some(wf) = self.waveforms.get(waveform_idx) {
+                        let full_w = full_audio_width_px(wf);
+                        let min_w = if self.settings.grid_enabled && self.settings.snap_to_grid {
+                            grid_spacing_for_settings(&self.settings, self.camera.zoom, self.bpm)
+                        } else {
+                            WAVEFORM_MIN_WIDTH_PX
+                        };
+
+                        if is_left_edge {
+                            let snapped_x = snap_to_grid(world[0], &self.settings, self.camera.zoom, self.bpm);
+                            let dx = snapped_x - initial_position_x;
+                            let mut new_offset = initial_offset_px + dx;
+                            let mut new_size_w = initial_size_w - dx;
+                            let mut new_pos_x = snapped_x;
+
+                            if new_offset < 0.0 {
+                                new_offset = 0.0;
+                                new_size_w = initial_size_w + initial_offset_px;
+                                new_pos_x = initial_position_x - initial_offset_px;
+                            }
+                            if new_size_w < min_w {
+                                new_size_w = min_w;
+                                new_offset = initial_offset_px + initial_size_w - min_w;
+                                new_pos_x = initial_position_x + initial_size_w - min_w;
+                            }
+                            if new_offset + new_size_w > full_w {
+                                new_size_w = full_w - new_offset;
+                            }
+
+                            let wf = &mut self.waveforms[waveform_idx];
+                            wf.position[0] = new_pos_x;
+                            wf.size[0] = new_size_w;
+                            wf.sample_offset_px = new_offset;
+                            wf.fade_in_px = wf.fade_in_px.min(new_size_w * 0.5);
+                            wf.fade_out_px = wf.fade_out_px.min(new_size_w * 0.5);
+                        } else {
+                            let snapped_right = snap_to_grid(world[0], &self.settings, self.camera.zoom, self.bpm);
+                            let mut new_size_w = snapped_right - self.waveforms[waveform_idx].position[0];
+                            let cur_offset = self.waveforms[waveform_idx].sample_offset_px;
+
+                            if new_size_w < min_w {
+                                new_size_w = min_w;
+                            }
+                            if cur_offset + new_size_w > full_w {
+                                new_size_w = full_w - cur_offset;
+                            }
+
+                            let wf = &mut self.waveforms[waveform_idx];
+                            wf.size[0] = new_size_w;
+                            wf.fade_in_px = wf.fade_in_px.min(new_size_w * 0.5);
+                            wf.fade_out_px = wf.fade_out_px.min(new_size_w * 0.5);
+                        }
+                    }
+                    self.sync_audio_clips();
                     self.mark_dirty();
                     self.request_redraw();
                     return;
@@ -5647,6 +5800,28 @@ impl ApplicationHandler for App {
                             }
                         }
 
+                        // --- waveform edge resize ---
+                        match hit_test_waveform_edge(&self.waveforms, world, &self.camera) {
+                            WaveformEdgeHover::LeftEdge(i) | WaveformEdgeHover::RightEdge(i) => {
+                                let is_left = matches!(self.waveform_edge_hover, WaveformEdgeHover::LeftEdge(_));
+                                let pos_x = self.waveforms[i].position[0];
+                                let size_w = self.waveforms[i].size[0];
+                                let offset = self.waveforms[i].sample_offset_px;
+                                self.push_undo();
+                                self.drag = DragState::ResizingWaveform {
+                                    waveform_idx: i,
+                                    is_left_edge: is_left,
+                                    initial_position_x: pos_x,
+                                    initial_size_w: size_w,
+                                    initial_offset_px: offset,
+                                };
+                                self.update_cursor();
+                                self.request_redraw();
+                                return;
+                            }
+                            WaveformEdgeHover::None => {}
+                        }
+
                         // --- fade handle drag ---
                         if let Some((wf_idx, is_fade_in)) =
                             hit_test_fade_handle(&self.waveforms, world, &self.camera)
@@ -6160,15 +6335,59 @@ impl ApplicationHandler for App {
 
                     // --- command palette input ---
                     if self.command_palette.is_some() {
-                        let is_fader = self
+                        let fader_mode = self
                             .command_palette
                             .as_ref()
-                            .map_or(false, |p| p.mode == PaletteMode::VolumeFader);
+                            .map(|p| p.mode);
 
-                        if is_fader {
+                        if matches!(fader_mode, Some(PaletteMode::VolumeFader)) {
                             match &event.logical_key {
                                 Key::Named(NamedKey::Escape) | Key::Named(NamedKey::Enter) => {
                                     self.command_palette = None;
+                                    self.request_redraw();
+                                    return;
+                                }
+                                _ => {
+                                    self.request_redraw();
+                                    return;
+                                }
+                            }
+                        }
+
+                        if matches!(fader_mode, Some(PaletteMode::SampleVolumeFader)) {
+                            match &event.logical_key {
+                                Key::Named(NamedKey::Escape) | Key::Named(NamedKey::Enter) => {
+                                    self.command_palette = None;
+                                    self.request_redraw();
+                                    return;
+                                }
+                                Key::Named(NamedKey::ArrowUp) => {
+                                    if let Some(p) = &mut self.command_palette {
+                                        let db = if p.fader_value < 0.00001 { -60.0 } else { gain_to_db(p.fader_value) };
+                                        let new_db = (db + 1.0).min(6.0);
+                                        p.fader_value = db_to_gain(new_db);
+                                        if let Some(idx) = p.fader_target_waveform {
+                                            if idx < self.waveforms.len() {
+                                                self.waveforms[idx].volume = p.fader_value;
+                                                self.sync_audio_clips();
+                                            }
+                                        }
+                                    }
+                                    self.request_redraw();
+                                    return;
+                                }
+                                Key::Named(NamedKey::ArrowDown) => {
+                                    if let Some(p) = &mut self.command_palette {
+                                        let db = if p.fader_value < 0.00001 { -60.0 } else { gain_to_db(p.fader_value) };
+                                        let new_db = db - 1.0;
+                                        p.fader_value = if new_db <= -60.0 { 0.0 } else { db_to_gain(new_db) };
+                                        if let Some(idx) = p.fader_target_waveform {
+                                            if idx < self.waveforms.len() {
+                                                self.waveforms[idx].volume = p.fader_value;
+                                                self.sync_audio_clips();
+                                            }
+                                        }
+                                    }
                                     self.request_redraw();
                                     return;
                                 }

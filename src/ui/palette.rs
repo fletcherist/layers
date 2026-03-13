@@ -58,11 +58,42 @@ pub enum PaletteMode {
 }
 
 pub const FADER_CONTENT_HEIGHT: f32 = 90.0;
+pub const SAMPLE_FADER_CONTENT_HEIGHT: f32 = 220.0;
 const FADER_TRACK_H: f32 = 6.0;
 const FADER_THUMB_R: f32 = 9.0;
 const FADER_MARGIN_TOP: f32 = 36.0;
 const RMS_BAR_H: f32 = 4.0;
 const RMS_MARGIN_TOP: f32 = 22.0;
+
+const SAMPLE_FADER_TRACK_W: f32 = 6.0;
+const SAMPLE_FADER_TRACK_H: f32 = 180.0;
+const DB_MIN: f32 = -60.0;
+const DB_MAX: f32 = 6.0;
+const DB_RANGE: f32 = DB_MAX - DB_MIN; // 66.0
+
+pub fn gain_to_db(gain: f32) -> f32 {
+    if gain < 0.00001 { -100.0 } else { 20.0 * gain.log10() }
+}
+
+pub fn db_to_gain(db: f32) -> f32 {
+    10.0f32.powf(db / 20.0)
+}
+
+pub fn fader_pos_to_gain(pos: f32) -> f32 {
+    if pos <= 0.005 {
+        return 0.0;
+    }
+    let db = DB_MIN + pos.clamp(0.0, 1.0) * DB_RANGE;
+    db_to_gain(db)
+}
+
+pub fn gain_to_fader_pos(gain: f32) -> f32 {
+    if gain < 0.00001 {
+        return 0.0;
+    }
+    let db = gain_to_db(gain);
+    ((db - DB_MIN) / DB_RANGE).clamp(0.0, 1.0)
+}
 
 pub struct CommandDef {
     pub name: &'static str,
@@ -393,10 +424,10 @@ impl CommandPalette {
     }
 
     pub fn content_height(&self, scale: f32) -> f32 {
-        if matches!(
-            self.mode,
-            PaletteMode::VolumeFader | PaletteMode::SampleVolumeFader
-        ) {
+        if self.mode == PaletteMode::SampleVolumeFader {
+            return SAMPLE_FADER_CONTENT_HEIGHT * scale;
+        }
+        if self.mode == PaletteMode::VolumeFader {
             return FADER_CONTENT_HEIGHT * scale;
         }
         let mut h = 0.0;
@@ -479,6 +510,15 @@ impl CommandPalette {
         )
     }
 
+    pub fn sample_fader_track_rect(&self, screen_w: f32, screen_h: f32, scale: f32) -> ([f32; 2], [f32; 2]) {
+        let (ppos, psize) = self.palette_rect(screen_w, screen_h, scale);
+        let track_w = SAMPLE_FADER_TRACK_W * scale;
+        let track_h = SAMPLE_FADER_TRACK_H * scale;
+        let cx = ppos[0] + psize[0] * 0.5 - track_w * 0.5;
+        let top = ppos[1] + PALETTE_INPUT_HEIGHT * scale + 1.0 * scale + 20.0 * scale;
+        ([cx, top], [track_w, track_h])
+    }
+
     pub fn fader_hit_test(
         &self,
         mouse: [f32; 2],
@@ -492,6 +532,16 @@ impl CommandPalette {
         ) {
             return false;
         }
+        if self.mode == PaletteMode::SampleVolumeFader {
+            let (tp, ts) = self.sample_fader_track_rect(screen_w, screen_h, scale);
+            let fader_pos = gain_to_fader_pos(self.fader_value);
+            let thumb_cx = tp[0] + ts[0] * 0.5;
+            let thumb_y = tp[1] + ts[1] * (1.0 - fader_pos);
+            let r = FADER_THUMB_R * scale + 4.0 * scale;
+            let dx = mouse[0] - thumb_cx;
+            let dy = mouse[1] - thumb_y;
+            return dx * dx + dy * dy <= r * r;
+        }
         let (tp, ts) = self.fader_track_rect(screen_w, screen_h, scale);
         let thumb_x = tp[0] + self.fader_value * ts[0];
         let thumb_cy = tp[1] + ts[1] * 0.5;
@@ -504,6 +554,12 @@ impl CommandPalette {
     pub fn fader_drag(&mut self, mouse_x: f32, screen_w: f32, screen_h: f32, scale: f32) {
         let (tp, ts) = self.fader_track_rect(screen_w, screen_h, scale);
         self.fader_value = ((mouse_x - tp[0]) / ts[0]).clamp(0.0, 1.0);
+    }
+
+    pub fn sample_fader_drag(&mut self, mouse_y: f32, screen_w: f32, screen_h: f32, scale: f32) {
+        let (tp, ts) = self.sample_fader_track_rect(screen_w, screen_h, scale);
+        let pos = 1.0 - ((mouse_y - tp[1]) / ts[1]).clamp(0.0, 1.0);
+        self.fader_value = fader_pos_to_gain(pos);
     }
 
     pub fn build_instances(&self, screen_w: f32, screen_h: f32, scale: f32) -> Vec<InstanceRaw> {
@@ -606,10 +662,9 @@ impl CommandPalette {
                     }
                 }
             }
-            PaletteMode::VolumeFader | PaletteMode::SampleVolumeFader => {
+            PaletteMode::VolumeFader => {
                 let (tp, ts) = self.fader_track_rect(screen_w, screen_h, scale);
 
-                // Fader track background
                 out.push(InstanceRaw {
                     position: tp,
                     size: ts,
@@ -617,7 +672,6 @@ impl CommandPalette {
                     border_radius: ts[1] * 0.5,
                 });
 
-                // Fader filled portion
                 let fill_w = self.fader_value * ts[0];
                 if fill_w > 0.5 {
                     out.push(InstanceRaw {
@@ -628,7 +682,6 @@ impl CommandPalette {
                     });
                 }
 
-                // Thumb
                 let thumb_r = FADER_THUMB_R * scale;
                 let thumb_x = tp[0] + fill_w - thumb_r;
                 let thumb_cy = tp[1] + ts[1] * 0.5 - thumb_r;
@@ -639,35 +692,83 @@ impl CommandPalette {
                     border_radius: thumb_r,
                 });
 
-                if self.mode == PaletteMode::VolumeFader {
-                    // RMS bar background
-                    let rms_y = tp[1] + ts[1] + RMS_MARGIN_TOP * scale;
-                    let rms_h = RMS_BAR_H * scale;
+                let rms_y = tp[1] + ts[1] + RMS_MARGIN_TOP * scale;
+                let rms_h = RMS_BAR_H * scale;
+                out.push(InstanceRaw {
+                    position: [tp[0], rms_y],
+                    size: [ts[0], rms_h],
+                    color: [0.20, 0.20, 0.25, 1.0],
+                    border_radius: rms_h * 0.5,
+                });
+
+                let rms_w = (self.fader_rms.clamp(0.0, 1.0) * ts[0]).max(0.0);
+                if rms_w > 0.5 {
+                    let rms_color = if self.fader_rms > 0.8 {
+                        [1.0, 0.35, 0.30, 1.0]
+                    } else if self.fader_rms > 0.5 {
+                        [1.0, 0.85, 0.32, 1.0]
+                    } else {
+                        [0.45, 0.92, 0.55, 1.0]
+                    };
                     out.push(InstanceRaw {
                         position: [tp[0], rms_y],
-                        size: [ts[0], rms_h],
-                        color: [0.20, 0.20, 0.25, 1.0],
+                        size: [rms_w, rms_h],
+                        color: rms_color,
                         border_radius: rms_h * 0.5,
                     });
-
-                    // RMS bar filled
-                    let rms_w = (self.fader_rms.clamp(0.0, 1.0) * ts[0]).max(0.0);
-                    if rms_w > 0.5 {
-                        let rms_color = if self.fader_rms > 0.8 {
-                            [1.0, 0.35, 0.30, 1.0]
-                        } else if self.fader_rms > 0.5 {
-                            [1.0, 0.85, 0.32, 1.0]
-                        } else {
-                            [0.45, 0.92, 0.55, 1.0]
-                        };
-                        out.push(InstanceRaw {
-                            position: [tp[0], rms_y],
-                            size: [rms_w, rms_h],
-                            color: rms_color,
-                            border_radius: rms_h * 0.5,
-                        });
-                    }
                 }
+            }
+            PaletteMode::SampleVolumeFader => {
+                let (tp, ts) = self.sample_fader_track_rect(screen_w, screen_h, scale);
+                let fader_pos = gain_to_fader_pos(self.fader_value);
+
+                // Vertical track background
+                out.push(InstanceRaw {
+                    position: tp,
+                    size: ts,
+                    color: [0.25, 0.25, 0.30, 1.0],
+                    border_radius: ts[0] * 0.5,
+                });
+
+                // Filled portion from bottom up
+                let fill_h = fader_pos * ts[1];
+                if fill_h > 0.5 {
+                    let fill_y = tp[1] + ts[1] - fill_h;
+                    out.push(InstanceRaw {
+                        position: [tp[0], fill_y],
+                        size: [ts[0], fill_h],
+                        color: [0.40, 0.72, 1.00, 1.0],
+                        border_radius: ts[0] * 0.5,
+                    });
+                }
+
+                // 0 dB reference line
+                let zero_db_pos = (0.0 - DB_MIN) / DB_RANGE;
+                let zero_db_y = tp[1] + ts[1] * (1.0 - zero_db_pos);
+                let mark_w = 20.0 * scale;
+                out.push(InstanceRaw {
+                    position: [tp[0] - mark_w * 0.5 + ts[0] * 0.5 - mark_w * 0.5, zero_db_y - 0.5 * scale],
+                    size: [mark_w, 1.0 * scale],
+                    color: [1.0, 1.0, 1.0, 0.15],
+                    border_radius: 0.0,
+                });
+                out.push(InstanceRaw {
+                    position: [tp[0] + ts[0] + 4.0 * scale, zero_db_y - 0.5 * scale],
+                    size: [mark_w, 1.0 * scale],
+                    color: [1.0, 1.0, 1.0, 0.15],
+                    border_radius: 0.0,
+                });
+
+                // Thumb
+                let thumb_r = FADER_THUMB_R * scale;
+                let thumb_y = tp[1] + ts[1] * (1.0 - fader_pos) - thumb_r;
+                let thumb_cx = tp[0] + ts[0] * 0.5 - thumb_r;
+                out.push(InstanceRaw {
+                    position: [thumb_cx, thumb_y],
+                    size: [thumb_r * 2.0, thumb_r * 2.0],
+                    color: [1.0, 1.0, 1.0, 0.95],
+                    border_radius: thumb_r,
+                });
             }
         }
 

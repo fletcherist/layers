@@ -18,7 +18,7 @@ use crate::ui::context_menu::{
 };
 use crate::ui::palette::{
     CommandPalette, PaletteMode, PaletteRow, COMMANDS, PALETTE_INPUT_HEIGHT, PALETTE_ITEM_HEIGHT,
-    PALETTE_PADDING, PALETTE_SECTION_HEIGHT, PALETTE_WIDTH,
+    PALETTE_PADDING, PALETTE_SECTION_HEIGHT, PALETTE_WIDTH, gain_to_db,
 };
 use crate::ui::plugin_editor;
 use crate::ui::toast;
@@ -950,11 +950,19 @@ impl Gpu {
                     ));
                 }
                 PaletteMode::SampleVolumeFader => {
-                    let pad = 16.0 * scale;
+                    let (tp, ts) = palette.sample_fader_track_rect(w, h, scale);
 
-                    let pct = (palette.fader_value * 100.0) as u32;
-                    let vol_text = format!("{}%", pct);
-                    let label_font = 13.0 * scale;
+                    let vol_text = if palette.fader_value < 0.00001 {
+                        "Mute".to_string()
+                    } else {
+                        let db = gain_to_db(palette.fader_value);
+                        if db >= 0.0 {
+                            format!("+{:.1} dB", db)
+                        } else {
+                            format!("{:.1} dB", db)
+                        }
+                    };
+                    let label_font = 14.0 * scale;
                     let label_line = 18.0 * scale;
                     let mut buf = TextBuffer::new(
                         &mut self.font_system,
@@ -973,10 +981,66 @@ impl Gpu {
                     );
                     buf.shape_until_scroll(&mut self.font_system, false);
                     text_buffers.push(buf);
+                    let text_x = tp[0] + ts[0] + 30.0 * scale;
+                    let text_y = list_top + 14.0 * scale;
                     text_meta.push((
-                        ppos[0] + margin + pad,
-                        list_top + 14.0 * scale,
+                        text_x,
+                        text_y,
                         TextColor::rgba(200, 200, 210, 220),
+                        full_bounds,
+                    ));
+
+                    // 0 dB tick label next to the reference line
+                    let zero_db_pos = 60.0 / 66.0;
+                    let zero_db_y = tp[1] + ts[1] * (1.0 - zero_db_pos);
+                    let tick_font = 10.0 * scale;
+                    let tick_line = 14.0 * scale;
+                    let mut buf = TextBuffer::new(
+                        &mut self.font_system,
+                        Metrics::new(tick_font, tick_line),
+                    );
+                    buf.set_size(
+                        &mut self.font_system,
+                        Some(60.0 * scale),
+                        Some(16.0 * scale),
+                    );
+                    buf.set_text(
+                        &mut self.font_system,
+                        "0 dB",
+                        Attrs::new().family(Family::SansSerif),
+                        Shaping::Advanced,
+                    );
+                    buf.shape_until_scroll(&mut self.font_system, false);
+                    text_buffers.push(buf);
+                    text_meta.push((
+                        tp[0] + ts[0] + 28.0 * scale,
+                        zero_db_y - tick_line * 0.5,
+                        TextColor::rgba(140, 140, 150, 160),
+                        full_bounds,
+                    ));
+
+                    // +6 dB label at top
+                    let mut buf = TextBuffer::new(
+                        &mut self.font_system,
+                        Metrics::new(tick_font, tick_line),
+                    );
+                    buf.set_size(
+                        &mut self.font_system,
+                        Some(60.0 * scale),
+                        Some(16.0 * scale),
+                    );
+                    buf.set_text(
+                        &mut self.font_system,
+                        "+6",
+                        Attrs::new().family(Family::SansSerif),
+                        Shaping::Advanced,
+                    );
+                    buf.shape_until_scroll(&mut self.font_system, false);
+                    text_buffers.push(buf);
+                    text_meta.push((
+                        tp[0] + ts[0] + 28.0 * scale,
+                        tp[1] - tick_line * 0.5,
+                        TextColor::rgba(120, 120, 130, 130),
                         full_bounds,
                     ));
                 }

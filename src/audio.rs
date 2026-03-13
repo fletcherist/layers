@@ -39,6 +39,7 @@ struct PlaybackClip {
     fade_in_curve: f32,
     fade_out_curve: f32,
     volume: f32,
+    buffer_offset_secs: f64,
 }
 
 pub struct AudioEffectRegion {
@@ -191,7 +192,7 @@ impl AudioEngine {
                         for clip in clips_guard.iter() {
                             let clip_t = t - clip.start_time_secs;
                             if clip_t >= 0.0 && clip_t < clip.duration_secs {
-                                let source_idx = (clip_t * clip.source_sample_rate as f64) as usize;
+                                let source_idx = ((clip_t + clip.buffer_offset_secs) * clip.source_sample_rate as f64) as usize;
                                 if source_idx < clip.buffer.len() {
                                     let fg = clip_fade_gain(
                                         clip_t,
@@ -252,7 +253,7 @@ impl AudioEngine {
                                             }
                                             let clip_t = t - clip.start_time_secs;
                                             if clip_t >= 0.0 && clip_t < clip.duration_secs {
-                                                let source_idx = (clip_t
+                                                let source_idx = ((clip_t + clip.buffer_offset_secs)
                                                     * clip.source_sample_rate as f64)
                                                     as usize;
                                                 if source_idx < clip.buffer.len() {
@@ -317,7 +318,7 @@ impl AudioEngine {
                                             }
                                             let clip_t = t - clip.start_time_secs;
                                             if clip_t >= 0.0 && clip_t < clip.duration_secs {
-                                                let source_idx = (clip_t
+                                                let source_idx = ((clip_t + clip.buffer_offset_secs)
                                                     * clip.source_sample_rate as f64)
                                                     as usize;
                                                 if source_idx < clip.buffer.len() {
@@ -424,6 +425,7 @@ impl AudioEngine {
         fade_in_curves: &[f32],
         fade_out_curves: &[f32],
         volumes: &[f32],
+        sample_offsets_px: &[f32],
     ) {
         let mut clips = self.clips.lock().unwrap();
         clips.clear();
@@ -439,11 +441,14 @@ impl AudioEngine {
             let fi_curve = fade_in_curves.get(i).copied().unwrap_or(0.0);
             let fo_curve = fade_out_curves.get(i).copied().unwrap_or(0.0);
             let vol = volumes.get(i).copied().unwrap_or(1.0);
+            let offset_px = sample_offsets_px.get(i).copied().unwrap_or(0.0);
+            let offset_secs = offset_px as f64 / PIXELS_PER_SECOND as f64;
+            let visible_duration = size[0] as f64 / PIXELS_PER_SECOND as f64;
             clips.push(PlaybackClip {
                 buffer: clip_data.samples.clone(),
                 source_sample_rate: clip_data.sample_rate,
                 start_time_secs: start_secs,
-                duration_secs: clip_data.duration_secs as f64,
+                duration_secs: visible_duration,
                 position_y: pos[1],
                 height: size[1],
                 fade_in_secs: (fi / PIXELS_PER_SECOND) as f64,
@@ -451,6 +456,7 @@ impl AudioEngine {
                 fade_in_curve: fi_curve,
                 fade_out_curve: fo_curve,
                 volume: vol,
+                buffer_offset_secs: offset_secs,
             });
         }
     }
@@ -733,6 +739,7 @@ pub struct ExportClip {
     pub fade_in_curve: f32,
     pub fade_out_curve: f32,
     pub volume: f32,
+    pub buffer_offset_secs: f64,
 }
 
 pub fn render_to_wav(
@@ -771,7 +778,7 @@ pub fn render_to_wav(
             }
             let clip_t = t - clip.start_time_secs;
             if clip_t >= 0.0 && clip_t < clip.duration_secs {
-                let source_idx = (clip_t * clip.source_sample_rate as f64) as usize;
+                let source_idx = ((clip_t + clip.buffer_offset_secs) * clip.source_sample_rate as f64) as usize;
                 if source_idx < clip.buffer.len() {
                     let fg = clip_fade_gain(
                         clip_t,
@@ -828,7 +835,7 @@ pub fn render_to_wav(
                     }
                     let clip_t = t - clip.start_time_secs;
                     if clip_t >= 0.0 && clip_t < clip.duration_secs {
-                        let source_idx = (clip_t * clip.source_sample_rate as f64) as usize;
+                        let source_idx = ((clip_t + clip.buffer_offset_secs) * clip.source_sample_rate as f64) as usize;
                         if source_idx < clip.buffer.len() {
                             let fg = clip_fade_gain(
                                 clip_t,
@@ -876,7 +883,7 @@ pub fn render_to_wav(
                     }
                     let clip_t = t - clip.start_time_secs;
                     if clip_t >= 0.0 && clip_t < clip.duration_secs {
-                        let source_idx = (clip_t * clip.source_sample_rate as f64) as usize;
+                        let source_idx = ((clip_t + clip.buffer_offset_secs) * clip.source_sample_rate as f64) as usize;
                         if source_idx < clip.buffer.len() {
                             let fg = clip_fade_gain(
                                 clip_t,

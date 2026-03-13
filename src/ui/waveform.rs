@@ -81,6 +81,7 @@ pub struct WaveformView {
     pub fade_out_curve: f32,
     pub volume: f32,
     pub disabled: bool,
+    pub sample_offset_px: f32,
 }
 
 
@@ -402,12 +403,15 @@ fn channel_triangles(
     fade_in_curve: f32,
     fade_out_curve: f32,
     volume: f32,
+    sample_offset_px: f32,
 ) -> Vec<WaveformVertex> {
     let mut verts = Vec::new();
     if samples.is_empty() || wf_size[0] <= 0.0 {
         return verts;
     }
 
+    let world_per_sample = 1.0 / (sample_rate as f32 / PIXELS_PER_SECOND);
+    let full_width_px = samples.len() as f32 * world_per_sample;
     let samples_per_px = sample_rate as f32 / (PIXELS_PER_SECOND * camera.zoom);
     let desired_screen_px = 2.0;
     let world_step = desired_screen_px / camera.zoom;
@@ -424,7 +428,6 @@ fn channel_triangles(
     let feather = 0.8 / camera.zoom;
 
     if samples_per_px > SAMPLES_PER_PX_THRESHOLD {
-        // Zoomed out: compute min/max peak per column
         let mut prev_x = vis_left;
         let mut prev_amp = 0.0f32;
         let mut first = true;
@@ -433,7 +436,8 @@ fn channel_triangles(
             let wx = vis_left + col as f32 * world_step;
             let wx = wx.min(vis_right);
 
-            let t = ((wx - wf_pos[0]) / wf_size[0]).clamp(0.0, 1.0);
+            let audio_x = sample_offset_px + (wx - wf_pos[0]);
+            let t = (audio_x / full_width_px).clamp(0.0, 1.0);
             let sample_center = (t * samples.len() as f32) as usize;
             let half_window = (samples_per_px * world_step * camera.zoom * 0.5) as usize;
             let half_window = half_window.max(1);
@@ -461,13 +465,10 @@ fn channel_triangles(
             prev_amp = amp;
         }
     } else {
-        // Zoomed in: draw individual samples as connected waveform
-        let world_per_sample = 1.0 / (sample_rate as f32 / PIXELS_PER_SECOND);
-
-        let vis_start_sample = (((vis_left - wf_pos[0]) / wf_size[0]) * samples.len() as f32)
+        let vis_start_sample = ((sample_offset_px + (vis_left - wf_pos[0])) / world_per_sample)
             .floor()
             .max(0.0) as usize;
-        let vis_end_sample = (((vis_right - wf_pos[0]) / wf_size[0]) * samples.len() as f32)
+        let vis_end_sample = ((sample_offset_px + (vis_right - wf_pos[0])) / world_per_sample)
             .ceil()
             .max(0.0) as usize;
         let vis_start_sample = vis_start_sample.min(samples.len());
@@ -477,13 +478,13 @@ fn channel_triangles(
             return verts;
         }
 
-        let mut prev_x = wf_pos[0] + vis_start_sample as f32 * world_per_sample;
+        let mut prev_x = wf_pos[0] + (vis_start_sample as f32 * world_per_sample - sample_offset_px);
         let x_in_clip = prev_x - wf_pos[0];
         let fg = fade_gain_at(x_in_clip, wf_size[0], fade_in_px, fade_out_px, fade_in_curve, fade_out_curve);
         let mut prev_val = samples[vis_start_sample] * fg * volume;
 
         for si in (vis_start_sample + 1)..vis_end_sample {
-            let wx = wf_pos[0] + si as f32 * world_per_sample;
+            let wx = wf_pos[0] + (si as f32 * world_per_sample - sample_offset_px);
             let x_in_clip = wx - wf_pos[0];
             let fg = fade_gain_at(x_in_clip, wf_size[0], fade_in_px, fade_out_px, fade_in_curve, fade_out_curve);
             let val = samples[si] * fg * volume;
@@ -714,6 +715,7 @@ pub fn build_waveform_triangles(
         wf.fade_in_curve,
         wf.fade_out_curve,
         wf.volume,
+        wf.sample_offset_px,
     ));
 
     all_verts.extend(channel_triangles(
@@ -734,6 +736,7 @@ pub fn build_waveform_triangles(
         wf.fade_in_curve,
         wf.fade_out_curve,
         wf.volume,
+        wf.sample_offset_px,
     ));
 
     all_verts
