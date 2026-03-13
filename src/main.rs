@@ -15,8 +15,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use audio::{load_audio_file, AudioClipData, AudioEngine, AudioRecorder, PIXELS_PER_SECOND};
-use ui::context_menu::{ContextMenu, MenuContext};
 use settings::GridMode;
+use ui::context_menu::{ContextMenu, MenuContext};
 use ui::palette::{CommandAction, CommandPalette, PaletteMode, PaletteRow, COMMANDS};
 pub(crate) use ui::waveform::WaveformView;
 use ui::waveform::{AudioData, WaveformPeaks, WaveformVertex};
@@ -571,8 +571,10 @@ fn build_instances(out: &mut Vec<InstanceRaw>, ctx: &RenderContext) {
     for (i, er) in ctx.effect_regions.iter().enumerate() {
         let er_right = er.position[0] + er.size[0];
         let er_bottom = er.position[1] + er.size[1];
-        if er_right < world_left || er.position[0] > world_right
-            || er_bottom < world_top || er.position[1] > world_bottom
+        if er_right < world_left
+            || er.position[0] > world_right
+            || er_bottom < world_top
+            || er.position[1] > world_bottom
         {
             continue;
         }
@@ -652,8 +654,10 @@ fn build_instances(out: &mut Vec<InstanceRaw>, ctx: &RenderContext) {
     for (i, obj) in ctx.objects.iter().enumerate() {
         let obj_right = obj.position[0] + obj.size[0];
         let obj_bottom = obj.position[1] + obj.size[1];
-        if obj_right < world_left || obj.position[0] > world_right
-            || obj_bottom < world_top || obj.position[1] > world_bottom
+        if obj_right < world_left
+            || obj.position[0] > world_right
+            || obj_bottom < world_top
+            || obj.position[1] > world_bottom
         {
             continue;
         }
@@ -684,8 +688,10 @@ fn build_instances(out: &mut Vec<InstanceRaw>, ctx: &RenderContext) {
     for (i, wf) in ctx.waveforms.iter().enumerate() {
         let wf_right = wf.position[0] + wf.size[0];
         let wf_bottom = wf.position[1] + wf.size[1];
-        if wf_right < world_left || wf.position[0] > world_right
-            || wf_bottom < world_top || wf.position[1] > world_bottom
+        if wf_right < world_left
+            || wf.position[0] > world_right
+            || wf_bottom < world_top
+            || wf.position[1] > world_bottom
         {
             continue;
         }
@@ -705,8 +711,10 @@ fn build_instances(out: &mut Vec<InstanceRaw>, ctx: &RenderContext) {
     for (i, def) in ctx.components.iter().enumerate() {
         let def_right = def.position[0] + def.size[0];
         let def_bottom = def.position[1] + def.size[1];
-        if def_right < world_left || def.position[0] > world_right
-            || def_bottom < world_top || def.position[1] > world_bottom
+        if def_right < world_left
+            || def.position[0] > world_right
+            || def_bottom < world_top
+            || def.position[1] > world_bottom
         {
             continue;
         }
@@ -727,8 +735,10 @@ fn build_instances(out: &mut Vec<InstanceRaw>, ctx: &RenderContext) {
             let def = &ctx.components[def_idx];
             let inst_right = inst.position[0] + def.size[0];
             let inst_bottom = inst.position[1] + def.size[1];
-            if inst_right < world_left || inst.position[0] > world_right
-                || inst_bottom < world_top || inst.position[1] > world_bottom
+            if inst_right < world_left
+                || inst.position[0] > world_right
+                || inst_bottom < world_top
+                || inst.position[1] > world_bottom
             {
                 continue;
             }
@@ -860,7 +870,6 @@ fn build_instances(out: &mut Vec<InstanceRaw>, ctx: &RenderContext) {
             [0.35, 0.65, 1.0, 0.7],
         );
     }
-
 }
 
 fn build_waveform_vertices(verts: &mut Vec<WaveformVertex>, ctx: &RenderContext) {
@@ -873,8 +882,10 @@ fn build_waveform_vertices(verts: &mut Vec<WaveformVertex>, ctx: &RenderContext)
     for (i, wf) in ctx.waveforms.iter().enumerate() {
         let wf_right = wf.position[0] + wf.size[0];
         let wf_bottom = wf.position[1] + wf.size[1];
-        if wf_right < world_left || wf.position[0] > world_right
-            || wf_bottom < world_top || wf.position[1] > world_bottom
+        if wf_right < world_left
+            || wf.position[0] > world_right
+            || wf_bottom < world_top
+            || wf.position[1] > world_bottom
         {
             continue;
         }
@@ -907,7 +918,9 @@ fn target_rect(
         HitTarget::ComponentDef(i) => (components[*i].position, components[*i].size),
         HitTarget::ComponentInstance(i) => {
             let inst = &component_instances[*i];
-            let def = component_map.get(&inst.component_id).map(|&idx| &components[idx]);
+            let def = component_map
+                .get(&inst.component_id)
+                .map(|&idx| &components[idx]);
             match def {
                 Some(d) => (inst.position, d.size),
                 None => (inst.position, [100.0, 100.0]),
@@ -953,9 +966,11 @@ struct App {
     modifiers: ModifiersState,
     command_palette: Option<CommandPalette>,
     context_menu: Option<ContextMenu>,
+    browser_context_path: Option<std::path::PathBuf>,
     sample_browser: browser::SampleBrowser,
     storage: Option<Storage>,
     has_saved_state: bool,
+    project_dirty: bool,
     undo_stack: Vec<Snapshot>,
     redo_stack: Vec<Snapshot>,
     current_project_name: String,
@@ -993,6 +1008,7 @@ struct App {
 impl App {
     fn mark_dirty(&mut self) {
         self.render_generation = self.render_generation.wrapping_add(1);
+        self.project_dirty = true;
     }
 
     fn new() -> Self {
@@ -1011,10 +1027,7 @@ impl App {
                     println!("    - {} ({})", p.name, p.path);
                 }
                 // Open the most recently updated project
-                let best = projects
-                    .iter()
-                    .max_by_key(|p| p.updated_at)
-                    .unwrap();
+                let best = projects.iter().max_by_key(|p| p.updated_at).unwrap();
                 let path = PathBuf::from(&best.path);
                 if path.exists() && s.open_project(&path) {
                     opened_project = true;
@@ -1062,7 +1075,12 @@ impl App {
                     position: state.camera_position,
                     zoom: state.camera_zoom,
                 };
-                let name = state.name.clone();
+                let name = storage
+                    .as_ref()
+                    .and_then(|s| s.current_project_path())
+                    .and_then(|p| storage::Storage::read_project_json(p))
+                    .map(|m| m.name)
+                    .unwrap_or_else(|| state.name.clone());
                 let folders: Vec<PathBuf> =
                     state.browser_folders.iter().map(PathBuf::from).collect();
                 let bw = if state.browser_width > 0.0 {
@@ -1092,6 +1110,8 @@ impl App {
                         border_radius: sw.border_radius,
                         fade_in_px: sw.fade_in_px,
                         fade_out_px: sw.fade_out_px,
+                        volume: if sw.volume > 0.0 { sw.volume } else { 1.0 },
+                        disabled: sw.disabled,
                     })
                     .collect();
 
@@ -1107,7 +1127,8 @@ impl App {
 
                         if let Some(audio) = s.load_audio(i as u64) {
                             left_samples = Arc::new(storage::u8_slice_to_f32(&audio.left_samples));
-                            right_samples = Arc::new(storage::u8_slice_to_f32(&audio.right_samples));
+                            right_samples =
+                                Arc::new(storage::u8_slice_to_f32(&audio.right_samples));
                             let mono = storage::u8_slice_to_f32(&audio.mono_samples);
                             sample_rate = audio.sample_rate;
                             audio_clips.push(AudioClipData {
@@ -1125,12 +1146,10 @@ impl App {
                         if let Some(peaks) = s.load_peaks(i as u64) {
                             let lp = storage::u8_slice_to_f32(&peaks.left_peaks);
                             let rp = storage::u8_slice_to_f32(&peaks.right_peaks);
-                            left_peaks = Arc::new(
-                                WaveformPeaks::from_raw(peaks.block_size as usize, lp),
-                            );
-                            right_peaks = Arc::new(
-                                WaveformPeaks::from_raw(peaks.block_size as usize, rp),
-                            );
+                            left_peaks =
+                                Arc::new(WaveformPeaks::from_raw(peaks.block_size as usize, lp));
+                            right_peaks =
+                                Arc::new(WaveformPeaks::from_raw(peaks.block_size as usize, rp));
                         }
                         waveforms[i].audio = Arc::new(AudioData {
                             left_samples,
@@ -1272,9 +1291,11 @@ impl App {
             modifiers: ModifiersState::empty(),
             command_palette: None,
             context_menu: None,
+            browser_context_path: None,
             sample_browser,
             storage,
             has_saved_state,
+            project_dirty: false,
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
             current_project_name: project_name,
@@ -1310,7 +1331,7 @@ impl App {
         }
     }
 
-    fn save_project_state(&self) {
+    fn save_project_state(&mut self) {
         if let Some(storage) = &self.storage {
             let stored_regions: Vec<storage::StoredEffectRegion> = self
                 .effect_regions
@@ -1356,6 +1377,8 @@ impl App {
                     fade_in_px: wf.fade_in_px,
                     fade_out_px: wf.fade_out_px,
                     sample_rate: wf.audio.sample_rate,
+                    volume: wf.volume,
+                    disabled: wf.disabled,
                 })
                 .collect();
 
@@ -1420,6 +1443,7 @@ impl App {
                 );
             }
 
+            self.project_dirty = false;
             println!("Project '{}' saved", self.current_project_name);
         }
     }
@@ -1441,6 +1465,10 @@ impl App {
         if let Some(dest) = dest {
             if let Some(storage) = &mut self.storage {
                 if storage.save_project_to(&dest) {
+                    if let Some(folder_name) = dest.file_name() {
+                        self.current_project_name = folder_name.to_string_lossy().to_string();
+                    }
+                    self.save_project_state();
                     println!("Project saved to {:?}", dest);
                 } else {
                     println!("Failed to save project to {:?}", dest);
@@ -1557,7 +1585,11 @@ impl App {
             state.waveforms.len(),
         );
 
-        self.current_project_name = state.name.clone();
+        self.current_project_name = if let Some(meta) = storage::Storage::read_project_json(&path) {
+            meta.name
+        } else {
+            state.name.clone()
+        };
         self.camera = Camera {
             position: state.camera_position,
             zoom: state.camera_zoom,
@@ -1582,6 +1614,8 @@ impl App {
                 border_radius: sw.border_radius,
                 fade_in_px: sw.fade_in_px,
                 fade_out_px: sw.fade_out_px,
+                volume: if sw.volume > 0.0 { sw.volume } else { 1.0 },
+                disabled: sw.disabled,
             })
             .collect();
 
@@ -1615,10 +1649,8 @@ impl App {
                 if let Some(peaks) = s.load_peaks(i as u64) {
                     let lp = storage::u8_slice_to_f32(&peaks.left_peaks);
                     let rp = storage::u8_slice_to_f32(&peaks.right_peaks);
-                    left_peaks =
-                        Arc::new(WaveformPeaks::from_raw(peaks.block_size as usize, lp));
-                    right_peaks =
-                        Arc::new(WaveformPeaks::from_raw(peaks.block_size as usize, rp));
+                    left_peaks = Arc::new(WaveformPeaks::from_raw(peaks.block_size as usize, lp));
+                    right_peaks = Arc::new(WaveformPeaks::from_raw(peaks.block_size as usize, rp));
                 }
                 self.waveforms[i].audio = Arc::new(AudioData {
                     left_samples,
@@ -1831,12 +1863,24 @@ impl App {
 
     fn sync_audio_clips(&self) {
         if let Some(engine) = &self.audio_engine {
-            let mut positions: Vec<[f32; 2]> =
-                self.waveforms.iter().map(|wf| wf.position).collect();
-            let mut sizes: Vec<[f32; 2]> = self.waveforms.iter().map(|wf| wf.size).collect();
-            let mut clips: Vec<&AudioClipData> = self.audio_clips.iter().collect();
-            let mut fade_ins: Vec<f32> = self.waveforms.iter().map(|wf| wf.fade_in_px).collect();
-            let mut fade_outs: Vec<f32> = self.waveforms.iter().map(|wf| wf.fade_out_px).collect();
+            let mut positions: Vec<[f32; 2]> = Vec::new();
+            let mut sizes: Vec<[f32; 2]> = Vec::new();
+            let mut clips: Vec<&AudioClipData> = Vec::new();
+            let mut fade_ins: Vec<f32> = Vec::new();
+            let mut fade_outs: Vec<f32> = Vec::new();
+            let mut volumes: Vec<f32> = Vec::new();
+
+            for (i, wf) in self.waveforms.iter().enumerate() {
+                if wf.disabled || i >= self.audio_clips.len() {
+                    continue;
+                }
+                positions.push(wf.position);
+                sizes.push(wf.size);
+                clips.push(&self.audio_clips[i]);
+                fade_ins.push(wf.fade_in_px);
+                fade_outs.push(wf.fade_out_px);
+                volumes.push(wf.volume);
+            }
 
             // Add virtual clips for each component instance
             let comp_map: std::collections::HashMap<component::ComponentId, usize> = self
@@ -1846,13 +1890,16 @@ impl App {
                 .map(|(i, c)| (c.id, i))
                 .collect();
             for inst in &self.component_instances {
-                if let Some(def) = comp_map.get(&inst.component_id).map(|&i| &self.components[i]) {
+                if let Some(def) = comp_map
+                    .get(&inst.component_id)
+                    .map(|&i| &self.components[i])
+                {
                     let offset = [
                         inst.position[0] - def.position[0],
                         inst.position[1] - def.position[1],
                     ];
                     for &wf_idx in &def.waveform_indices {
-                        if wf_idx < self.waveforms.len() && wf_idx < self.audio_clips.len() {
+                        if wf_idx < self.waveforms.len() && wf_idx < self.audio_clips.len() && !self.waveforms[wf_idx].disabled {
                             let wf = &self.waveforms[wf_idx];
                             positions
                                 .push([wf.position[0] + offset[0], wf.position[1] + offset[1]]);
@@ -1860,13 +1907,14 @@ impl App {
                             clips.push(&self.audio_clips[wf_idx]);
                             fade_ins.push(wf.fade_in_px);
                             fade_outs.push(wf.fade_out_px);
+                            volumes.push(wf.volume);
                         }
                     }
                 }
             }
 
             let owned_clips: Vec<AudioClipData> = clips.iter().map(|c| (*c).clone()).collect();
-            engine.update_clips(&positions, &sizes, &owned_clips, &fade_ins, &fade_outs);
+            engine.update_clips(&positions, &sizes, &owned_clips, &fade_ins, &fade_outs, &volumes);
 
             let regions: Vec<audio::AudioEffectRegion> = self
                 .effect_regions
@@ -1947,6 +1995,8 @@ impl App {
                 border_radius: 8.0,
                 fade_in_px: 0.0,
                 fade_out_px: 0.0,
+                volume: 1.0,
+                disabled: false,
             });
             self.audio_clips.push(AudioClipData {
                 samples: Arc::new(Vec::new()),
@@ -2017,6 +2067,7 @@ impl App {
             .waveforms
             .iter()
             .zip(self.audio_clips.iter())
+            .filter(|(wf, _)| !wf.disabled)
             .map(|(wf, clip)| audio::ExportClip {
                 buffer: clip.samples.clone(),
                 source_sample_rate: clip.sample_rate,
@@ -2026,6 +2077,7 @@ impl App {
                 height: wf.size[1],
                 fade_in_secs: (wf.fade_in_px / audio::PIXELS_PER_SECOND) as f64,
                 fade_out_secs: (wf.fade_out_px / audio::PIXELS_PER_SECOND) as f64,
+                volume: wf.volume,
             })
             .collect();
 
@@ -2464,6 +2516,27 @@ impl App {
                 self.request_redraw();
                 return;
             }
+            CommandAction::SetSampleVolume => {
+                let selected_wf = self.selected.iter().find_map(|t| {
+                    if let HitTarget::Waveform(i) = t {
+                        Some(*i)
+                    } else {
+                        None
+                    }
+                });
+                if let Some(idx) = selected_wf {
+                    if idx < self.waveforms.len() {
+                        if let Some(p) = &mut self.command_palette {
+                            p.mode = PaletteMode::SampleVolumeFader;
+                            p.fader_value = self.waveforms[idx].volume;
+                            p.fader_target_waveform = Some(idx);
+                            p.search_text.clear();
+                        }
+                        self.request_redraw();
+                        return;
+                    }
+                }
+            }
             CommandAction::CreateComponent => {
                 self.create_component_from_selection();
             }
@@ -2554,9 +2627,59 @@ impl App {
                 self.settings.save();
             }
             CommandAction::TestToast => {
-                self.toast_manager.push("This is an error toast", ui::toast::ToastKind::Error);
-                self.toast_manager.push("This is an info toast", ui::toast::ToastKind::Info);
-                self.toast_manager.push("This is a success toast", ui::toast::ToastKind::Success);
+                self.toast_manager
+                    .push("This is an error toast", ui::toast::ToastKind::Error);
+                self.toast_manager
+                    .push("This is an info toast", ui::toast::ToastKind::Info);
+                self.toast_manager
+                    .push("This is a success toast", ui::toast::ToastKind::Success);
+            }
+            CommandAction::RevealInFinder => {
+                if let Some(path) = self.browser_context_path.take() {
+                    std::process::Command::new("open")
+                        .arg("-R")
+                        .arg(&path)
+                        .spawn()
+                        .ok();
+                }
+            }
+            CommandAction::ReverseSample => {
+                let selected_wf = self.selected.iter().find_map(|t| {
+                    if let HitTarget::Waveform(i) = t {
+                        Some(*i)
+                    } else {
+                        None
+                    }
+                });
+                if let Some(idx) = selected_wf {
+                    if idx < self.waveforms.len() && idx < self.audio_clips.len() {
+                        self.push_undo();
+
+                        let mut mono = (*self.audio_clips[idx].samples).clone();
+                        mono.reverse();
+                        self.audio_clips[idx].samples = Arc::new(mono);
+
+                        let old = &self.waveforms[idx].audio;
+                        let mut left = (*old.left_samples).clone();
+                        let mut right = (*old.right_samples).clone();
+                        left.reverse();
+                        right.reverse();
+                        let left_peaks = Arc::new(WaveformPeaks::build(&left));
+                        let right_peaks = Arc::new(WaveformPeaks::build(&right));
+                        let new_audio = Arc::new(AudioData {
+                            left_samples: Arc::new(left),
+                            right_samples: Arc::new(right),
+                            left_peaks,
+                            right_peaks,
+                            sample_rate: old.sample_rate,
+                            filename: old.filename.clone(),
+                        });
+                        self.waveforms[idx].audio = new_audio;
+
+                        self.sync_audio_clips();
+                        self.mark_dirty();
+                    }
+                }
             }
         }
         self.request_redraw();
@@ -2658,6 +2781,34 @@ impl App {
         self.push_undo();
         let mut new_selected: Vec<HitTarget> = Vec::new();
 
+        let selected_wf_indices: Vec<usize> = self
+            .selected
+            .iter()
+            .filter_map(|t| {
+                if let HitTarget::Waveform(i) = t {
+                    Some(*i)
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        let wf_group_shift = if selected_wf_indices.len() >= 2 {
+            let min_start = selected_wf_indices
+                .iter()
+                .filter_map(|&i| self.waveforms.get(i))
+                .map(|wf| wf.position[0])
+                .fold(f32::INFINITY, f32::min);
+            let max_end = selected_wf_indices
+                .iter()
+                .filter_map(|&i| self.waveforms.get(i))
+                .map(|wf| wf.position[0] + wf.size[0])
+                .fold(f32::NEG_INFINITY, f32::max);
+            Some(max_end - min_start)
+        } else {
+            None
+        };
+
         for target in self.selected.clone() {
             match target {
                 HitTarget::ComponentInstance(i) => {
@@ -2713,7 +2864,8 @@ impl App {
                 HitTarget::Waveform(i) => {
                     if i < self.waveforms.len() {
                         let mut wf = self.waveforms[i].clone();
-                        wf.position[0] += wf.size[0];
+                        let shift = wf_group_shift.unwrap_or(wf.size[0]);
+                        wf.position[0] += shift;
                         self.waveforms.push(wf);
                         let new_i = self.waveforms.len() - 1;
                         if i < self.audio_clips.len() {
@@ -3073,6 +3225,8 @@ impl App {
                 border_radius: 8.0,
                 fade_in_px: 0.0,
                 fade_out_px: 0.0,
+                volume: 1.0,
+                disabled: false,
             });
             self.audio_clips.push(AudioClipData {
                 samples: loaded.samples,
@@ -3080,6 +3234,19 @@ impl App {
                 duration_secs: loaded.duration_secs,
             });
             self.sync_audio_clips();
+        } else {
+            let filename = path
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string();
+            self.toast_manager.push(
+                format!(
+                    "Cannot load '{}' \u{2014} unsupported or corrupted file",
+                    filename
+                ),
+                ui::toast::ToastKind::Error,
+            );
         }
     }
 
@@ -3215,43 +3382,48 @@ impl ApplicationHandler for App {
     ) {
         match event {
             WindowEvent::CloseRequested => {
+                if !self.project_dirty {
+                    event_loop.exit();
+                    return;
+                }
+
                 let is_temp = self
                     .storage
                     .as_ref()
                     .map(|s| s.is_temp_project())
                     .unwrap_or(false);
 
-                if is_temp && !self.waveforms.is_empty() {
-                    // Unsaved temp project with content — show dialog
-                    let result = rfd::MessageDialog::new()
-                        .set_title("Save Project?")
-                        .set_description("This project hasn't been saved. Would you like to save it before closing?")
-                        .set_buttons(rfd::MessageButtons::YesNoCancel)
-                        .show();
+                let result = rfd::MessageDialog::new()
+                    .set_title("Save Changes?")
+                    .set_description(
+                        "Your project has unsaved changes. Would you like to save before closing?",
+                    )
+                    .set_buttons(rfd::MessageButtons::YesNoCancel)
+                    .show();
 
-                    match result {
-                        rfd::MessageDialogResult::Yes => {
-                            // Save As flow, then exit
+                match result {
+                    rfd::MessageDialogResult::Yes => {
+                        if is_temp {
                             self.save_project();
-                            event_loop.exit();
+                        } else {
+                            self.save_project_state();
                         }
-                        rfd::MessageDialogResult::No => {
-                            // Delete temp folder and exit
+                        event_loop.exit();
+                    }
+                    rfd::MessageDialogResult::No => {
+                        if is_temp && !self.waveforms.is_empty() {
                             if let Some(storage) = &mut self.storage {
-                                if let Some(path) = storage.current_project_path().map(|p| p.to_string_lossy().to_string()) {
+                                if let Some(path) = storage
+                                    .current_project_path()
+                                    .map(|p| p.to_string_lossy().to_string())
+                                {
                                     storage.delete_project(&path);
                                 }
                             }
-                            event_loop.exit();
                         }
-                        _ => {
-                            // Cancel — do nothing, abort close
-                        }
+                        event_loop.exit();
                     }
-                } else {
-                    // Saved project or empty temp — just auto-save and exit
-                    self.save_project_state();
-                    event_loop.exit();
+                    _ => {}
                 }
             }
 
@@ -3313,6 +3485,8 @@ impl ApplicationHandler for App {
                             border_radius: 8.0,
                             fade_in_px: 0.0,
                             fade_out_px: 0.0,
+                            volume: 1.0,
+                            disabled: false,
                         });
                         self.audio_clips.push(AudioClipData {
                             samples: loaded.samples,
@@ -3418,8 +3592,20 @@ impl ApplicationHandler for App {
                         let mx = self.mouse_pos[0];
                         if let Some(p) = &mut self.command_palette {
                             p.fader_drag(mx, sw, sh, scale);
-                            if let Some(engine) = &self.audio_engine {
-                                engine.set_master_volume(p.fader_value);
+                            match p.mode {
+                                PaletteMode::SampleVolumeFader => {
+                                    if let Some(idx) = p.fader_target_waveform {
+                                        if idx < self.waveforms.len() {
+                                            self.waveforms[idx].volume = p.fader_value;
+                                            self.sync_audio_clips();
+                                        }
+                                    }
+                                }
+                                _ => {
+                                    if let Some(engine) = &self.audio_engine {
+                                        engine.set_master_volume(p.fader_value);
+                                    }
+                                }
                             }
                         }
                         self.request_redraw();
@@ -3613,7 +3799,26 @@ impl ApplicationHandler for App {
                         }
                         self.mark_dirty();
                     }
-                    Action::Other => {}
+                    Action::Other => {
+                        if let DragState::Selecting { start_world } = &self.drag {
+                            let start = *start_world;
+                            let current = self.camera.screen_to_world(self.mouse_pos);
+                            let (rp, rs) = canonical_rect(start, current);
+                            let min_sz = 5.0 / self.camera.zoom;
+                            if rs[0] >= min_sz || rs[1] >= min_sz {
+                                self.selected = targets_in_rect(
+                                    &self.objects,
+                                    &self.waveforms,
+                                    &self.effect_regions,
+                                    &self.components,
+                                    &self.component_instances,
+                                    self.editing_component,
+                                    rp,
+                                    rs,
+                                );
+                            }
+                        }
+                    }
                 }
 
                 self.update_hover();
@@ -3642,6 +3847,26 @@ impl ApplicationHandler for App {
                 MouseButton::Right => {
                     if state == ElementState::Pressed {
                         self.command_palette = None;
+
+                        if self.sample_browser.visible {
+                            let (_, sh, scale) = self.screen_info();
+                            if self.sample_browser.contains(self.mouse_pos, sh, scale) {
+                                if let Some(idx) =
+                                    self.sample_browser.item_at(self.mouse_pos, sh, scale)
+                                {
+                                    let entry = &self.sample_browser.entries[idx];
+                                    self.browser_context_path = Some(entry.path.clone());
+                                    self.context_menu = Some(ContextMenu::new(
+                                        self.mouse_pos,
+                                        MenuContext::BrowserEntry,
+                                        &self.settings,
+                                    ));
+                                    self.request_redraw();
+                                    return;
+                                }
+                            }
+                        }
+
                         let world = self.camera.screen_to_world(self.mouse_pos);
                         let hit = hit_test(
                             &self.objects,
@@ -3687,22 +3912,8 @@ impl ApplicationHandler for App {
                                 }
                             }
                             None => {
-                                if self.selected.is_empty() {
-                                    MenuContext::Grid
-                                } else {
-                                    let has_waveforms = self
-                                        .selected
-                                        .iter()
-                                        .any(|t| matches!(t, HitTarget::Waveform(_)));
-                                    let has_effect_region = self
-                                        .selected
-                                        .iter()
-                                        .any(|t| matches!(t, HitTarget::EffectRegion(_)));
-                                    MenuContext::Selection {
-                                        has_waveforms,
-                                        has_effect_region,
-                                    }
-                                }
+                                self.selected.clear();
+                                MenuContext::Grid
                             }
                         };
                         self.context_menu =
@@ -3925,7 +4136,7 @@ impl ApplicationHandler for App {
                             let is_fader = self
                                 .command_palette
                                 .as_ref()
-                                .map_or(false, |p| p.mode == PaletteMode::VolumeFader);
+                                .map_or(false, |p| matches!(p.mode, PaletteMode::VolumeFader | PaletteMode::SampleVolumeFader));
 
                             if is_fader {
                                 if inside {
@@ -3959,7 +4170,7 @@ impl ApplicationHandler for App {
                             });
 
                             if let Some(action) = clicked_action {
-                                if action == CommandAction::SetMasterVolume {
+                                if matches!(action, CommandAction::SetMasterVolume | CommandAction::SetSampleVolume) {
                                     self.execute_command(action);
                                 } else {
                                     self.command_palette = None;
@@ -4158,9 +4369,10 @@ impl ApplicationHandler for App {
                                         }
                                     }
                                 }
-                                self.plugin_editor = Some(ui::plugin_editor::PluginEditorWindow::new(
-                                    ri, si, name, params,
-                                ));
+                                self.plugin_editor =
+                                    Some(ui::plugin_editor::PluginEditorWindow::new(
+                                        ri, si, name, params,
+                                    ));
                                 self.request_redraw();
                                 return;
                             }
@@ -4727,7 +4939,7 @@ impl ApplicationHandler for App {
                                     .as_ref()
                                     .and_then(|p| p.selected_action());
                                 if let Some(a) = action {
-                                    if a == CommandAction::SetMasterVolume {
+                                    if matches!(a, CommandAction::SetMasterVolume | CommandAction::SetSampleVolume) {
                                         self.execute_command(a);
                                     } else {
                                         self.command_palette = None;
@@ -4803,6 +5015,30 @@ impl ApplicationHandler for App {
                                 self.request_redraw();
                             }
                         }
+                        Key::Character(ch) if !self.modifiers.super_key() => match ch.as_ref() {
+                            "0" => {
+                                let wf_indices: Vec<usize> = self
+                                    .selected
+                                    .iter()
+                                    .filter_map(|t| {
+                                        if let HitTarget::Waveform(i) = t { Some(*i) } else { None }
+                                    })
+                                    .collect();
+                                if !wf_indices.is_empty() {
+                                    self.push_undo();
+                                    let any_enabled = wf_indices.iter().any(|&i| i < self.waveforms.len() && !self.waveforms[i].disabled);
+                                    let new_disabled = any_enabled;
+                                    for &i in &wf_indices {
+                                        if i < self.waveforms.len() {
+                                            self.waveforms[i].disabled = new_disabled;
+                                        }
+                                    }
+                                    self.sync_audio_clips();
+                                    self.request_redraw();
+                                }
+                            }
+                            _ => {}
+                        },
                         Key::Character(ch) if self.modifiers.super_key() => match ch.as_ref() {
                             "," => {
                                 self.command_palette = None;
@@ -4977,13 +5213,26 @@ impl ApplicationHandler for App {
                     let hover_changed = self.hovered != self.last_rendered_hovered;
                     let sel_changed = self.selected.len() != self.last_rendered_selected_len;
                     let gen_changed = self.render_generation != self.last_rendered_generation;
-                    let needs_rebuild = camera_moved || hover_changed || sel_changed || gen_changed
-                        || playhead_world_x.is_some() || sel_rect.is_some() || self.file_hovering;
+                    let needs_rebuild = camera_moved
+                        || hover_changed
+                        || sel_changed
+                        || gen_changed
+                        || playhead_world_x.is_some()
+                        || sel_rect.is_some()
+                        || self.file_hovering;
 
                     if needs_rebuild {
-                        let selected_set: HashSet<HitTarget> = self.selected.iter().copied().collect();
-                        let component_map: std::collections::HashMap<component::ComponentId, usize> =
-                            self.components.iter().enumerate().map(|(i, c)| (c.id, i)).collect();
+                        let selected_set: HashSet<HitTarget> =
+                            self.selected.iter().copied().collect();
+                        let component_map: std::collections::HashMap<
+                            component::ComponentId,
+                            usize,
+                        > = self
+                            .components
+                            .iter()
+                            .enumerate()
+                            .map(|(i, c)| (c.id, i))
+                            .collect();
                         let render_ctx = RenderContext {
                             camera: &self.camera,
                             screen_w: w,

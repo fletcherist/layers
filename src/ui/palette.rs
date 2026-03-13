@@ -40,12 +40,16 @@ pub enum CommandAction {
     WidenGrid,
     ToggleTripletGrid,
     TestToast,
+    RevealInFinder,
+    ReverseSample,
+    SetSampleVolume,
 }
 
 #[derive(Clone, Copy, PartialEq)]
 pub enum PaletteMode {
     Commands,
     VolumeFader,
+    SampleVolumeFader,
 }
 
 pub const FADER_CONTENT_HEIGHT: f32 = 90.0;
@@ -156,10 +160,24 @@ pub const COMMANDS: &[CommandDef] = &[
         dev_only: false,
     },
     CommandDef {
+        name: "Set Sample Volume",
+        shortcut: "",
+        category: "Audio",
+        action: CommandAction::SetSampleVolume,
+        dev_only: false,
+    },
+    CommandDef {
         name: "Open Settings",
         shortcut: "⌘,",
         category: "View",
         action: CommandAction::OpenSettings,
+        dev_only: false,
+    },
+    CommandDef {
+        name: "Reverse Sample",
+        shortcut: "",
+        category: "Audio",
+        action: CommandAction::ReverseSample,
         dev_only: false,
     },
     CommandDef {
@@ -186,6 +204,7 @@ pub struct CommandPalette {
     pub fader_value: f32,
     pub fader_rms: f32,
     pub fader_dragging: bool,
+    pub fader_target_waveform: Option<usize>,
 }
 
 impl CommandPalette {
@@ -199,6 +218,7 @@ impl CommandPalette {
             fader_value: 1.0,
             fader_rms: 0.0,
             fader_dragging: false,
+            fader_target_waveform: None,
         };
         p.rebuild_rows(dev_mode);
         p
@@ -270,7 +290,10 @@ impl CommandPalette {
     }
 
     pub fn visible_rows(&self) -> &[PaletteRow] {
-        if self.mode == PaletteMode::VolumeFader {
+        if matches!(
+            self.mode,
+            PaletteMode::VolumeFader | PaletteMode::SampleVolumeFader
+        ) {
             return &[];
         }
         let n = self.rows.len().min(PALETTE_MAX_VISIBLE_ROWS);
@@ -278,7 +301,10 @@ impl CommandPalette {
     }
 
     pub fn content_height(&self, scale: f32) -> f32 {
-        if self.mode == PaletteMode::VolumeFader {
+        if matches!(
+            self.mode,
+            PaletteMode::VolumeFader | PaletteMode::SampleVolumeFader
+        ) {
             return FADER_CONTENT_HEIGHT * scale;
         }
         let mut h = 0.0;
@@ -318,7 +344,10 @@ impl CommandPalette {
         screen_h: f32,
         scale: f32,
     ) -> Option<usize> {
-        if self.mode == PaletteMode::VolumeFader {
+        if matches!(
+            self.mode,
+            PaletteMode::VolumeFader | PaletteMode::SampleVolumeFader
+        ) {
             return None;
         }
         let (rp, _) = self.palette_rect(screen_w, screen_h, scale);
@@ -364,7 +393,10 @@ impl CommandPalette {
         screen_h: f32,
         scale: f32,
     ) -> bool {
-        if self.mode != PaletteMode::VolumeFader {
+        if !matches!(
+            self.mode,
+            PaletteMode::VolumeFader | PaletteMode::SampleVolumeFader
+        ) {
             return false;
         }
         let (tp, ts) = self.fader_track_rect(screen_w, screen_h, scale);
@@ -480,7 +512,7 @@ impl CommandPalette {
                     }
                 }
             }
-            PaletteMode::VolumeFader => {
+            PaletteMode::VolumeFader | PaletteMode::SampleVolumeFader => {
                 let (tp, ts) = self.fader_track_rect(screen_w, screen_h, scale);
 
                 // Fader track background
@@ -513,32 +545,34 @@ impl CommandPalette {
                     border_radius: thumb_r,
                 });
 
-                // RMS bar background
-                let rms_y = tp[1] + ts[1] + RMS_MARGIN_TOP * scale;
-                let rms_h = RMS_BAR_H * scale;
-                out.push(InstanceRaw {
-                    position: [tp[0], rms_y],
-                    size: [ts[0], rms_h],
-                    color: [0.20, 0.20, 0.25, 1.0],
-                    border_radius: rms_h * 0.5,
-                });
-
-                // RMS bar filled
-                let rms_w = (self.fader_rms.clamp(0.0, 1.0) * ts[0]).max(0.0);
-                if rms_w > 0.5 {
-                    let rms_color = if self.fader_rms > 0.8 {
-                        [1.0, 0.35, 0.30, 1.0]
-                    } else if self.fader_rms > 0.5 {
-                        [1.0, 0.85, 0.32, 1.0]
-                    } else {
-                        [0.45, 0.92, 0.55, 1.0]
-                    };
+                if self.mode == PaletteMode::VolumeFader {
+                    // RMS bar background
+                    let rms_y = tp[1] + ts[1] + RMS_MARGIN_TOP * scale;
+                    let rms_h = RMS_BAR_H * scale;
                     out.push(InstanceRaw {
                         position: [tp[0], rms_y],
-                        size: [rms_w, rms_h],
-                        color: rms_color,
+                        size: [ts[0], rms_h],
+                        color: [0.20, 0.20, 0.25, 1.0],
                         border_radius: rms_h * 0.5,
                     });
+
+                    // RMS bar filled
+                    let rms_w = (self.fader_rms.clamp(0.0, 1.0) * ts[0]).max(0.0);
+                    if rms_w > 0.5 {
+                        let rms_color = if self.fader_rms > 0.8 {
+                            [1.0, 0.35, 0.30, 1.0]
+                        } else if self.fader_rms > 0.5 {
+                            [1.0, 0.85, 0.32, 1.0]
+                        } else {
+                            [0.45, 0.92, 0.55, 1.0]
+                        };
+                        out.push(InstanceRaw {
+                            position: [tp[0], rms_y],
+                            size: [rms_w, rms_h],
+                            color: rms_color,
+                            border_radius: rms_h * 0.5,
+                        });
+                    }
                 }
             }
         }

@@ -8,25 +8,25 @@ use glyphon::{
 use wgpu::util::DeviceExt;
 use winit::window::Window;
 
+use crate::audio::PIXELS_PER_SECOND;
 use crate::browser;
-use crate::ui::context_menu::{
-    ContextMenu, ContextMenuEntry, CTX_MENU_ITEM_HEIGHT, CTX_MENU_INLINE_HEIGHT,
-    CTX_MENU_PADDING, CTX_MENU_SECTION_HEIGHT, CTX_MENU_SEPARATOR_HEIGHT, CTX_MENU_WIDTH,
-};
 use crate::effects;
+use crate::settings::{Settings, SettingsWindow};
+use crate::ui::context_menu::{
+    ContextMenu, ContextMenuEntry, CTX_MENU_INLINE_HEIGHT, CTX_MENU_ITEM_HEIGHT, CTX_MENU_PADDING,
+    CTX_MENU_SECTION_HEIGHT, CTX_MENU_SEPARATOR_HEIGHT, CTX_MENU_WIDTH,
+};
 use crate::ui::palette::{
-    CommandPalette, PaletteMode, PaletteRow, COMMANDS, PALETTE_INPUT_HEIGHT,
-    PALETTE_ITEM_HEIGHT, PALETTE_PADDING, PALETTE_SECTION_HEIGHT, PALETTE_WIDTH,
+    CommandPalette, PaletteMode, PaletteRow, COMMANDS, PALETTE_INPUT_HEIGHT, PALETTE_ITEM_HEIGHT,
+    PALETTE_PADDING, PALETTE_SECTION_HEIGHT, PALETTE_WIDTH,
 };
 use crate::ui::plugin_editor;
-use crate::settings::{Settings, SettingsWindow};
 use crate::ui::toast;
 use crate::ui::waveform;
 use crate::ui::waveform::WaveformVertex;
-use crate::audio::PIXELS_PER_SECOND;
 use crate::{
-    ExportRegion, TransportPanel, format_playback_time, DEFAULT_BPM, TRANSPORT_WIDTH,
-    EXPORT_RENDER_PILL_W, EXPORT_RENDER_PILL_H,
+    format_playback_time, ExportRegion, TransportPanel, DEFAULT_BPM, EXPORT_RENDER_PILL_H,
+    EXPORT_RENDER_PILL_W, TRANSPORT_WIDTH,
 };
 
 // ---------------------------------------------------------------------------
@@ -260,6 +260,13 @@ pub(crate) fn push_border(
 
 const MAX_WAVEFORM_VERTICES: usize = 131072;
 
+#[derive(PartialEq, Eq)]
+struct TextLabelCacheKey {
+    text: String,
+    max_width_q: i32,
+    font_size_q: i32,
+}
+
 pub(crate) struct Gpu {
     pub(crate) window: Arc<Window>,
     pub(crate) surface: wgpu::Surface<'static>,
@@ -286,6 +293,10 @@ pub(crate) struct Gpu {
 
     pub(crate) browser_text_buffers: Vec<TextBuffer>,
     pub(crate) browser_text_generation: u64,
+
+    cached_wf_label_bufs: Vec<(TextLabelCacheKey, TextBuffer)>,
+    cached_er_label_bufs: Vec<(TextLabelCacheKey, TextBuffer)>,
+    cached_plugin_label_bufs: Vec<(TextLabelCacheKey, TextBuffer)>,
 }
 
 impl Gpu {
@@ -589,6 +600,9 @@ impl Gpu {
             scale_factor,
             browser_text_buffers: Vec::new(),
             browser_text_generation: 0,
+            cached_wf_label_bufs: Vec::new(),
+            cached_er_label_bufs: Vec::new(),
+            cached_plugin_label_bufs: Vec::new(),
         }
     }
 
@@ -668,9 +682,17 @@ impl Gpu {
         }
 
         if let Some((pb, y_offset)) = plugin_browser {
-            let panel_w = sample_browser.map_or(260.0 * self.scale_factor, |b| b.panel_width(self.scale_factor));
+            let panel_w = sample_browser.map_or(260.0 * self.scale_factor, |b| {
+                b.panel_width(self.scale_factor)
+            });
             let clip_top = browser::HEADER_HEIGHT * self.scale_factor;
-            overlay_instances.extend(pb.build_instances(panel_w, y_offset, h, self.scale_factor, clip_top));
+            overlay_instances.extend(pb.build_instances(
+                panel_w,
+                y_offset,
+                h,
+                self.scale_factor,
+                clip_top,
+            ));
         }
 
         if let Some((_, pos)) = browser_drag_ghost {
@@ -782,7 +804,11 @@ impl Gpu {
                     &mut self.font_system,
                     Metrics::new(te.font_size, te.line_height),
                 );
-                buf.set_size(&mut self.font_system, Some(te.max_width), Some(te.line_height));
+                buf.set_size(
+                    &mut self.font_system,
+                    Some(te.max_width),
+                    Some(te.line_height),
+                );
                 let attrs = Attrs::new()
                     .family(Family::Name(".AppleSystemUIFont"))
                     .weight(glyphon::Weight(te.weight));
@@ -832,15 +858,14 @@ impl Gpu {
 
             // Search input text (or placeholder)
             let (display_text, search_color) = match palette.mode {
-                PaletteMode::VolumeFader => {
-                    ("Master Volume", TextColor::rgb(235, 235, 240))
+                PaletteMode::VolumeFader => ("Master Volume", TextColor::rgb(235, 235, 240)),
+                PaletteMode::SampleVolumeFader => {
+                    ("Sample Volume", TextColor::rgb(235, 235, 240))
                 }
                 _ if palette.search_text.is_empty() => {
                     ("Search", TextColor::rgba(140, 140, 150, 160))
                 }
-                _ => {
-                    (palette.search_text.as_str(), TextColor::rgb(235, 235, 240))
-                }
+                _ => (palette.search_text.as_str(), TextColor::rgb(235, 235, 240)),
             };
             let sfont = 15.0 * scale;
             let sline = 22.0 * scale;
@@ -929,6 +954,37 @@ impl Gpu {
                         ppos[0] + margin + pad,
                         rms_y + 8.0 * scale,
                         TextColor::rgba(140, 140, 150, 180),
+                        full_bounds,
+                    ));
+                }
+                PaletteMode::SampleVolumeFader => {
+                    let pad = 16.0 * scale;
+
+                    let pct = (palette.fader_value * 100.0) as u32;
+                    let vol_text = format!("{}%", pct);
+                    let label_font = 13.0 * scale;
+                    let label_line = 18.0 * scale;
+                    let mut buf = TextBuffer::new(
+                        &mut self.font_system,
+                        Metrics::new(label_font, label_line),
+                    );
+                    buf.set_size(
+                        &mut self.font_system,
+                        Some(PALETTE_WIDTH * scale - margin * 2.0),
+                        Some(20.0 * scale),
+                    );
+                    buf.set_text(
+                        &mut self.font_system,
+                        &vol_text,
+                        Attrs::new().family(Family::SansSerif),
+                        Shaping::Advanced,
+                    );
+                    buf.shape_until_scroll(&mut self.font_system, false);
+                    text_buffers.push(buf);
+                    text_meta.push((
+                        ppos[0] + margin + pad,
+                        list_top + 14.0 * scale,
+                        TextColor::rgba(200, 200, 210, 220),
                         full_bounds,
                     ));
                 }
@@ -1040,7 +1096,10 @@ impl Gpu {
             let shortcut_line = 17.0 * scale;
             let section_font = 11.0 * scale;
             let section_line = 15.0 * scale;
-            let has_any_checked = cm.entries.iter().any(|e| matches!(e, ContextMenuEntry::Item(it) if it.checked));
+            let has_any_checked = cm
+                .entries
+                .iter()
+                .any(|e| matches!(e, ContextMenuEntry::Item(it) if it.checked));
             let check_indent = if has_any_checked { 16.0 * scale } else { 0.0 };
 
             let mut y = mpos[1] + pad;
@@ -1174,7 +1233,11 @@ impl Gpu {
                     &mut self.font_system,
                     Metrics::new(te.font_size, te.line_height),
                 );
-                buf.set_size(&mut self.font_system, Some(te.max_width), Some(te.line_height * 2.0));
+                buf.set_size(
+                    &mut self.font_system,
+                    Some(te.max_width),
+                    Some(te.line_height * 2.0),
+                );
                 let attrs = Attrs::new()
                     .family(Family::Name(".AppleSystemUIFont"))
                     .weight(glyphon::Weight(te.weight));
@@ -1197,7 +1260,11 @@ impl Gpu {
                     &mut self.font_system,
                     Metrics::new(te.font_size, te.line_height),
                 );
-                buf.set_size(&mut self.font_system, Some(300.0 * scale), Some(te.line_height * 2.0));
+                buf.set_size(
+                    &mut self.font_system,
+                    Some(300.0 * scale),
+                    Some(te.line_height * 2.0),
+                );
                 let attrs = Attrs::new()
                     .family(Family::Name(".AppleSystemUIFont"))
                     .weight(glyphon::Weight(te.weight));
@@ -1248,7 +1315,10 @@ impl Gpu {
 
                     let label_font = 11.0 * scale;
                     let label_line = 16.0 * scale;
-                    let mut buf = TextBuffer::new(&mut self.font_system, Metrics::new(label_font, label_line));
+                    let mut buf = TextBuffer::new(
+                        &mut self.font_system,
+                        Metrics::new(label_font, label_line),
+                    );
                     buf.set_size(
                         &mut self.font_system,
                         Some(pill_w_screen),
@@ -1277,12 +1347,17 @@ impl Gpu {
         let world_top = camera.position[1];
         let world_bottom = world_top + h / camera.zoom;
 
-        // Effect region name labels (world-space -> screen-space)
+        // Effect region name labels (cached shaping, positions recomputed each frame)
+        let mut old_er_cache = std::mem::take(&mut self.cached_er_label_bufs);
+        let mut new_er_cache: Vec<(TextLabelCacheKey, TextBuffer)> = Vec::new();
+        let mut er_label_meta: Vec<(f32, f32, TextColor, TextBounds)> = Vec::new();
         for (er_idx, er) in effect_regions.iter().enumerate() {
             let er_right = er.position[0] + er.size[0];
             let er_bottom = er.position[1] + er.size[1];
-            if er_right < world_left || er.position[0] > world_right
-                || er_bottom < world_top || er.position[1] > world_bottom
+            if er_right < world_left
+                || er.position[0] > world_right
+                || er_bottom < world_top
+                || er.position[1] > world_bottom
             {
                 continue;
             }
@@ -1297,11 +1372,9 @@ impl Gpu {
             let name_screen_x = (name_x_world - camera.position[0]) * camera.zoom;
             let name_screen_y = (name_y_world - camera.position[1]) * camera.zoom;
 
-            // Skip if full-screen overlay is open
             if settings_window.is_some() || command_palette.is_some() {
                 continue;
             }
-            // Skip if overlapping context menu
             if let Some((cm_pos, cm_size)) = ctx_menu_rect {
                 let max_text_w = (region_screen_w - 12.0 * scale).max(20.0);
                 let name_line = 14.0 * scale;
@@ -1315,45 +1388,65 @@ impl Gpu {
             }
 
             let display_name = if let Some((idx, ref text)) = editing_effect_name {
-                if idx == er_idx { format!("{}|", text) } else { er.name.clone() }
+                if idx == er_idx {
+                    format!("{}|", text)
+                } else {
+                    er.name.clone()
+                }
             } else {
                 er.name.clone()
             };
 
             let name_font = 10.0 * scale;
             let name_line = 14.0 * scale;
-            let mut buf = TextBuffer::new(
-                &mut self.font_system,
-                Metrics::new(name_font, name_line),
-            );
             let max_text_w = (region_screen_w - 12.0 * scale).max(20.0);
-            buf.set_size(
-                &mut self.font_system,
-                Some(max_text_w),
-                Some(name_line),
-            );
+
+            let key = TextLabelCacheKey {
+                text: display_name.clone(),
+                max_width_q: (max_text_w * 2.0) as i32,
+                font_size_q: (name_font * 2.0) as i32,
+            };
+            if let Some(pos) = old_er_cache.iter().position(|(k, _)| *k == key) {
+                new_er_cache.push(old_er_cache.swap_remove(pos));
+            } else {
+                let mut buf =
+                    TextBuffer::new(&mut self.font_system, Metrics::new(name_font, name_line));
+                buf.set_size(&mut self.font_system, Some(max_text_w), Some(name_line));
+                let attrs = Attrs::new()
+                    .family(Family::Name(".AppleSystemUIFont"))
+                    .weight(glyphon::Weight(500));
+                buf.set_text(
+                    &mut self.font_system,
+                    &display_name,
+                    attrs,
+                    Shaping::Advanced,
+                );
+                buf.shape_until_scroll(&mut self.font_system, false);
+                new_er_cache.push((key, buf));
+            }
+
             let is_editing = editing_effect_name.map_or(false, |(idx, _)| idx == er_idx);
             let alpha = if is_editing { 255 } else { 180 };
-            let attrs = Attrs::new()
-                .family(Family::Name(".AppleSystemUIFont"))
-                .weight(glyphon::Weight(500));
-            buf.set_text(&mut self.font_system, &display_name, attrs, Shaping::Advanced);
-            buf.shape_until_scroll(&mut self.font_system, false);
-            text_buffers.push(buf);
-            text_meta.push((
+            er_label_meta.push((
                 name_screen_x,
                 name_screen_y,
                 TextColor::rgba(255, 255, 255, alpha),
                 full_bounds,
             ));
         }
+        self.cached_er_label_bufs = new_er_cache;
 
-        // Waveform sample name labels (world-space -> screen-space)
+        // Waveform sample name labels (cached shaping, positions recomputed each frame)
+        let mut old_wf_cache = std::mem::take(&mut self.cached_wf_label_bufs);
+        let mut new_wf_cache: Vec<(TextLabelCacheKey, TextBuffer)> = Vec::new();
+        let mut wf_label_meta: Vec<(f32, f32, TextColor, TextBounds)> = Vec::new();
         for (wf_idx, wf) in waveforms.iter().enumerate() {
             let wf_right = wf.position[0] + wf.size[0];
             let wf_bottom = wf.position[1] + wf.size[1];
-            if wf_right < world_left || wf.position[0] > world_right
-                || wf_bottom < world_top || wf.position[1] > world_bottom
+            if wf_right < world_left
+                || wf.position[0] > world_right
+                || wf_bottom < world_top
+                || wf.position[1] > world_bottom
             {
                 continue;
             }
@@ -1368,11 +1461,9 @@ impl Gpu {
             let name_screen_x = (name_x_world - camera.position[0]) * camera.zoom;
             let name_screen_y = (name_y_world - camera.position[1]) * camera.zoom;
 
-            // Skip if full-screen overlay is open
             if settings_window.is_some() || command_palette.is_some() {
                 continue;
             }
-            // Skip if overlapping context menu
             if let Some((cm_pos, cm_size)) = ctx_menu_rect {
                 let max_text_w = (clip_screen_w - 12.0 * scale).max(20.0);
                 let name_line = 14.0 * scale;
@@ -1386,49 +1477,68 @@ impl Gpu {
             }
 
             let display_name = if let Some((idx, ref text)) = editing_waveform_name {
-                if idx == wf_idx { format!("{}|", text) } else { wf.audio.filename.clone() }
+                if idx == wf_idx {
+                    format!("{}|", text)
+                } else {
+                    wf.audio.filename.clone()
+                }
             } else {
                 wf.audio.filename.clone()
             };
 
             let name_font = 10.0 * scale;
             let name_line = 14.0 * scale;
-            let mut buf = TextBuffer::new(
-                &mut self.font_system,
-                Metrics::new(name_font, name_line),
-            );
             let max_text_w = (clip_screen_w - 12.0 * scale).max(20.0);
-            buf.set_size(
-                &mut self.font_system,
-                Some(max_text_w),
-                Some(name_line),
-            );
+
+            let key = TextLabelCacheKey {
+                text: display_name.clone(),
+                max_width_q: (max_text_w * 2.0) as i32,
+                font_size_q: (name_font * 2.0) as i32,
+            };
+            if let Some(pos) = old_wf_cache.iter().position(|(k, _)| *k == key) {
+                new_wf_cache.push(old_wf_cache.swap_remove(pos));
+            } else {
+                let mut buf =
+                    TextBuffer::new(&mut self.font_system, Metrics::new(name_font, name_line));
+                buf.set_size(&mut self.font_system, Some(max_text_w), Some(name_line));
+                let attrs = Attrs::new()
+                    .family(Family::Name(".AppleSystemUIFont"))
+                    .weight(glyphon::Weight(500));
+                buf.set_text(
+                    &mut self.font_system,
+                    &display_name,
+                    attrs,
+                    Shaping::Advanced,
+                );
+                buf.shape_until_scroll(&mut self.font_system, false);
+                new_wf_cache.push((key, buf));
+            }
+
             let is_editing = editing_waveform_name.map_or(false, |(idx, _)| idx == wf_idx);
             let alpha = if is_editing { 255 } else { 180 };
-            let attrs = Attrs::new()
-                .family(Family::Name(".AppleSystemUIFont"))
-                .weight(glyphon::Weight(500));
-            buf.set_text(&mut self.font_system, &display_name, attrs, Shaping::Advanced);
-            buf.shape_until_scroll(&mut self.font_system, false);
-            text_buffers.push(buf);
-            text_meta.push((
+            wf_label_meta.push((
                 name_screen_x,
                 name_screen_y,
                 TextColor::rgba(255, 255, 255, alpha),
                 full_bounds,
             ));
         }
+        self.cached_wf_label_bufs = new_wf_cache;
 
-        // Effect region plugin name labels (world-space -> screen-space)
+        // Effect region plugin name labels (cached shaping, positions recomputed each frame)
+        let mut old_plugin_cache = std::mem::take(&mut self.cached_plugin_label_bufs);
+        let mut new_plugin_cache: Vec<(TextLabelCacheKey, TextBuffer)> = Vec::new();
+        let mut plugin_label_meta: Vec<(f32, f32, TextColor, TextBounds)> = Vec::new();
         for er in effect_regions {
-            // Skip entire loop if full-screen overlay is open
             if settings_window.is_some() || command_palette.is_some() {
                 break;
             }
             let er_right = er.position[0] + er.size[0];
             let er_bottom = er.position[1] + er.size[1];
-            if er_right < world_left || er.position[0] > world_right
-                || er_bottom < world_top || er.position[1] > world_bottom
+            if er_right < world_left
+                || er.position[0] > world_right
+                || er_bottom < world_top
+                || er.position[1] > world_bottom
             {
                 continue;
             }
@@ -1439,7 +1549,6 @@ impl Gpu {
                 let pill_w_screen = rect.size[0] * camera.zoom;
                 let pill_h_screen = rect.size[1] * camera.zoom;
 
-                // Skip if overlapping context menu
                 if let Some((cm_pos, cm_size)) = ctx_menu_rect {
                     if screen_x + pill_w_screen > cm_pos[0]
                         && screen_x < cm_pos[0] + cm_size[0]
@@ -1453,22 +1562,30 @@ impl Gpu {
                 let name = &er.chain[i].plugin_name;
                 let label_font = 10.0 * scale;
                 let label_line = 14.0 * scale;
-                let mut buf = TextBuffer::new(
-                    &mut self.font_system,
-                    Metrics::new(label_font, label_line),
-                );
-                buf.set_size(
-                    &mut self.font_system,
-                    Some(pill_w_screen - 8.0),
-                    Some(pill_h_screen),
-                );
-                let attrs = Attrs::new()
-                    .family(Family::Name(".AppleSystemUIFont"))
-                    .weight(glyphon::Weight(500));
-                buf.set_text(&mut self.font_system, name, attrs, Shaping::Advanced);
-                buf.shape_until_scroll(&mut self.font_system, false);
-                text_buffers.push(buf);
-                text_meta.push((
+                let max_w = pill_w_screen - 8.0;
+
+                let key = TextLabelCacheKey {
+                    text: name.clone(),
+                    max_width_q: (max_w * 2.0) as i32,
+                    font_size_q: (label_font * 2.0) as i32,
+                };
+                if let Some(pos) = old_plugin_cache.iter().position(|(k, _)| *k == key) {
+                    new_plugin_cache.push(old_plugin_cache.swap_remove(pos));
+                } else {
+                    let mut buf = TextBuffer::new(
+                        &mut self.font_system,
+                        Metrics::new(label_font, label_line),
+                    );
+                    buf.set_size(&mut self.font_system, Some(max_w), Some(pill_h_screen));
+                    let attrs = Attrs::new()
+                        .family(Family::Name(".AppleSystemUIFont"))
+                        .weight(glyphon::Weight(500));
+                    buf.set_text(&mut self.font_system, name, attrs, Shaping::Advanced);
+                    buf.shape_until_scroll(&mut self.font_system, false);
+                    new_plugin_cache.push((key, buf));
+                }
+
+                plugin_label_meta.push((
                     screen_x + 4.0 * scale,
                     screen_y + (pill_h_screen - label_line) * 0.5,
                     TextColor::rgba(255, 255, 255, 220),
@@ -1476,6 +1593,7 @@ impl Gpu {
                 ));
             }
         }
+        self.cached_plugin_label_bufs = new_plugin_cache;
 
         // Transport panel time text
         {
@@ -1535,7 +1653,7 @@ impl Gpu {
                 &mut self.font_system,
                 Metrics::new(te.font_size, te.line_height),
             );
-            buf.set_size(&mut self.font_system, Some(te.max_width), Some(te.line_height));
+            buf.set_size(&mut self.font_system, Some(te.max_width), None);
             buf.set_text(
                 &mut self.font_system,
                 &te.text,
@@ -1564,56 +1682,57 @@ impl Gpu {
         if let Some(br) = sample_browser {
             // Skip all browser text when a full-screen overlay is open
             if settings_window.is_none() && command_palette.is_none() {
-            let panel_w = br.panel_width(scale);
-            let header_h = browser::HEADER_HEIGHT * scale;
-            for (idx, te) in br.cached_text.iter().enumerate() {
-                if idx >= self.browser_text_buffers.len() {
-                    break;
-                }
-                let actual_y = if te.is_header {
-                    te.base_y
-                } else {
-                    te.base_y - br.scroll_offset
-                };
-                if !te.is_header && (actual_y + te.line_height < header_h || actual_y > h) {
-                    continue;
-                }
-                // Skip if overlapping context menu
-                if let Some((cm_pos, cm_size)) = ctx_menu_rect {
-                    let text_right = panel_w - 8.0 * scale;
-                    if te.x + text_right > cm_pos[0]
-                        && te.x < cm_pos[0] + cm_size[0]
-                        && actual_y + te.line_height > cm_pos[1]
-                        && actual_y < cm_pos[1] + cm_size[1]
-                    {
+                let panel_w = br.panel_width(scale);
+                let header_h = browser::HEADER_HEIGHT * scale;
+                for (idx, te) in br.cached_text.iter().enumerate() {
+                    if idx >= self.browser_text_buffers.len() {
+                        break;
+                    }
+                    let actual_y = if te.is_header {
+                        te.base_y
+                    } else {
+                        te.base_y - br.scroll_offset
+                    };
+                    if !te.is_header && (actual_y + te.line_height < header_h || actual_y > h) {
                         continue;
                     }
+                    let clip_top = if actual_y < header_h {
+                        header_h
+                    } else {
+                        actual_y
+                    };
+                    let mut clip_right = (panel_w - 8.0 * scale) as i32;
+                    if let Some((cm_pos, cm_size)) = ctx_menu_rect {
+                        let overlaps = actual_y + te.line_height > cm_pos[1]
+                            && actual_y < cm_pos[1] + cm_size[1]
+                            && te.x < cm_pos[0] + cm_size[0];
+                        if overlaps {
+                            clip_right = clip_right.min(cm_pos[0] as i32);
+                        }
+                    }
+                    if clip_right <= te.x as i32 {
+                        continue;
+                    }
+                    browser_text_areas.push(TextArea {
+                        buffer: &self.browser_text_buffers[idx],
+                        left: te.x,
+                        top: actual_y,
+                        scale: 1.0,
+                        default_color: TextColor::rgba(
+                            te.color[0],
+                            te.color[1],
+                            te.color[2],
+                            te.color[3],
+                        ),
+                        bounds: TextBounds {
+                            left: 0,
+                            top: clip_top as i32,
+                            right: clip_right,
+                            bottom: (actual_y + te.line_height) as i32,
+                        },
+                        custom_glyphs: &[],
+                    });
                 }
-                let clip_top = if actual_y < header_h {
-                    header_h
-                } else {
-                    actual_y
-                };
-                browser_text_areas.push(TextArea {
-                    buffer: &self.browser_text_buffers[idx],
-                    left: te.x,
-                    top: actual_y,
-                    scale: 1.0,
-                    default_color: TextColor::rgba(
-                        te.color[0],
-                        te.color[1],
-                        te.color[2],
-                        te.color[3],
-                    ),
-                    bounds: TextBounds {
-                        left: 0,
-                        top: clip_top as i32,
-                        right: (panel_w - 8.0 * scale) as i32,
-                        bottom: (actual_y + te.line_height) as i32,
-                    },
-                    custom_glyphs: &[],
-                });
-            }
             }
         }
 
@@ -1629,7 +1748,44 @@ impl Gpu {
             },
         );
 
-        let text_areas: Vec<TextArea> = browser_text_areas.into_iter().chain(other_areas).collect();
+        fn cached_label_area<'a>(
+            entry: &'a (TextLabelCacheKey, TextBuffer),
+            meta: &(f32, f32, TextColor, TextBounds),
+        ) -> TextArea<'a> {
+            let &(left, top, color, bounds) = meta;
+            TextArea {
+                buffer: &entry.1,
+                left,
+                top,
+                scale: 1.0,
+                bounds,
+                default_color: color,
+                custom_glyphs: &[],
+            }
+        }
+        let wf_areas = self
+            .cached_wf_label_bufs
+            .iter()
+            .zip(wf_label_meta.iter())
+            .map(|(e, m)| cached_label_area(e, m));
+        let er_areas = self
+            .cached_er_label_bufs
+            .iter()
+            .zip(er_label_meta.iter())
+            .map(|(e, m)| cached_label_area(e, m));
+        let plugin_areas = self
+            .cached_plugin_label_bufs
+            .iter()
+            .zip(plugin_label_meta.iter())
+            .map(|(e, m)| cached_label_area(e, m));
+
+        let text_areas: Vec<TextArea> = browser_text_areas
+            .into_iter()
+            .chain(other_areas)
+            .chain(wf_areas)
+            .chain(er_areas)
+            .chain(plugin_areas)
+            .collect();
 
         self.text_renderer
             .prepare(

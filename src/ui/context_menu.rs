@@ -1,5 +1,5 @@
-use crate::ui::palette::CommandAction;
 use crate::settings::{AdaptiveGridSize, FixedGrid, GridMode, Settings};
+use crate::ui::palette::CommandAction;
 use crate::InstanceRaw;
 
 pub const CTX_MENU_WIDTH: f32 = 220.0;
@@ -17,9 +17,13 @@ const INLINE_PILL_HEIGHT: f32 = 22.0;
 pub enum MenuContext {
     Canvas,
     Grid,
-    Selection { has_waveforms: bool, has_effect_region: bool },
+    Selection {
+        has_waveforms: bool,
+        has_effect_region: bool,
+    },
     ComponentDef,
     ComponentInstance,
+    BrowserEntry,
 }
 
 pub struct ContextMenuItem {
@@ -72,15 +76,21 @@ fn grid_entries(settings: &Settings) -> Vec<ContextMenuEntry> {
         InlinePill {
             label: "Adaptive",
             action: CommandAction::SetGridAdaptive(
-                if let GridMode::Adaptive(s) = settings.grid_mode { s } else { AdaptiveGridSize::Medium }
+                if let GridMode::Adaptive(s) = settings.grid_mode {
+                    s
+                } else {
+                    AdaptiveGridSize::Medium
+                },
             ),
             active: is_adaptive,
         },
         InlinePill {
             label: "Fixed",
-            action: CommandAction::SetGridFixed(
-                if let GridMode::Fixed(f) = settings.grid_mode { f } else { FixedGrid::Quarter }
-            ),
+            action: CommandAction::SetGridFixed(if let GridMode::Fixed(f) = settings.grid_mode {
+                f
+            } else {
+                FixedGrid::Quarter
+            }),
             active: !is_adaptive,
         },
     ]));
@@ -95,11 +105,14 @@ fn grid_entries(settings: &Settings) -> Vec<ContextMenuEntry> {
             AdaptiveGridSize::Narrowest,
         ];
         entries.push(ContextMenuEntry::InlineGroup(
-            sizes.iter().map(|&s| InlinePill {
-                label: s.label(),
-                action: CommandAction::SetGridAdaptive(s),
-                active: matches!(settings.grid_mode, GridMode::Adaptive(cur) if cur == s),
-            }).collect(),
+            sizes
+                .iter()
+                .map(|&s| InlinePill {
+                    label: s.label(),
+                    action: CommandAction::SetGridAdaptive(s),
+                    active: matches!(settings.grid_mode, GridMode::Adaptive(cur) if cur == s),
+                })
+                .collect(),
         ));
     } else {
         let fine = [
@@ -109,11 +122,13 @@ fn grid_entries(settings: &Settings) -> Vec<ContextMenuEntry> {
             FixedGrid::Bar1,
         ];
         entries.push(ContextMenuEntry::InlineGroup(
-            fine.iter().map(|&f| InlinePill {
-                label: f.label(),
-                action: CommandAction::SetGridFixed(f),
-                active: matches!(settings.grid_mode, GridMode::Fixed(cur) if cur == f),
-            }).collect(),
+            fine.iter()
+                .map(|&f| InlinePill {
+                    label: f.label(),
+                    action: CommandAction::SetGridFixed(f),
+                    active: matches!(settings.grid_mode, GridMode::Fixed(cur) if cur == f),
+                })
+                .collect(),
         ));
         let subdivisions = [
             FixedGrid::Half,
@@ -123,11 +138,14 @@ fn grid_entries(settings: &Settings) -> Vec<ContextMenuEntry> {
             FixedGrid::ThirtySecond,
         ];
         entries.push(ContextMenuEntry::InlineGroup(
-            subdivisions.iter().map(|&f| InlinePill {
-                label: f.label(),
-                action: CommandAction::SetGridFixed(f),
-                active: matches!(settings.grid_mode, GridMode::Fixed(cur) if cur == f),
-            }).collect(),
+            subdivisions
+                .iter()
+                .map(|&f| InlinePill {
+                    label: f.label(),
+                    action: CommandAction::SetGridFixed(f),
+                    active: matches!(settings.grid_mode, GridMode::Fixed(cur) if cur == f),
+                })
+                .collect(),
         ));
     }
 
@@ -153,7 +171,11 @@ fn grid_entries(settings: &Settings) -> Vec<ContextMenuEntry> {
     }));
     entries.push(ContextMenuEntry::Separator);
     entries.push(ContextMenuEntry::Item(ContextMenuItem {
-        label: if settings.grid_enabled { "Disable Grid" } else { "Enable Grid" },
+        label: if settings.grid_enabled {
+            "Disable Grid"
+        } else {
+            "Enable Grid"
+        },
         shortcut: "",
         action: CommandAction::ToggleGrid,
         checked: false,
@@ -223,7 +245,10 @@ impl ContextMenu {
                     checked: false,
                 }),
             ],
-            MenuContext::Selection { has_waveforms, has_effect_region } => {
+            MenuContext::Selection {
+                has_waveforms,
+                has_effect_region,
+            } => {
                 let mut entries = vec![];
                 if has_effect_region {
                     entries.push(ContextMenuEntry::Item(ContextMenuItem {
@@ -301,6 +326,12 @@ impl ContextMenu {
                 }),
             ],
             MenuContext::Grid => grid_entries(settings),
+            MenuContext::BrowserEntry => vec![ContextMenuEntry::Item(ContextMenuItem {
+                label: "Reveal in Finder",
+                shortcut: "⌥⌘R",
+                action: CommandAction::RevealInFinder,
+                checked: false,
+            })],
         };
         Self {
             position: pos,
@@ -424,7 +455,7 @@ impl ContextMenu {
         out.push(InstanceRaw {
             position: pos,
             size,
-            color: [0.16, 0.16, 0.19, 0.98],
+            color: [0.16, 0.16, 0.19, 1.0],
             border_radius: CTX_MENU_BORDER_RADIUS * scale,
         });
 

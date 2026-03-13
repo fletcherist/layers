@@ -38,7 +38,7 @@ pub struct ToastTextElement {
 }
 
 const TOAST_WIDTH: f32 = 320.0;
-const TOAST_HEIGHT: f32 = 40.0;
+const TOAST_HEIGHT: f32 = 52.0;
 const TOAST_MARGIN: f32 = 16.0;
 const TOAST_GAP: f32 = 8.0;
 const TOAST_BORDER_RADIUS: f32 = 8.0;

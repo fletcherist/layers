@@ -20,6 +20,8 @@ pub struct StoredWaveform {
     pub fade_in_px: f32,
     pub fade_out_px: f32,
     pub sample_rate: u32,
+    pub volume: f32,
+    pub disabled: bool,
 }
 
 #[derive(Clone, SurrealValue)]
@@ -82,6 +84,15 @@ pub struct StoredPeaks {
     pub block_size: u64,
     pub left_peaks: Vec<u8>,
     pub right_peaks: Vec<u8>,
+}
+
+// ---------------------------------------------------------------------------
+// Project metadata (project.json in project folder)
+// ---------------------------------------------------------------------------
+
+#[derive(serde::Serialize, serde::Deserialize)]
+pub struct ProjectMeta {
+    pub name: String,
 }
 
 // ---------------------------------------------------------------------------
@@ -181,11 +192,14 @@ impl Storage {
                 self.current_project_path = Some(path.to_path_buf());
                 // Check if this is a temp project by looking at the index
                 let key = path.to_string_lossy().to_string();
-                self.is_temp = self.rt.block_on(async {
-                    let entry: Option<ProjectIndexEntry> =
-                        self.index_db.select(("projects", &*key)).await.ok()?;
-                    entry.map(|e| e.is_temp)
-                }).unwrap_or(false);
+                self.is_temp = self
+                    .rt
+                    .block_on(async {
+                        let entry: Option<ProjectIndexEntry> =
+                            self.index_db.select(("projects", &*key)).await.ok()?;
+                        entry.map(|e| e.is_temp)
+                    })
+                    .unwrap_or(false);
                 log::info!("Opened project DB at {:?} (temp={})", db_path, self.is_temp);
                 true
             }
@@ -286,6 +300,31 @@ impl Storage {
     }
 
     // -----------------------------------------------------------------------
+    // project.json
+    // -----------------------------------------------------------------------
+
+    pub fn write_project_json(&self, name: &str) {
+        let path = match &self.current_project_path {
+            Some(p) => p.join("project.json"),
+            None => return,
+        };
+        let meta = ProjectMeta {
+            name: name.to_string(),
+        };
+        if let Ok(json) = serde_json::to_string_pretty(&meta) {
+            if let Err(e) = std::fs::write(&path, json) {
+                log::error!("Failed to write project.json: {e}");
+            }
+        }
+    }
+
+    pub fn read_project_json(path: &Path) -> Option<ProjectMeta> {
+        let json_path = path.join("project.json");
+        let contents = std::fs::read_to_string(&json_path).ok()?;
+        serde_json::from_str(&contents).ok()
+    }
+
+    // -----------------------------------------------------------------------
     // Project state (per-project DB)
     // -----------------------------------------------------------------------
 
@@ -294,6 +333,9 @@ impl Storage {
             Some(db) => db,
             None => return,
         };
+
+        self.write_project_json(&state.name);
+
         let result = self.rt.block_on(async {
             let _: Option<ProjectState> = db.upsert(("state", "main")).content(state).await?;
             Ok::<(), surrealdb::Error>(())
@@ -305,7 +347,6 @@ impl Storage {
         // Update index entry name + timestamp
         if let Some(path) = &self.current_project_path {
             let key = path.to_string_lossy().to_string();
-            // We'd need the name — update_index_timestamp is enough
             self.update_index_timestamp(&key);
         }
     }
@@ -467,8 +508,7 @@ impl Storage {
 
     fn delete_index_entry(&self, key: &str) {
         let _ = self.rt.block_on(async {
-            let _: Option<ProjectIndexEntry> =
-                self.index_db.delete(("projects", key)).await?;
+            let _: Option<ProjectIndexEntry> = self.index_db.delete(("projects", key)).await?;
             Ok::<(), surrealdb::Error>(())
         });
     }
@@ -489,7 +529,6 @@ impl Storage {
             Some(())
         });
     }
-
 }
 
 // ---------------------------------------------------------------------------

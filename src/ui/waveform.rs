@@ -77,6 +77,8 @@ pub struct WaveformView {
     pub border_radius: f32,
     pub fade_in_px: f32,
     pub fade_out_px: f32,
+    pub volume: f32,
+    pub disabled: bool,
 }
 
 
@@ -114,12 +116,13 @@ pub fn build_waveform_instances(
     is_selected: bool,
 ) -> Vec<InstanceRaw> {
     let mut out = Vec::new();
+    let alpha_mul = if wf.disabled { 0.25 } else { 1.0 };
 
     let bg_color = [
         wf.color[0] * 0.15,
         wf.color[1] * 0.15,
         wf.color[2] * 0.15,
-        0.92,
+        0.92 * alpha_mul,
     ];
     let br = (wf.border_radius).min(6.0 / camera.zoom);
     out.push(InstanceRaw {
@@ -131,7 +134,7 @@ pub fn build_waveform_instances(
 
     if is_hovered && !is_selected {
         let bw = 2.0 / camera.zoom;
-        let bc = [wf.color[0], wf.color[1], wf.color[2], 0.6];
+        let bc = [wf.color[0], wf.color[1], wf.color[2], 0.6 * alpha_mul];
         push_border(&mut out, wf.position, wf.size, bw, bc);
     }
 
@@ -142,7 +145,7 @@ pub fn build_waveform_instances(
             wf.position[1] + wf.size[1] * 0.5 - center_line_h * 0.5,
         ],
         size: [wf.size[0], center_line_h],
-        color: [1.0, 1.0, 1.0, 0.08],
+        color: [1.0, 1.0, 1.0, 0.08 * alpha_mul],
         border_radius: 0.0,
     });
 
@@ -170,7 +173,7 @@ pub fn build_waveform_instances(
 
     // Fade curve lines
     let line_w = 1.5 / camera.zoom;
-    let curve_color = [wf.color[0], wf.color[1], wf.color[2], 0.8];
+    let curve_color = [wf.color[0], wf.color[1], wf.color[2], 0.8 * alpha_mul];
 
     if has_fade_in {
         let x0 = wf.position[0];
@@ -258,6 +261,7 @@ fn channel_triangles(
     world_right: f32,
     fade_in_px: f32,
     fade_out_px: f32,
+    volume: f32,
 ) -> Vec<WaveformVertex> {
     let mut verts = Vec::new();
     if samples.is_empty() || wf_size[0] <= 0.0 {
@@ -300,7 +304,7 @@ fn channel_triangles(
 
             let x_in_clip = wx - wf_pos[0];
             let fg = fade_gain_at(x_in_clip, wf_size[0], fade_in_px, fade_out_px);
-            let amp = peak * fg;
+            let amp = peak * fg * volume;
 
             if first {
                 prev_x = wx;
@@ -336,13 +340,13 @@ fn channel_triangles(
         let mut prev_x = wf_pos[0] + vis_start_sample as f32 * world_per_sample;
         let x_in_clip = prev_x - wf_pos[0];
         let fg = fade_gain_at(x_in_clip, wf_size[0], fade_in_px, fade_out_px);
-        let mut prev_val = samples[vis_start_sample] * fg;
+        let mut prev_val = samples[vis_start_sample] * fg * volume;
 
         for si in (vis_start_sample + 1)..vis_end_sample {
             let wx = wf_pos[0] + si as f32 * world_per_sample;
             let x_in_clip = wx - wf_pos[0];
             let fg = fade_gain_at(x_in_clip, wf_size[0], fade_in_px, fade_out_px);
-            let val = samples[si] * fg;
+            let val = samples[si] * fg * volume;
 
             push_wave_quad(
                 &mut verts, prev_x, prev_val, wx, val, center_y, half_h, direction, feather, color,
@@ -542,6 +546,9 @@ pub fn build_waveform_triangles(
         peak_color[1] = (peak_color[1] + 0.1).min(1.0);
         peak_color[2] = (peak_color[2] + 0.1).min(1.0);
     }
+    if wf.disabled {
+        peak_color[3] *= 0.25;
+    }
 
     let padding = wf.size[1] * 0.06;
     let center_y = wf.position[1] + wf.size[1] * 0.5;
@@ -564,6 +571,7 @@ pub fn build_waveform_triangles(
         world_right,
         wf.fade_in_px,
         wf.fade_out_px,
+        wf.volume,
     ));
 
     all_verts.extend(channel_triangles(
@@ -581,6 +589,7 @@ pub fn build_waveform_triangles(
         world_right,
         wf.fade_in_px,
         wf.fade_out_px,
+        wf.volume,
     ));
 
     all_verts

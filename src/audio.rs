@@ -36,6 +36,7 @@ struct PlaybackClip {
     height: f32,
     fade_in_secs: f64,
     fade_out_secs: f64,
+    volume: f32,
 }
 
 pub struct AudioEffectRegion {
@@ -87,7 +88,8 @@ impl AudioEngine {
         let host = cpal::default_host();
         let device = match device_name {
             Some(name) if name != "No Device" => {
-                let found = host.output_devices()
+                let found = host
+                    .output_devices()
                     .ok()?
                     .find(|d| d.name().ok().as_deref() == Some(name))
                     .or_else(|| {
@@ -97,7 +99,10 @@ impl AudioEngine {
                         })
                     });
                 if found.is_none() {
-                    println!("  Audio device '{}' not available as output, falling back to default", name);
+                    println!(
+                        "  Audio device '{}' not available as output, falling back to default",
+                        name
+                    );
                 }
                 found.or_else(|| host.default_output_device())
             }
@@ -174,7 +179,7 @@ impl AudioEngine {
                                         clip.fade_in_secs,
                                         clip.fade_out_secs,
                                     );
-                                    mix += clip.buffer[source_idx] * fg;
+                                    mix += clip.buffer[source_idx] * fg * clip.volume;
                                 }
                             }
                         }
@@ -235,7 +240,8 @@ impl AudioEngine {
                                                         clip.fade_in_secs,
                                                         clip.fade_out_secs,
                                                     );
-                                                    region_mix += clip.buffer[source_idx] * fg;
+                                                    region_mix +=
+                                                        clip.buffer[source_idx] * fg * clip.volume;
                                                 }
                                             }
                                         }
@@ -297,7 +303,8 @@ impl AudioEngine {
                                                         clip.fade_in_secs,
                                                         clip.fade_out_secs,
                                                     );
-                                                    overlap_dry += clip.buffer[source_idx] * fg;
+                                                    overlap_dry +=
+                                                        clip.buffer[source_idx] * fg * clip.volume;
                                                 }
                                             }
                                         }
@@ -377,6 +384,7 @@ impl AudioEngine {
         audio_clips: &[AudioClipData],
         fade_ins_px: &[f32],
         fade_outs_px: &[f32],
+        volumes: &[f32],
     ) {
         let mut clips = self.clips.lock().unwrap();
         clips.clear();
@@ -389,6 +397,7 @@ impl AudioEngine {
             let start_secs = pos[0] as f64 / PIXELS_PER_SECOND as f64;
             let fi = fade_ins_px.get(i).copied().unwrap_or(0.0);
             let fo = fade_outs_px.get(i).copied().unwrap_or(0.0);
+            let vol = volumes.get(i).copied().unwrap_or(1.0);
             clips.push(PlaybackClip {
                 buffer: clip_data.samples.clone(),
                 source_sample_rate: clip_data.sample_rate,
@@ -398,6 +407,7 @@ impl AudioEngine {
                 height: size[1],
                 fade_in_secs: (fi / PIXELS_PER_SECOND) as f64,
                 fade_out_secs: (fo / PIXELS_PER_SECOND) as f64,
+                volume: vol,
             });
         }
     }
@@ -668,6 +678,7 @@ pub struct ExportClip {
     pub height: f32,
     pub fade_in_secs: f64,
     pub fade_out_secs: f64,
+    pub volume: f32,
 }
 
 pub fn render_to_wav(
@@ -714,7 +725,7 @@ pub fn render_to_wav(
                         clip.fade_in_secs,
                         clip.fade_out_secs,
                     );
-                    mix += clip.buffer[source_idx] * fg;
+                    mix += clip.buffer[source_idx] * fg * clip.volume;
                 }
             }
         }
@@ -769,7 +780,7 @@ pub fn render_to_wav(
                                 clip.fade_in_secs,
                                 clip.fade_out_secs,
                             );
-                            region_mix += clip.buffer[source_idx] * fg;
+                            region_mix += clip.buffer[source_idx] * fg * clip.volume;
                         }
                     }
                 }
@@ -815,7 +826,7 @@ pub fn render_to_wav(
                                 clip.fade_in_secs,
                                 clip.fade_out_secs,
                             );
-                            overlap_dry += clip.buffer[source_idx] * fg;
+                            overlap_dry += clip.buffer[source_idx] * fg * clip.volume;
                         }
                     }
                 }
@@ -902,6 +913,30 @@ fn decode_buffer(buffer: &AudioBufferRef, out: &mut Vec<f32>) {
             for i in 0..planes[0].len() {
                 for plane in planes.iter() {
                     out.push((plane[i] as f32 - 128.0) / 128.0);
+                }
+            }
+        }
+        AudioBufferRef::S24(buf) => {
+            let planes = buf.planes();
+            let planes = planes.planes();
+            if planes.is_empty() {
+                return;
+            }
+            for i in 0..planes[0].len() {
+                for plane in planes.iter() {
+                    out.push(plane[i].inner() as f32 / 8388607.0);
+                }
+            }
+        }
+        AudioBufferRef::U24(buf) => {
+            let planes = buf.planes();
+            let planes = planes.planes();
+            if planes.is_empty() {
+                return;
+            }
+            for i in 0..planes[0].len() {
+                for plane in planes.iter() {
+                    out.push((plane[i].inner() as f32 - 8388608.0) / 8388608.0);
                 }
             }
         }

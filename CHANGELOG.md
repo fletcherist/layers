@@ -1,3 +1,12 @@
+- Ableton-style Cmd+D duplicate: multi-select waveforms are duplicated as a group after the last sample ends (14.2k loc)
+- Add disable/enable sample toggle: press 0 to mute selected waveforms with reduced opacity, skipped during playback (14.2k loc)
+- Sample volume now scales waveform visualization amplitude in real-time (14.1k loc)
+- Add "Set Sample Volume" command to palette: per-clip volume fader with playback/export gain and persistence (14.1k loc)
+- Add "Reverse Sample" command to palette: reverses audio data of selected waveform clip with undo support (13.9k loc)
+- Cache text label shaping for waveform clips, effect regions, and plugin pills to avoid per-frame reshaping (13.8k loc)
+- Add project.json metadata file to project folders; derive project name from folder on Save As so projects are no longer stuck as "Untitled" (13.8k loc)
+- Ableton-style "Save changes?" dialog on close instead of auto-saving; track unsaved changes with project_dirty flag (13.8k loc)
+- Add "Reveal in Finder" context menu on right-click in sample browser (13.7k loc)
 - FPS optimization: viewport culling for all entity types, dirty tracking with generation counter, HashSet for O(1) selection lookups, HashMap for component lookups, reusable Vec allocations, O(n²) elimination in hit testing (13.7k loc)
 - 2026-03-13: Show grid sizes as inline horizontal pills in right-click context menu instead of vertical rows, Ableton-style (11.9k loc)
 - Add Ableton-style grid settings context menu: right-click canvas for adaptive/fixed musical grid, snap-to-grid, triplet mode, Cmd+1/2/3/4 shortcuts, grid enable/disable (11.8k loc)
@@ -42,3 +51,5 @@
 - 2026-03-11: Refactor context menu into separate `src/context_menu.rs` module
 - 2026-03-11: Remove demo shapes (dummy rectangles and circles) from default canvas
 default canvas
+- 2026-03-13: Real-time drag selection — samples highlight as you drag, not just on mouse-up (25.8k loc)
+- Right-click on empty canvas now unselects samples and opens the canvas context menu (14.2k loc)
