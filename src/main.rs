@@ -1,41 +1,31 @@
 mod audio;
 mod browser;
 mod component;
-mod context_menu;
 mod effects;
-mod palette;
-mod plugin_editor;
+mod gpu;
 mod settings;
 mod storage;
-mod waveform;
+mod ui;
+
+pub(crate) use gpu::{push_border, Camera, Gpu, InstanceRaw};
+pub(crate) use ui::transport::{TransportPanel, TRANSPORT_WIDTH};
 
 use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use audio::{load_audio_file, AudioClipData, AudioEngine, AudioRecorder, PIXELS_PER_SECOND};
-pub(crate) use waveform::WaveformObject;
-use waveform::{WaveformPeaks, WaveformVertex};
-use context_menu::{
-    ContextMenu, ContextMenuEntry, MenuContext, CTX_MENU_ITEM_HEIGHT, CTX_MENU_PADDING,
-    CTX_MENU_SECTION_HEIGHT, CTX_MENU_SEPARATOR_HEIGHT, CTX_MENU_WIDTH,
-};
+use ui::context_menu::{ContextMenu, MenuContext};
 use settings::GridMode;
-use palette::{
-    CommandAction, CommandPalette, PaletteMode, PaletteRow, COMMANDS, PALETTE_INPUT_HEIGHT,
-    PALETTE_ITEM_HEIGHT, PALETTE_PADDING, PALETTE_SECTION_HEIGHT, PALETTE_WIDTH,
-};
+use ui::palette::{CommandAction, CommandPalette, PaletteMode, PaletteRow, COMMANDS};
+pub(crate) use ui::waveform::WaveformView;
+use ui::waveform::{AudioData, WaveformPeaks, WaveformVertex};
 
-use bytemuck::{Pod, Zeroable};
-use glyphon::{
-    Attrs, Buffer as TextBuffer, Color as TextColor, Family, FontSystem, Metrics, Resolution,
-    Shaping, SwashCache, TextArea, TextAtlas, TextBounds, TextRenderer, Viewport,
-};
 use surrealdb::types::SurrealValue;
-use wgpu::util::DeviceExt;
 
+use muda::{MenuId, Submenu as MudaSubmenu};
 use settings::{Settings, SettingsWindow, CATEGORIES};
-use storage::{default_db_path, ProjectState, Storage};
+use storage::{default_base_path, ProjectState, Storage};
 use winit::{
     application::ApplicationHandler,
     event::{ElementState, MouseButton, MouseScrollDelta, WindowEvent},
@@ -44,199 +34,6 @@ use winit::{
     platform::macos::WindowAttributesExtMacOS,
     window::{CursorIcon, Window, WindowId},
 };
-use muda::{MenuId, Submenu as MudaSubmenu};
-
-// ---------------------------------------------------------------------------
-// Shader (WGSL)
-// ---------------------------------------------------------------------------
-
-const SHADER_SRC: &str = r#"
-struct Camera {
-    view_proj: mat4x4<f32>,
-}
-
-@group(0) @binding(0) var<uniform> camera: Camera;
-
-struct VertexOutput {
-    @builtin(position) clip_position: vec4<f32>,
-    @location(0) color: vec4<f32>,
-    @location(1) local_pos: vec2<f32>,
-    @location(2) rect_size: vec2<f32>,
-    @location(3) border_radius: f32,
-}
-
-@vertex
-fn vs_main(
-    @location(0) position: vec2<f32>,
-    @location(1) obj_pos: vec2<f32>,
-    @location(2) obj_size: vec2<f32>,
-    @location(3) obj_color: vec4<f32>,
-    @location(4) radius: f32,
-) -> VertexOutput {
-    var out: VertexOutput;
-    let world_pos = obj_pos + position * obj_size;
-    out.clip_position = camera.view_proj * vec4<f32>(world_pos, 0.0, 1.0);
-    out.color = obj_color;
-    out.local_pos = position * obj_size;
-    out.rect_size = obj_size;
-    out.border_radius = radius;
-    return out;
-}
-
-fn rounded_box_sdf(p: vec2<f32>, b: vec2<f32>, r: f32) -> f32 {
-    let q = abs(p) - b + vec2<f32>(r, r);
-    return length(max(q, vec2<f32>(0.0, 0.0))) + min(max(q.x, q.y), 0.0) - r;
-}
-
-@fragment
-fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-    let r = min(in.border_radius, min(in.rect_size.x, in.rect_size.y) * 0.5);
-    if (r < 0.01) {
-        return in.color;
-    }
-    let center = in.rect_size * 0.5;
-    let p = in.local_pos - center;
-    let d = rounded_box_sdf(p, center, r);
-    let fw = fwidth(d);
-    let alpha = 1.0 - smoothstep(0.0, fw, d);
-    return vec4<f32>(in.color.rgb, in.color.a * alpha);
-}
-"#;
-
-const WAVEFORM_SHADER_SRC: &str = r#"
-struct Camera {
-    view_proj: mat4x4<f32>,
-}
-
-@group(0) @binding(0) var<uniform> camera: Camera;
-
-struct WfOut {
-    @builtin(position) clip_position: vec4<f32>,
-    @location(0) color: vec4<f32>,
-    @location(1) edge_dist: f32,
-}
-
-@vertex
-fn wf_vs(
-    @location(0) pos: vec2<f32>,
-    @location(1) color: vec4<f32>,
-    @location(2) edge: f32,
-) -> WfOut {
-    var out: WfOut;
-    out.clip_position = camera.view_proj * vec4<f32>(pos, 0.0, 1.0);
-    out.color = color;
-    out.edge_dist = edge;
-    return out;
-}
-
-@fragment
-fn wf_fs(in: WfOut) -> @location(0) vec4<f32> {
-    let aa = 1.0 - smoothstep(0.0, 1.0, abs(in.edge_dist));
-    return vec4<f32>(in.color.rgb, in.color.a * aa);
-}
-"#;
-
-// ---------------------------------------------------------------------------
-// GPU data types
-// ---------------------------------------------------------------------------
-
-#[repr(C)]
-#[derive(Copy, Clone, Pod, Zeroable)]
-struct Vertex {
-    position: [f32; 2],
-}
-
-const QUAD_VERTICES: &[Vertex] = &[
-    Vertex {
-        position: [0.0, 0.0],
-    },
-    Vertex {
-        position: [1.0, 0.0],
-    },
-    Vertex {
-        position: [1.0, 1.0],
-    },
-    Vertex {
-        position: [0.0, 1.0],
-    },
-];
-
-const QUAD_INDICES: &[u16] = &[0, 1, 2, 0, 2, 3];
-
-#[repr(C)]
-#[derive(Copy, Clone, Pod, Zeroable)]
-pub struct InstanceRaw {
-    pub position: [f32; 2],
-    pub size: [f32; 2],
-    pub color: [f32; 4],
-    pub border_radius: f32,
-}
-
-#[repr(C)]
-#[derive(Copy, Clone, Pod, Zeroable)]
-struct CameraUniform {
-    view_proj: [[f32; 4]; 4],
-}
-
-const MAX_INSTANCES: usize = 16384;
-
-// ---------------------------------------------------------------------------
-// Camera
-// ---------------------------------------------------------------------------
-
-pub(crate) struct Camera {
-    pub(crate) position: [f32; 2],
-    pub(crate) zoom: f32,
-}
-
-impl Camera {
-    fn new() -> Self {
-        Self {
-            position: [-100.0, -50.0],
-            zoom: 1.0,
-        }
-    }
-
-    fn view_proj(&self, width: f32, height: f32) -> [[f32; 4]; 4] {
-        let z = self.zoom;
-        let cx = self.position[0];
-        let cy = self.position[1];
-        [
-            [2.0 * z / width, 0.0, 0.0, 0.0],
-            [0.0, -2.0 * z / height, 0.0, 0.0],
-            [0.0, 0.0, 1.0, 0.0],
-            [
-                -2.0 * z * cx / width - 1.0,
-                2.0 * z * cy / height + 1.0,
-                0.0,
-                1.0,
-            ],
-        ]
-    }
-
-    fn screen_to_world(&self, screen: [f32; 2]) -> [f32; 2] {
-        [
-            screen[0] / self.zoom + self.position[0],
-            screen[1] / self.zoom + self.position[1],
-        ]
-    }
-
-    fn zoom_at(&mut self, screen_pos: [f32; 2], factor: f32) {
-        let world = self.screen_to_world(screen_pos);
-        self.zoom = (self.zoom * factor).clamp(0.05, 200.0);
-        self.position[0] = world[0] - screen_pos[0] / self.zoom;
-        self.position[1] = world[1] - screen_pos[1] / self.zoom;
-    }
-}
-
-fn screen_ortho(width: f32, height: f32) -> [[f32; 4]; 4] {
-    [
-        [2.0 / width, 0.0, 0.0, 0.0],
-        [0.0, -2.0 / height, 0.0, 0.0],
-        [0.0, 0.0, 1.0, 0.0],
-        [-1.0, 1.0, 0.0, 1.0],
-    ]
-}
 
 // ---------------------------------------------------------------------------
 // Canvas objects
@@ -250,7 +47,7 @@ pub struct CanvasObject {
     pub border_radius: f32,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) enum HitTarget {
     Object(usize),
     Waveform(usize),
@@ -273,16 +70,16 @@ struct EffectRegionSnapshot {
 #[derive(Clone)]
 struct Snapshot {
     objects: Vec<CanvasObject>,
-    waveforms: Vec<WaveformObject>,
+    waveforms: Vec<WaveformView>,
     audio_clips: Vec<AudioClipData>,
     effect_regions: Vec<EffectRegionSnapshot>,
     components: Vec<component::ComponentDef>,
     component_instances: Vec<component::ComponentInstance>,
 }
 
-struct ExportRegion {
-    position: [f32; 2],
-    size: [f32; 2],
+pub(crate) struct ExportRegion {
+    pub(crate) position: [f32; 2],
+    pub(crate) size: [f32; 2],
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -301,8 +98,8 @@ const EXPORT_REGION_DEFAULT_HEIGHT: f32 = 300.0;
 const EXPORT_FILL_COLOR: [f32; 4] = [0.15, 0.70, 0.55, 0.10];
 const EXPORT_BORDER_COLOR: [f32; 4] = [0.20, 0.80, 0.60, 0.50];
 const EXPORT_RENDER_PILL_COLOR: [f32; 4] = [0.15, 0.65, 0.50, 0.85];
-const EXPORT_RENDER_PILL_W: f32 = 110.0;
-const EXPORT_RENDER_PILL_H: f32 = 22.0;
+pub(crate) const EXPORT_RENDER_PILL_W: f32 = 110.0;
+pub(crate) const EXPORT_RENDER_PILL_H: f32 = 22.0;
 
 enum DragState {
     None,
@@ -370,9 +167,12 @@ enum EffectRegionHover {
 #[derive(Clone)]
 enum ClipboardItem {
     Object(CanvasObject),
-    Waveform(WaveformObject, Option<AudioClipData>),
+    Waveform(WaveformView, Option<AudioClipData>),
     EffectRegion(effects::EffectRegion),
-    ComponentDef(component::ComponentDef, Vec<(WaveformObject, Option<AudioClipData>)>),
+    ComponentDef(
+        component::ComponentDef,
+        Vec<(WaveformView, Option<AudioClipData>)>,
+    ),
     ComponentInstance(component::ComponentInstance),
 }
 
@@ -403,272 +203,7 @@ const SEL_COLOR: [f32; 4] = [0.35, 0.65, 1.0, 0.8];
 // Audio formats supported via symphonia: wav, mp3, ogg, flac, aac
 const AUDIO_EXTENSIONS: &[&str] = &["wav", "mp3", "ogg", "flac", "aac", "m4a", "mp4"];
 
-// ---------------------------------------------------------------------------
-// Transport Panel (bottom-center playback status)
-// ---------------------------------------------------------------------------
-
-const TRANSPORT_WIDTH: f32 = 210.0;
-const TRANSPORT_HEIGHT: f32 = 36.0;
-const TRANSPORT_BOTTOM_MARGIN: f32 = 32.0;
-const FX_BUTTON_WIDTH: f32 = 42.0;
-const FX_BUTTON_GAP: f32 = 10.0;
-const EXPORT_BUTTON_WIDTH: f32 = 50.0;
-const EXPORT_BUTTON_GAP: f32 = 10.0;
-
-struct TransportPanel;
-
-impl TransportPanel {
-    fn panel_rect(screen_w: f32, screen_h: f32, scale: f32) -> ([f32; 2], [f32; 2]) {
-        let w = TRANSPORT_WIDTH * scale;
-        let h = TRANSPORT_HEIGHT * scale;
-        let x = (screen_w - w) * 0.5;
-        let y = screen_h - h - TRANSPORT_BOTTOM_MARGIN * scale;
-        ([x, y], [w, h])
-    }
-
-    fn fx_button_rect(screen_w: f32, screen_h: f32, scale: f32) -> ([f32; 2], [f32; 2]) {
-        let (tp_pos, tp_size) = Self::panel_rect(screen_w, screen_h, scale);
-        let w = FX_BUTTON_WIDTH * scale;
-        let h = tp_size[1];
-        let x = tp_pos[0] - w - FX_BUTTON_GAP * scale;
-        let y = tp_pos[1];
-        ([x, y], [w, h])
-    }
-
-    fn hit_fx_button(pos: [f32; 2], screen_w: f32, screen_h: f32, scale: f32) -> bool {
-        let (rp, rs) = Self::fx_button_rect(screen_w, screen_h, scale);
-        point_in_rect(pos, rp, rs)
-    }
-
-    fn record_button_rect(screen_w: f32, screen_h: f32, scale: f32) -> ([f32; 2], [f32; 2]) {
-        let (pos, size) = Self::panel_rect(screen_w, screen_h, scale);
-        let btn_size = 24.0 * scale;
-        let btn_x = pos[0] + size[0] - btn_size - 8.0 * scale;
-        let btn_y = pos[1] + (size[1] - btn_size) * 0.5;
-        ([btn_x, btn_y], [btn_size, btn_size])
-    }
-
-    fn build_instances(
-        screen_w: f32,
-        screen_h: f32,
-        scale: f32,
-        is_playing: bool,
-        is_recording: bool,
-    ) -> Vec<InstanceRaw> {
-        let mut out = Vec::new();
-        let (pos, size) = Self::panel_rect(screen_w, screen_h, scale);
-
-        // background pill
-        out.push(InstanceRaw {
-            position: pos,
-            size,
-            color: [0.12, 0.12, 0.16, 0.85],
-            border_radius: size[1] * 0.5,
-        });
-
-        let icon_x = pos[0] + 14.0 * scale;
-        let icon_cy = pos[1] + size[1] * 0.5;
-
-        if is_playing {
-            let bar_w = 3.0 * scale;
-            let bar_h = 12.0 * scale;
-            let gap = 4.0 * scale;
-            out.push(InstanceRaw {
-                position: [icon_x, icon_cy - bar_h * 0.5],
-                size: [bar_w, bar_h],
-                color: [1.0, 1.0, 1.0, 0.9],
-                border_radius: 1.0 * scale,
-            });
-            out.push(InstanceRaw {
-                position: [icon_x + bar_w + gap, icon_cy - bar_h * 0.5],
-                size: [bar_w, bar_h],
-                color: [1.0, 1.0, 1.0, 0.9],
-                border_radius: 1.0 * scale,
-            });
-        } else {
-            let tri_w = 10.0 * scale;
-            let tri_h = 12.0 * scale;
-            let steps = (tri_h * 3.0).ceil() as usize;
-            let step_h = tri_h / steps as f32;
-            let min_w = 1.5 * scale;
-            for i in 0..steps {
-                let t = (i as f32 + 0.5) / steps as f32;
-                let w = (tri_w * (1.0 - (2.0 * t - 1.0).abs())).max(min_w);
-                let sy = icon_cy - tri_h * 0.5 + i as f32 * step_h;
-                out.push(InstanceRaw {
-                    position: [icon_x, sy],
-                    size: [w, step_h + 0.5],
-                    color: [1.0, 1.0, 1.0, 0.9],
-                    border_radius: min_w * 0.5,
-                });
-            }
-        }
-
-        // record button: red circle (brighter when recording)
-        let (rbtn_pos, rbtn_size) = Self::record_button_rect(screen_w, screen_h, scale);
-        let dot_diameter = 12.0 * scale;
-        let dot_x = rbtn_pos[0] + (rbtn_size[0] - dot_diameter) * 0.5;
-        let dot_y = rbtn_pos[1] + (rbtn_size[1] - dot_diameter) * 0.5;
-
-        if is_recording {
-            // stop icon: rounded red square
-            let sq = 10.0 * scale;
-            let sq_x = rbtn_pos[0] + (rbtn_size[0] - sq) * 0.5;
-            let sq_y = rbtn_pos[1] + (rbtn_size[1] - sq) * 0.5;
-            out.push(InstanceRaw {
-                position: [sq_x, sq_y],
-                size: [sq, sq],
-                color: [0.95, 0.2, 0.2, 1.0],
-                border_radius: 2.0 * scale,
-            });
-        } else {
-            out.push(InstanceRaw {
-                position: [dot_x, dot_y],
-                size: [dot_diameter, dot_diameter],
-                color: [0.85, 0.25, 0.25, 0.9],
-                border_radius: dot_diameter * 0.5,
-            });
-        }
-
-        out
-    }
-
-    fn build_fx_button_instances(screen_w: f32, screen_h: f32, scale: f32) -> Vec<InstanceRaw> {
-        let mut out = Vec::new();
-        let (pos, size) = Self::fx_button_rect(screen_w, screen_h, scale);
-
-        out.push(InstanceRaw {
-            position: pos,
-            size,
-            color: [0.14, 0.12, 0.20, 0.85],
-            border_radius: size[1] * 0.5,
-        });
-
-        // "FX" text approximation: F shape + X shape using small bars
-        let cx = pos[0] + size[0] * 0.30;
-        let cy = pos[1] + size[1] * 0.5;
-        let bar = 2.0 * scale;
-
-        // F: vertical bar
-        let f_h = 10.0 * scale;
-        out.push(InstanceRaw {
-            position: [cx - 4.0 * scale, cy - f_h * 0.5],
-            size: [bar, f_h],
-            color: [0.70, 0.45, 1.00, 0.90],
-            border_radius: 0.0,
-        });
-        // F: top horizontal
-        out.push(InstanceRaw {
-            position: [cx - 4.0 * scale, cy - f_h * 0.5],
-            size: [6.0 * scale, bar],
-            color: [0.70, 0.45, 1.00, 0.90],
-            border_radius: 0.0,
-        });
-        // F: middle horizontal
-        out.push(InstanceRaw {
-            position: [cx - 4.0 * scale, cy - bar * 0.5],
-            size: [5.0 * scale, bar],
-            color: [0.70, 0.45, 1.00, 0.90],
-            border_radius: 0.0,
-        });
-
-        // "+" icon
-        let plus_cx = pos[0] + size[0] * 0.72;
-        let plus_h = 8.0 * scale;
-        let plus_w = 8.0 * scale;
-        out.push(InstanceRaw {
-            position: [plus_cx - plus_w * 0.5, cy - bar * 0.5],
-            size: [plus_w, bar],
-            color: [0.70, 0.45, 1.00, 0.70],
-            border_radius: 0.0,
-        });
-        out.push(InstanceRaw {
-            position: [plus_cx - bar * 0.5, cy - plus_h * 0.5],
-            size: [bar, plus_h],
-            color: [0.70, 0.45, 1.00, 0.70],
-            border_radius: 0.0,
-        });
-
-        out
-    }
-
-    fn contains(pos: [f32; 2], screen_w: f32, screen_h: f32, scale: f32) -> bool {
-        let (rp, rs) = Self::panel_rect(screen_w, screen_h, scale);
-        point_in_rect(pos, rp, rs)
-    }
-
-    fn hit_record_button(pos: [f32; 2], screen_w: f32, screen_h: f32, scale: f32) -> bool {
-        let (rp, rs) = Self::record_button_rect(screen_w, screen_h, scale);
-        point_in_rect(pos, rp, rs)
-    }
-
-    fn export_button_rect(screen_w: f32, screen_h: f32, scale: f32) -> ([f32; 2], [f32; 2]) {
-        let (tp_pos, tp_size) = Self::panel_rect(screen_w, screen_h, scale);
-        let w = EXPORT_BUTTON_WIDTH * scale;
-        let h = tp_size[1];
-        let x = tp_pos[0] + tp_size[0] + EXPORT_BUTTON_GAP * scale;
-        let y = tp_pos[1];
-        ([x, y], [w, h])
-    }
-
-    fn hit_export_button(pos: [f32; 2], screen_w: f32, screen_h: f32, scale: f32) -> bool {
-        let (rp, rs) = Self::export_button_rect(screen_w, screen_h, scale);
-        point_in_rect(pos, rp, rs)
-    }
-
-    fn build_export_button_instances(screen_w: f32, screen_h: f32, scale: f32) -> Vec<InstanceRaw> {
-        let mut out = Vec::new();
-        let (pos, size) = Self::export_button_rect(screen_w, screen_h, scale);
-
-        out.push(InstanceRaw {
-            position: pos,
-            size,
-            color: [0.10, 0.18, 0.16, 0.85],
-            border_radius: size[1] * 0.5,
-        });
-
-        let cy = pos[1] + size[1] * 0.5;
-        let bar = 2.0 * scale;
-
-        // Arrow-out icon: vertical bar + arrowhead pointing right
-        let icon_cx = pos[0] + size[0] * 0.38;
-        let arrow_h = 10.0 * scale;
-        // Vertical bar
-        out.push(InstanceRaw {
-            position: [icon_cx - bar * 0.5, cy - arrow_h * 0.5],
-            size: [bar, arrow_h],
-            color: [0.20, 0.75, 0.60, 0.90],
-            border_radius: 0.0,
-        });
-        // Horizontal bar (arrow shaft)
-        let shaft_w = 7.0 * scale;
-        out.push(InstanceRaw {
-            position: [icon_cx, cy - bar * 0.5],
-            size: [shaft_w, bar],
-            color: [0.20, 0.75, 0.60, 0.90],
-            border_radius: 0.0,
-        });
-        // Arrowhead: small chevron using two bars
-        let tip_x = icon_cx + shaft_w;
-        let chev = 4.0 * scale;
-        out.push(InstanceRaw {
-            position: [tip_x - chev * 0.3, cy - chev * 0.5],
-            size: [chev, bar],
-            color: [0.20, 0.75, 0.60, 0.90],
-            border_radius: 0.0,
-        });
-        out.push(InstanceRaw {
-            position: [tip_x - chev * 0.3, cy + chev * 0.5 - bar],
-            size: [chev, bar],
-            color: [0.20, 0.75, 0.60, 0.90],
-            border_radius: 0.0,
-        });
-
-        out
-    }
-}
-
-fn format_playback_time(secs: f64) -> String {
+pub(crate) fn format_playback_time(secs: f64) -> String {
     let minutes = (secs / 60.0) as u32;
     let s = secs % 60.0;
     format!("{}:{:04.1}", minutes, s)
@@ -678,14 +213,16 @@ fn format_playback_time(secs: f64) -> String {
 // Helpers
 // ---------------------------------------------------------------------------
 
-const DEFAULT_BPM: f32 = 120.0;
+pub(crate) const DEFAULT_BPM: f32 = 120.0;
 
 fn pixels_per_beat() -> f32 {
     audio::PIXELS_PER_SECOND * 60.0 / DEFAULT_BPM
 }
 
 /// Musical subdivision levels in beats: 32, 16, 8, 4, 2, 1, 1/2, 1/4, 1/8, 1/16, 1/32
-const BEAT_SUBDIVISIONS: &[f32] = &[32.0, 16.0, 8.0, 4.0, 2.0, 1.0, 0.5, 0.25, 0.125, 0.0625, 0.03125];
+const BEAT_SUBDIVISIONS: &[f32] = &[
+    32.0, 16.0, 8.0, 4.0, 2.0, 1.0, 0.5, 0.25, 0.125, 0.0625, 0.03125,
+];
 
 /// Returns (minor_spacing_world, beats_per_bar) for adaptive grid.
 /// Picks the subdivision where screen-px spacing is closest to the target.
@@ -713,7 +250,11 @@ fn grid_spacing_for_settings(settings: &Settings, zoom: f32) -> f32 {
         }
         GridMode::Fixed(fg) => {
             let ppb = pixels_per_beat();
-            let triplet_mul = if settings.triplet_grid { 2.0 / 3.0 } else { 1.0 };
+            let triplet_mul = if settings.triplet_grid {
+                2.0 / 3.0
+            } else {
+                1.0
+            };
             fg.beats() * ppb * triplet_mul
         }
     }
@@ -752,11 +293,11 @@ fn canonical_rect(a: [f32; 2], b: [f32; 2]) -> ([f32; 2], [f32; 2]) {
 
 /// Returns (waveform_index, is_fade_in) if the cursor is over a fade handle.
 fn hit_test_fade_handle(
-    waveforms: &[WaveformObject],
+    waveforms: &[WaveformView],
     world_pos: [f32; 2],
     camera: &Camera,
 ) -> Option<(usize, bool)> {
-    let handle_sz = waveform::FADE_HANDLE_SIZE / camera.zoom;
+    let handle_sz = ui::waveform::FADE_HANDLE_SIZE / camera.zoom;
     let hit_margin = handle_sz * 0.8;
     for (i, wf) in waveforms.iter().enumerate().rev() {
         let fi_cx = wf.position[0] + wf.fade_in_px;
@@ -776,7 +317,7 @@ fn hit_test_fade_handle(
 
 fn hit_test(
     objects: &[CanvasObject],
-    waveforms: &[WaveformObject],
+    waveforms: &[WaveformView],
     effect_regions: &[effects::EffectRegion],
     components: &[component::ComponentDef],
     component_instances: &[component::ComponentInstance],
@@ -789,7 +330,11 @@ fn hit_test(
         if let Some(def) = components.get(ec_idx) {
             for &wf_idx in def.waveform_indices.iter().rev() {
                 if wf_idx < waveforms.len() {
-                    if point_in_rect(world_pos, waveforms[wf_idx].position, waveforms[wf_idx].size) {
+                    if point_in_rect(
+                        world_pos,
+                        waveforms[wf_idx].position,
+                        waveforms[wf_idx].size,
+                    ) {
                         return Some(HitTarget::Waveform(wf_idx));
                     }
                 }
@@ -798,17 +343,27 @@ fn hit_test(
         return None;
     }
 
+    let wf_in_component: HashSet<usize> = components
+        .iter()
+        .flat_map(|c| c.waveform_indices.iter().copied())
+        .collect();
+    let comp_map: std::collections::HashMap<component::ComponentId, usize> = components
+        .iter()
+        .enumerate()
+        .map(|(i, c)| (c.id, i))
+        .collect();
+
     // Instances first (on top)
     for (i, inst) in component_instances.iter().enumerate().rev() {
-        if let Some(def) = components.iter().find(|c| c.id == inst.component_id) {
+        if let Some(&def_idx) = comp_map.get(&inst.component_id) {
+            let def = &components[def_idx];
             if point_in_rect(world_pos, inst.position, def.size) {
                 return Some(HitTarget::ComponentInstance(i));
             }
         }
     }
     for (i, wf) in waveforms.iter().enumerate().rev() {
-        let in_component = components.iter().any(|c| c.waveform_indices.contains(&i));
-        if in_component {
+        if wf_in_component.contains(&i) {
             continue;
         }
         if point_in_rect(world_pos, wf.position, wf.size) {
@@ -835,7 +390,7 @@ fn hit_test(
 
 fn targets_in_rect(
     objects: &[CanvasObject],
-    waveforms: &[WaveformObject],
+    waveforms: &[WaveformView],
     effect_regions: &[effects::EffectRegion],
     components: &[component::ComponentDef],
     component_instances: &[component::ComponentInstance],
@@ -850,7 +405,12 @@ fn targets_in_rect(
         if let Some(def) = components.get(ec_idx) {
             for &wf_idx in &def.waveform_indices {
                 if wf_idx < waveforms.len() {
-                    if rects_overlap(rect_pos, rect_size, waveforms[wf_idx].position, waveforms[wf_idx].size) {
+                    if rects_overlap(
+                        rect_pos,
+                        rect_size,
+                        waveforms[wf_idx].position,
+                        waveforms[wf_idx].size,
+                    ) {
                         result.push(HitTarget::Waveform(wf_idx));
                     }
                 }
@@ -859,14 +419,23 @@ fn targets_in_rect(
         return result;
     }
 
+    let wf_in_component: HashSet<usize> = components
+        .iter()
+        .flat_map(|c| c.waveform_indices.iter().copied())
+        .collect();
+    let comp_map: std::collections::HashMap<component::ComponentId, usize> = components
+        .iter()
+        .enumerate()
+        .map(|(i, c)| (c.id, i))
+        .collect();
+
     for (i, obj) in objects.iter().enumerate() {
         if rects_overlap(rect_pos, rect_size, obj.position, obj.size) {
             result.push(HitTarget::Object(i));
         }
     }
     for (i, wf) in waveforms.iter().enumerate() {
-        let in_component = components.iter().any(|c| c.waveform_indices.contains(&i));
-        if in_component {
+        if wf_in_component.contains(&i) {
             continue;
         }
         if rects_overlap(rect_pos, rect_size, wf.position, wf.size) {
@@ -884,7 +453,8 @@ fn targets_in_rect(
         }
     }
     for (i, inst) in component_instances.iter().enumerate() {
-        if let Some(def) = components.iter().find(|c| c.id == inst.component_id) {
+        if let Some(&def_idx) = comp_map.get(&inst.component_id) {
+            let def = &components[def_idx];
             if rects_overlap(rect_pos, rect_size, inst.position, def.size) {
                 result.push(HitTarget::ComponentInstance(i));
             }
@@ -902,10 +472,10 @@ struct RenderContext<'a> {
     screen_w: f32,
     screen_h: f32,
     objects: &'a [CanvasObject],
-    waveforms: &'a [WaveformObject],
+    waveforms: &'a [WaveformView],
     effect_regions: &'a [effects::EffectRegion],
     hovered: Option<HitTarget>,
-    selected: &'a [HitTarget],
+    selected: &'a HashSet<HitTarget>,
     selection_rect: Option<([f32; 2], [f32; 2])>,
     file_hovering: bool,
     playhead_world_x: Option<f32>,
@@ -914,10 +484,11 @@ struct RenderContext<'a> {
     component_instances: &'a [component::ComponentInstance],
     editing_component: Option<usize>,
     settings: &'a Settings,
+    component_map: &'a std::collections::HashMap<component::ComponentId, usize>,
 }
 
-fn build_instances(ctx: &RenderContext) -> Vec<InstanceRaw> {
-    let mut out = Vec::with_capacity(1024);
+fn build_instances(out: &mut Vec<InstanceRaw>, ctx: &RenderContext) {
+    out.clear();
 
     let camera = ctx.camera;
     let world_left = camera.position[0];
@@ -998,6 +569,13 @@ fn build_instances(ctx: &RenderContext) -> Vec<InstanceRaw> {
 
     // --- effect regions (rendered behind everything) ---
     for (i, er) in ctx.effect_regions.iter().enumerate() {
+        let er_right = er.position[0] + er.size[0];
+        let er_bottom = er.position[1] + er.size[1];
+        if er_right < world_left || er.position[0] > world_right
+            || er_bottom < world_top || er.position[1] > world_bottom
+        {
+            continue;
+        }
         let is_sel = ctx.selected.contains(&HitTarget::EffectRegion(i));
         let is_hov = ctx.hovered == Some(HitTarget::EffectRegion(i));
         let is_active = ctx.playhead_world_x.map_or(false, |px| {
@@ -1018,7 +596,7 @@ fn build_instances(ctx: &RenderContext) -> Vec<InstanceRaw> {
         });
 
         let bw = 1.5 / camera.zoom;
-        push_border(&mut out, er.position, er.size, bw, EXPORT_BORDER_COLOR);
+        push_border(out, er.position, er.size, bw, EXPORT_BORDER_COLOR);
 
         // Dashed top indicator
         let dash_h = 3.0 / camera.zoom;
@@ -1051,8 +629,14 @@ fn build_instances(ctx: &RenderContext) -> Vec<InstanceRaw> {
 
         // Resize handles at corners
         let handle_sz = 8.0 / camera.zoom;
-        for &hx in &[er.position[0] - handle_sz * 0.5, er.position[0] + er.size[0] - handle_sz * 0.5] {
-            for &hy in &[er.position[1] - handle_sz * 0.5, er.position[1] + er.size[1] - handle_sz * 0.5] {
+        for &hx in &[
+            er.position[0] - handle_sz * 0.5,
+            er.position[0] + er.size[0] - handle_sz * 0.5,
+        ] {
+            for &hy in &[
+                er.position[1] - handle_sz * 0.5,
+                er.position[1] + er.size[1] - handle_sz * 0.5,
+            ] {
                 out.push(InstanceRaw {
                     position: [hx, hy],
                     size: [handle_sz, handle_sz],
@@ -1066,6 +650,13 @@ fn build_instances(ctx: &RenderContext) -> Vec<InstanceRaw> {
     // --- canvas objects ---
     let ci = ctx.settings.color_intensity;
     for (i, obj) in ctx.objects.iter().enumerate() {
+        let obj_right = obj.position[0] + obj.size[0];
+        let obj_bottom = obj.position[1] + obj.size[1];
+        if obj_right < world_left || obj.position[0] > world_right
+            || obj_bottom < world_top || obj.position[1] > world_bottom
+        {
+            continue;
+        }
         let is_sel = ctx.selected.contains(&HitTarget::Object(i));
         let is_hov = ctx.hovered == Some(HitTarget::Object(i));
         let mut color = obj.color;
@@ -1091,30 +682,67 @@ fn build_instances(ctx: &RenderContext) -> Vec<InstanceRaw> {
 
     // --- waveforms ---
     for (i, wf) in ctx.waveforms.iter().enumerate() {
+        let wf_right = wf.position[0] + wf.size[0];
+        let wf_bottom = wf.position[1] + wf.size[1];
+        if wf_right < world_left || wf.position[0] > world_right
+            || wf_bottom < world_top || wf.position[1] > world_bottom
+        {
+            continue;
+        }
         let is_sel = ctx.selected.contains(&HitTarget::Waveform(i));
         let is_hov = ctx.hovered == Some(HitTarget::Waveform(i));
-        out.extend(waveform::build_waveform_instances(
-            wf, camera, world_left, world_right, is_hov, is_sel,
+        out.extend(ui::waveform::build_waveform_instances(
+            wf,
+            camera,
+            world_left,
+            world_right,
+            is_hov,
+            is_sel,
         ));
     }
 
     // --- component definitions ---
     for (i, def) in ctx.components.iter().enumerate() {
+        let def_right = def.position[0] + def.size[0];
+        let def_bottom = def.position[1] + def.size[1];
+        if def_right < world_left || def.position[0] > world_right
+            || def_bottom < world_top || def.position[1] > world_bottom
+        {
+            continue;
+        }
         let is_sel = ctx.selected.contains(&HitTarget::ComponentDef(i));
         let is_hov = ctx.hovered == Some(HitTarget::ComponentDef(i));
         let is_editing = ctx.editing_component == Some(i);
         out.extend(component::build_component_def_instances(
-            def, camera, is_hov, is_sel || is_editing,
+            def,
+            camera,
+            is_hov,
+            is_sel || is_editing,
         ));
     }
 
     // --- component instances ---
     for (i, inst) in ctx.component_instances.iter().enumerate() {
-        if let Some(def) = ctx.components.iter().find(|c| c.id == inst.component_id) {
+        if let Some(&def_idx) = ctx.component_map.get(&inst.component_id) {
+            let def = &ctx.components[def_idx];
+            let inst_right = inst.position[0] + def.size[0];
+            let inst_bottom = inst.position[1] + def.size[1];
+            if inst_right < world_left || inst.position[0] > world_right
+                || inst_bottom < world_top || inst.position[1] > world_bottom
+            {
+                continue;
+            }
             let is_sel = ctx.selected.contains(&HitTarget::ComponentInstance(i));
             let is_hov = ctx.hovered == Some(HitTarget::ComponentInstance(i));
             out.extend(component::build_component_instance_instances(
-                inst, def, ctx.waveforms, camera, world_left, world_right, is_hov, is_sel,
+                inst,
+                def,
+                ctx.waveforms,
+                camera,
+                world_left,
+                world_right,
+                is_hov,
+                is_sel,
             ));
         }
     }
@@ -1160,9 +788,17 @@ fn build_instances(ctx: &RenderContext) -> Vec<InstanceRaw> {
     // --- selection highlights (rendered on top of everything) ---
     let sel_bw = 2.0 / camera.zoom;
     let handle_sz = 8.0 / camera.zoom;
-    for target in ctx.selected {
-        let (pos, size) = target_rect(ctx.objects, ctx.waveforms, ctx.effect_regions, ctx.components, ctx.component_instances, target);
-        push_border(&mut out, pos, size, sel_bw, SEL_COLOR);
+    for target in ctx.selected.iter() {
+        let (pos, size) = target_rect(
+            ctx.objects,
+            ctx.waveforms,
+            ctx.effect_regions,
+            ctx.components,
+            ctx.component_instances,
+            ctx.component_map,
+            target,
+        );
+        push_border(out, pos, size, sel_bw, SEL_COLOR);
 
         for &hx in &[pos[0] - handle_sz * 0.5, pos[0] + size[0] - handle_sz * 0.5] {
             for &hy in &[pos[1] - handle_sz * 0.5, pos[1] + size[1] - handle_sz * 0.5] {
@@ -1186,7 +822,7 @@ fn build_instances(ctx: &RenderContext) -> Vec<InstanceRaw> {
             border_radius: 0.0,
         });
         let bw = 1.0 / camera.zoom;
-        push_border(&mut out, rp, rs, bw, [0.35, 0.65, 1.0, 0.5]);
+        push_border(out, rp, rs, bw, [0.35, 0.65, 1.0, 0.5]);
     }
 
     // --- playback cursor ---
@@ -1217,7 +853,7 @@ fn build_instances(ctx: &RenderContext) -> Vec<InstanceRaw> {
         });
         let bw = 3.0 / camera.zoom;
         push_border(
-            &mut out,
+            out,
             [world_left, world_top],
             [world_right - world_left, world_bottom - world_top],
             bw,
@@ -1225,64 +861,43 @@ fn build_instances(ctx: &RenderContext) -> Vec<InstanceRaw> {
         );
     }
 
-    out
 }
 
-fn build_waveform_vertices(ctx: &RenderContext) -> Vec<WaveformVertex> {
+fn build_waveform_vertices(verts: &mut Vec<WaveformVertex>, ctx: &RenderContext) {
+    verts.clear();
     let camera = ctx.camera;
     let world_left = camera.position[0];
     let world_right = world_left + ctx.screen_w / camera.zoom;
-
-    let mut verts = Vec::new();
+    let world_top = camera.position[1];
+    let world_bottom = world_top + ctx.screen_h / camera.zoom;
     for (i, wf) in ctx.waveforms.iter().enumerate() {
+        let wf_right = wf.position[0] + wf.size[0];
+        let wf_bottom = wf.position[1] + wf.size[1];
+        if wf_right < world_left || wf.position[0] > world_right
+            || wf_bottom < world_top || wf.position[1] > world_bottom
+        {
+            continue;
+        }
         let is_sel = ctx.selected.contains(&HitTarget::Waveform(i));
         let is_hov = ctx.hovered == Some(HitTarget::Waveform(i));
-        verts.extend(waveform::build_waveform_triangles(
-            wf, camera, world_left, world_right, is_hov, is_sel,
+        verts.extend(ui::waveform::build_waveform_triangles(
+            wf,
+            camera,
+            world_left,
+            world_right,
+            is_hov,
+            is_sel,
         ));
     }
-    verts
-}
-
-pub(crate) fn push_border(
-    out: &mut Vec<InstanceRaw>,
-    pos: [f32; 2],
-    size: [f32; 2],
-    bw: f32,
-    color: [f32; 4],
-) {
-    out.push(InstanceRaw {
-        position: pos,
-        size: [size[0], bw],
-        color,
-        border_radius: 0.0,
-    });
-    out.push(InstanceRaw {
-        position: [pos[0], pos[1] + size[1] - bw],
-        size: [size[0], bw],
-        color,
-        border_radius: 0.0,
-    });
-    out.push(InstanceRaw {
-        position: pos,
-        size: [bw, size[1]],
-        color,
-        border_radius: 0.0,
-    });
-    out.push(InstanceRaw {
-        position: [pos[0] + size[0] - bw, pos[1]],
-        size: [bw, size[1]],
-        color,
-        border_radius: 0.0,
-    });
 }
 
 fn target_rect(
     objects: &[CanvasObject],
-    waveforms: &[WaveformObject],
+    waveforms: &[WaveformView],
     effect_regions: &[effects::EffectRegion],
     components: &[component::ComponentDef],
     component_instances: &[component::ComponentInstance],
+    component_map: &std::collections::HashMap<component::ComponentId, usize>,
     target: &HitTarget,
 ) -> ([f32; 2], [f32; 2]) {
     match target {
@@ -1292,7 +907,7 @@ fn target_rect(
         HitTarget::ComponentDef(i) => (components[*i].position, components[*i].size),
         HitTarget::ComponentInstance(i) => {
             let inst = &component_instances[*i];
-            let def = components.iter().find(|c| c.id == inst.component_id);
+            let def = component_map.get(&inst.component_id).map(|&idx| &components[idx]);
             match def {
                 Some(d) => (inst.position, d.size),
                 None => (inst.position, [100.0, 100.0]),
@@ -1303,1309 +918,6 @@ fn target_rect(
 
 fn default_objects() -> Vec<CanvasObject> {
     vec![]
-}
-
-// ---------------------------------------------------------------------------
-// GPU state
-// ---------------------------------------------------------------------------
-
-const MAX_WAVEFORM_VERTICES: usize = 131072;
-
-struct Gpu {
-    window: Arc<Window>,
-    surface: wgpu::Surface<'static>,
-    device: wgpu::Device,
-    queue: wgpu::Queue,
-    config: wgpu::SurfaceConfiguration,
-    pipeline: wgpu::RenderPipeline,
-    waveform_pipeline: wgpu::RenderPipeline,
-    waveform_vertex_buffer: wgpu::Buffer,
-    camera_buffer: wgpu::Buffer,
-    camera_bind_group: wgpu::BindGroup,
-    screen_camera_buffer: wgpu::Buffer,
-    screen_camera_bind_group: wgpu::BindGroup,
-    vertex_buffer: wgpu::Buffer,
-    index_buffer: wgpu::Buffer,
-    instance_buffer: wgpu::Buffer,
-
-    font_system: FontSystem,
-    swash_cache: SwashCache,
-    text_atlas: TextAtlas,
-    text_renderer: TextRenderer,
-    viewport: Viewport,
-    scale_factor: f32,
-
-    browser_text_buffers: Vec<TextBuffer>,
-    browser_text_generation: u64,
-}
-
-impl Gpu {
-    async fn new(window: Arc<Window>) -> Self {
-        let size = window.inner_size();
-        let scale_factor = window.scale_factor() as f32;
-
-        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::all(),
-            ..Default::default()
-        });
-
-        let surface = instance.create_surface(window.clone()).unwrap();
-
-        let adapter = instance
-            .request_adapter(&wgpu::RequestAdapterOptions {
-                power_preference: wgpu::PowerPreference::HighPerformance,
-                compatible_surface: Some(&surface),
-                force_fallback_adapter: false,
-            })
-            .await
-            .expect("No suitable GPU adapter found");
-
-        log::info!("GPU adapter: {:?}", adapter.get_info());
-
-        let (device, queue) = adapter
-            .request_device(&wgpu::DeviceDescriptor::default(), None)
-            .await
-            .unwrap();
-
-        let surface_caps = surface.get_capabilities(&adapter);
-        let surface_format = surface_caps
-            .formats
-            .iter()
-            .find(|f| f.is_srgb())
-            .copied()
-            .unwrap_or(surface_caps.formats[0]);
-
-        let config = wgpu::SurfaceConfiguration {
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-            format: surface_format,
-            width: size.width.max(1),
-            height: size.height.max(1),
-            present_mode: wgpu::PresentMode::AutoVsync,
-            alpha_mode: surface_caps.alpha_modes[0],
-            view_formats: vec![],
-            desired_maximum_frame_latency: 2,
-        };
-        surface.configure(&device, &config);
-
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("canvas shader"),
-            source: wgpu::ShaderSource::Wgsl(SHADER_SRC.into()),
-        });
-
-        let camera_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("camera uniform"),
-            size: std::mem::size_of::<CameraUniform>() as u64,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-
-        let screen_camera_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("screen camera uniform"),
-            size: std::mem::size_of::<CameraUniform>() as u64,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-
-        let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("camera bind group layout"),
-            entries: &[wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::VERTEX,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Uniform,
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
-                },
-                count: None,
-            }],
-        });
-
-        let camera_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("camera bind group"),
-            layout: &bind_group_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: camera_buffer.as_entire_binding(),
-            }],
-        });
-
-        let screen_camera_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("screen camera bind group"),
-            layout: &bind_group_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: screen_camera_buffer.as_entire_binding(),
-            }],
-        });
-
-        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("pipeline layout"),
-            bind_group_layouts: &[&bind_group_layout],
-            push_constant_ranges: &[],
-        });
-
-        let vertex_layout = wgpu::VertexBufferLayout {
-            array_stride: std::mem::size_of::<Vertex>() as u64,
-            step_mode: wgpu::VertexStepMode::Vertex,
-            attributes: &[wgpu::VertexAttribute {
-                offset: 0,
-                shader_location: 0,
-                format: wgpu::VertexFormat::Float32x2,
-            }],
-        };
-
-        let instance_layout = wgpu::VertexBufferLayout {
-            array_stride: std::mem::size_of::<InstanceRaw>() as u64,
-            step_mode: wgpu::VertexStepMode::Instance,
-            attributes: &[
-                wgpu::VertexAttribute {
-                    offset: 0,
-                    shader_location: 1,
-                    format: wgpu::VertexFormat::Float32x2,
-                },
-                wgpu::VertexAttribute {
-                    offset: 8,
-                    shader_location: 2,
-                    format: wgpu::VertexFormat::Float32x2,
-                },
-                wgpu::VertexAttribute {
-                    offset: 16,
-                    shader_location: 3,
-                    format: wgpu::VertexFormat::Float32x4,
-                },
-                wgpu::VertexAttribute {
-                    offset: 32,
-                    shader_location: 4,
-                    format: wgpu::VertexFormat::Float32,
-                },
-            ],
-        };
-
-        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("render pipeline"),
-            layout: Some(&pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: Some("vs_main"),
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-                buffers: &[vertex_layout, instance_layout],
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: Some("fs_main"),
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: config.format,
-                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-            }),
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                strip_index_format: None,
-                front_face: wgpu::FrontFace::Ccw,
-                cull_mode: None,
-                polygon_mode: wgpu::PolygonMode::Fill,
-                unclipped_depth: false,
-                conservative: false,
-            },
-            depth_stencil: None,
-            multisample: wgpu::MultisampleState::default(),
-            multiview: None,
-            cache: None,
-        });
-
-        // --- waveform pipeline ---
-        let wf_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("waveform shader"),
-            source: wgpu::ShaderSource::Wgsl(WAVEFORM_SHADER_SRC.into()),
-        });
-
-        let wf_vertex_layout = wgpu::VertexBufferLayout {
-            array_stride: std::mem::size_of::<WaveformVertex>() as u64,
-            step_mode: wgpu::VertexStepMode::Vertex,
-            attributes: &[
-                wgpu::VertexAttribute {
-                    offset: 0,
-                    shader_location: 0,
-                    format: wgpu::VertexFormat::Float32x2,
-                },
-                wgpu::VertexAttribute {
-                    offset: 8,
-                    shader_location: 1,
-                    format: wgpu::VertexFormat::Float32x4,
-                },
-                wgpu::VertexAttribute {
-                    offset: 24,
-                    shader_location: 2,
-                    format: wgpu::VertexFormat::Float32,
-                },
-            ],
-        };
-
-        let waveform_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("waveform pipeline"),
-            layout: Some(&pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &wf_shader,
-                entry_point: Some("wf_vs"),
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-                buffers: &[wf_vertex_layout],
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &wf_shader,
-                entry_point: Some("wf_fs"),
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: config.format,
-                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-            }),
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                strip_index_format: None,
-                front_face: wgpu::FrontFace::Ccw,
-                cull_mode: None,
-                polygon_mode: wgpu::PolygonMode::Fill,
-                unclipped_depth: false,
-                conservative: false,
-            },
-            depth_stencil: None,
-            multisample: wgpu::MultisampleState::default(),
-            multiview: None,
-            cache: None,
-        });
-
-        let waveform_vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("waveform vertex buffer"),
-            size: (MAX_WAVEFORM_VERTICES * std::mem::size_of::<WaveformVertex>()) as u64,
-            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-
-        let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("quad vertices"),
-            contents: bytemuck::cast_slice(QUAD_VERTICES),
-            usage: wgpu::BufferUsages::VERTEX,
-        });
-
-        let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("quad indices"),
-            contents: bytemuck::cast_slice(QUAD_INDICES),
-            usage: wgpu::BufferUsages::INDEX,
-        });
-
-        let instance_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("instance buffer"),
-            size: (MAX_INSTANCES * std::mem::size_of::<InstanceRaw>()) as u64,
-            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-
-        // --- glyphon text rendering ---
-        let font_system = FontSystem::new();
-        let swash_cache = SwashCache::new();
-        let cache = glyphon::Cache::new(&device);
-        let mut text_atlas = TextAtlas::new(&device, &queue, &cache, surface_format);
-        let text_renderer = TextRenderer::new(
-            &mut text_atlas,
-            &device,
-            wgpu::MultisampleState::default(),
-            None,
-        );
-        let viewport = Viewport::new(&device, &cache);
-
-        Self {
-            window,
-            surface,
-            device,
-            queue,
-            config,
-            pipeline,
-            waveform_pipeline,
-            waveform_vertex_buffer,
-            camera_buffer,
-            camera_bind_group,
-            screen_camera_buffer,
-            screen_camera_bind_group,
-            vertex_buffer,
-            index_buffer,
-            instance_buffer,
-            font_system,
-            swash_cache,
-            text_atlas,
-            text_renderer,
-            viewport,
-            scale_factor,
-            browser_text_buffers: Vec::new(),
-            browser_text_generation: 0,
-        }
-    }
-
-    fn resize(&mut self, new_size: winit::dpi::PhysicalSize<u32>) {
-        if new_size.width > 0 && new_size.height > 0 {
-            self.config.width = new_size.width;
-            self.config.height = new_size.height;
-            self.surface.configure(&self.device, &self.config);
-        }
-    }
-
-    fn render(
-        &mut self,
-        camera: &Camera,
-        world_instances: &[InstanceRaw],
-        waveform_vertices: &[WaveformVertex],
-        command_palette: Option<&CommandPalette>,
-        context_menu: Option<&ContextMenu>,
-        sample_browser: Option<&browser::SampleBrowser>,
-        plugin_browser: Option<(&browser::PluginBrowserSection, f32)>,
-        browser_drag_ghost: Option<(&str, [f32; 2])>,
-        is_playing: bool,
-        is_recording: bool,
-        playback_position: f64,
-        export_region: Option<&ExportRegion>,
-        effect_regions: &[effects::EffectRegion],
-        editing_effect_name: Option<(usize, &str)>,
-        waveforms: &[waveform::WaveformObject],
-        editing_waveform_name: Option<(usize, &str)>,
-        plugin_editor: Option<&plugin_editor::PluginEditorWindow>,
-        settings_window: Option<&SettingsWindow>,
-        settings: &Settings,
-    ) {
-        let w = self.config.width as f32;
-        let h = self.config.height as f32;
-        if w < 1.0 || h < 1.0 {
-            return;
-        }
-
-        let cam_uniform = CameraUniform {
-            view_proj: camera.view_proj(w, h),
-        };
-        self.queue
-            .write_buffer(&self.camera_buffer, 0, bytemuck::cast_slice(&[cam_uniform]));
-
-        let screen_cam = CameraUniform {
-            view_proj: screen_ortho(w, h),
-        };
-        self.queue.write_buffer(
-            &self.screen_camera_buffer,
-            0,
-            bytemuck::cast_slice(&[screen_cam]),
-        );
-
-        let world_count = world_instances.len().min(MAX_INSTANCES);
-        self.queue.write_buffer(
-            &self.instance_buffer,
-            0,
-            bytemuck::cast_slice(&world_instances[..world_count]),
-        );
-
-        let wf_vert_count = waveform_vertices.len().min(MAX_WAVEFORM_VERTICES);
-        if wf_vert_count > 0 {
-            self.queue.write_buffer(
-                &self.waveform_vertex_buffer,
-                0,
-                bytemuck::cast_slice(&waveform_vertices[..wf_vert_count]),
-            );
-        }
-
-        // Build overlay instances: browser panel + drag ghost + command palette
-        let mut overlay_instances: Vec<InstanceRaw> = Vec::new();
-
-        if let Some(br) = sample_browser {
-            overlay_instances.extend(br.build_instances(w, h, self.scale_factor));
-        }
-
-        if let Some((pb, y_offset)) = plugin_browser {
-            let panel_w = sample_browser.map_or(260.0 * self.scale_factor, |b| b.panel_width(self.scale_factor));
-            let clip_top = browser::HEADER_HEIGHT * self.scale_factor;
-            overlay_instances.extend(pb.build_instances(panel_w, y_offset, h, self.scale_factor, clip_top));
-        }
-
-        if let Some((_, pos)) = browser_drag_ghost {
-            overlay_instances.push(InstanceRaw {
-                position: [pos[0] - 4.0, pos[1] - 4.0],
-                size: [160.0 * self.scale_factor, 24.0 * self.scale_factor],
-                color: [0.20, 0.20, 0.28, 0.90],
-                border_radius: 4.0 * self.scale_factor,
-            });
-        }
-
-        if let Some(p) = command_palette {
-            overlay_instances.extend(p.build_instances(w, h, self.scale_factor));
-        }
-
-        if let Some(cm) = context_menu {
-            overlay_instances.extend(cm.build_instances(w, h, self.scale_factor));
-        }
-
-        if let Some(sw) = settings_window {
-            overlay_instances.extend(sw.build_instances(settings, w, h, self.scale_factor));
-        }
-
-        if let Some(pe) = plugin_editor {
-            overlay_instances.extend(pe.build_instances(w, h, self.scale_factor));
-        }
-
-        overlay_instances.extend(TransportPanel::build_instances(
-            w,
-            h,
-            self.scale_factor,
-            is_playing,
-            is_recording,
-        ));
-
-        overlay_instances.extend(TransportPanel::build_fx_button_instances(
-            w,
-            h,
-            self.scale_factor,
-        ));
-
-        overlay_instances.extend(TransportPanel::build_export_button_instances(
-            w,
-            h,
-            self.scale_factor,
-        ));
-
-        let overlay_count = overlay_instances.len().min(MAX_INSTANCES - world_count);
-        if overlay_count > 0 {
-            let offset = (world_count * std::mem::size_of::<InstanceRaw>()) as u64;
-            self.queue.write_buffer(
-                &self.instance_buffer,
-                offset,
-                bytemuck::cast_slice(&overlay_instances[..overlay_count]),
-            );
-        }
-
-        // --- prepare text ---
-        let scale = self.scale_factor;
-        let mut text_buffers: Vec<TextBuffer> = Vec::new();
-        let mut text_meta: Vec<(f32, f32, TextColor, TextBounds)> = Vec::new();
-
-        let full_bounds = TextBounds {
-            left: 0,
-            top: 0,
-            right: w as i32,
-            bottom: h as i32,
-        };
-
-        // Browser text: shape ALL entries once, positions computed each frame
-        if let Some(br) = sample_browser {
-            if br.text_generation != self.browser_text_generation {
-                self.browser_text_buffers.clear();
-                for te in &br.cached_text {
-                    let mut buf = TextBuffer::new(
-                        &mut self.font_system,
-                        Metrics::new(te.font_size, te.line_height),
-                    );
-                    buf.set_size(
-                        &mut self.font_system,
-                        Some(te.max_width),
-                        Some(te.line_height),
-                    );
-                    let attrs = Attrs::new()
-                        .family(Family::Name(".AppleSystemUIFont"))
-                        .weight(glyphon::Weight(te.weight));
-                    buf.set_text(&mut self.font_system, &te.text, attrs, Shaping::Advanced);
-                    buf.shape_until_scroll(&mut self.font_system, false);
-                    self.browser_text_buffers.push(buf);
-                }
-                self.browser_text_generation = br.text_generation;
-            }
-        } else if !self.browser_text_buffers.is_empty() {
-            self.browser_text_buffers.clear();
-        }
-
-        // Plugin browser section text
-        if let Some((pb, _)) = plugin_browser {
-            let panel_w = sample_browser.map_or(260.0 * scale, |b| b.panel_width(scale));
-            let clip_top = browser::HEADER_HEIGHT * scale;
-            for te in &pb.cached_text {
-                let actual_y = te.base_y;
-                if actual_y + te.line_height < clip_top || actual_y > h {
-                    continue;
-                }
-                let mut buf = TextBuffer::new(
-                    &mut self.font_system,
-                    Metrics::new(te.font_size, te.line_height),
-                );
-                buf.set_size(&mut self.font_system, Some(te.max_width), Some(te.line_height));
-                let attrs = Attrs::new()
-                    .family(Family::Name(".AppleSystemUIFont"))
-                    .weight(glyphon::Weight(te.weight));
-                buf.set_text(&mut self.font_system, &te.text, attrs, Shaping::Advanced);
-                buf.shape_until_scroll(&mut self.font_system, false);
-                text_buffers.push(buf);
-                text_meta.push((
-                    te.x,
-                    actual_y,
-                    TextColor::rgba(te.color[0], te.color[1], te.color[2], te.color[3]),
-                    TextBounds {
-                        left: 0,
-                        top: (actual_y.max(clip_top)) as i32,
-                        right: (panel_w - 8.0 * scale) as i32,
-                        bottom: (actual_y + te.line_height) as i32,
-                    },
-                ));
-            }
-        }
-
-        // Drag ghost text
-        if let Some((label, pos)) = browser_drag_ghost {
-            let font_sz = 12.0 * scale;
-            let line_h = 16.0 * scale;
-            let mut buf = TextBuffer::new(&mut self.font_system, Metrics::new(font_sz, line_h));
-            buf.set_size(&mut self.font_system, Some(150.0 * scale), Some(line_h));
-            buf.set_text(
-                &mut self.font_system,
-                label,
-                Attrs::new().family(Family::SansSerif),
-                Shaping::Advanced,
-            );
-            buf.shape_until_scroll(&mut self.font_system, false);
-            text_buffers.push(buf);
-            text_meta.push((
-                pos[0] + 4.0 * scale,
-                pos[1] - 4.0 + (24.0 * scale - line_h) * 0.5,
-                TextColor::rgb(220, 220, 230),
-                full_bounds,
-            ));
-        }
-
-        if let Some(palette) = command_palette {
-            let (ppos, _psize) = palette.palette_rect(w, h, scale);
-            let margin = PALETTE_PADDING * scale;
-            let list_top = ppos[1] + PALETTE_INPUT_HEIGHT * scale + 1.0 * scale;
-
-            // Search input text (or placeholder)
-            let (display_text, search_color) = match palette.mode {
-                PaletteMode::VolumeFader => {
-                    ("Master Volume", TextColor::rgb(235, 235, 240))
-                }
-                _ if palette.search_text.is_empty() => {
-                    ("Search", TextColor::rgba(140, 140, 150, 160))
-                }
-                _ => {
-                    (palette.search_text.as_str(), TextColor::rgb(235, 235, 240))
-                }
-            };
-            let sfont = 15.0 * scale;
-            let sline = 22.0 * scale;
-            let mut buf = TextBuffer::new(&mut self.font_system, Metrics::new(sfont, sline));
-            buf.set_size(
-                &mut self.font_system,
-                Some(PALETTE_WIDTH * scale - 60.0 * scale),
-                Some(PALETTE_INPUT_HEIGHT * scale),
-            );
-            buf.set_text(
-                &mut self.font_system,
-                display_text,
-                Attrs::new().family(Family::SansSerif),
-                Shaping::Advanced,
-            );
-            buf.shape_until_scroll(&mut self.font_system, false);
-            text_buffers.push(buf);
-            text_meta.push((
-                ppos[0] + 36.0 * scale,
-                ppos[1] + (PALETTE_INPUT_HEIGHT * scale - sline) * 0.5,
-                search_color,
-                full_bounds,
-            ));
-
-            match palette.mode {
-                PaletteMode::VolumeFader => {
-                    let pad = 16.0 * scale;
-                    let track_y = list_top + 36.0 * scale;
-                    let track_h = 6.0 * scale;
-                    let rms_y = track_y + track_h + 22.0 * scale;
-
-                    let pct = (palette.fader_value * 100.0) as u32;
-                    let vol_text = format!("{}%", pct);
-                    let label_font = 13.0 * scale;
-                    let label_line = 18.0 * scale;
-                    let mut buf = TextBuffer::new(
-                        &mut self.font_system,
-                        Metrics::new(label_font, label_line),
-                    );
-                    buf.set_size(
-                        &mut self.font_system,
-                        Some(PALETTE_WIDTH * scale - margin * 2.0),
-                        Some(20.0 * scale),
-                    );
-                    buf.set_text(
-                        &mut self.font_system,
-                        &vol_text,
-                        Attrs::new().family(Family::SansSerif),
-                        Shaping::Advanced,
-                    );
-                    buf.shape_until_scroll(&mut self.font_system, false);
-                    text_buffers.push(buf);
-                    text_meta.push((
-                        ppos[0] + margin + pad,
-                        list_top + 14.0 * scale,
-                        TextColor::rgba(200, 200, 210, 220),
-                        full_bounds,
-                    ));
-
-                    let db_val = if palette.fader_rms > 0.0001 {
-                        20.0 * palette.fader_rms.log10()
-                    } else {
-                        -60.0
-                    };
-                    let rms_text = format!("RMS: {:.1} dB", db_val);
-                    let small_font = 11.0 * scale;
-                    let small_line = 15.0 * scale;
-                    let mut buf = TextBuffer::new(
-                        &mut self.font_system,
-                        Metrics::new(small_font, small_line),
-                    );
-                    buf.set_size(
-                        &mut self.font_system,
-                        Some(PALETTE_WIDTH * scale - margin * 2.0),
-                        Some(16.0 * scale),
-                    );
-                    buf.set_text(
-                        &mut self.font_system,
-                        &rms_text,
-                        Attrs::new().family(Family::SansSerif),
-                        Shaping::Advanced,
-                    );
-                    buf.shape_until_scroll(&mut self.font_system, false);
-                    text_buffers.push(buf);
-                    text_meta.push((
-                        ppos[0] + margin + pad,
-                        rms_y + 8.0 * scale,
-                        TextColor::rgba(140, 140, 150, 180),
-                        full_bounds,
-                    ));
-                }
-                PaletteMode::Commands => {
-                    let sect_font = 11.0 * scale;
-                    let sect_line = 16.0 * scale;
-                    let ifont = 13.5 * scale;
-                    let iline = 20.0 * scale;
-                    let shortcut_font = 12.0 * scale;
-                    let shortcut_line = 17.0 * scale;
-
-                    let mut y = list_top;
-                    for row in palette.visible_rows() {
-                        match row {
-                            PaletteRow::Section(label) => {
-                                let mut buf = TextBuffer::new(
-                                    &mut self.font_system,
-                                    Metrics::new(sect_font, sect_line),
-                                );
-                                buf.set_size(
-                                    &mut self.font_system,
-                                    Some(PALETTE_WIDTH * scale - margin * 4.0),
-                                    Some(PALETTE_SECTION_HEIGHT * scale),
-                                );
-                                buf.set_text(
-                                    &mut self.font_system,
-                                    label,
-                                    Attrs::new().family(Family::SansSerif),
-                                    Shaping::Advanced,
-                                );
-                                buf.shape_until_scroll(&mut self.font_system, false);
-                                text_buffers.push(buf);
-                                text_meta.push((
-                                    ppos[0] + margin + 12.0 * scale,
-                                    y + (PALETTE_SECTION_HEIGHT * scale - sect_line) * 0.5
-                                        + 2.0 * scale,
-                                    TextColor::rgba(120, 140, 170, 200),
-                                    full_bounds,
-                                ));
-                                y += PALETTE_SECTION_HEIGHT * scale;
-                            }
-                            PaletteRow::Command(ci) => {
-                                let cmd = &COMMANDS[*ci];
-
-                                let mut buf = TextBuffer::new(
-                                    &mut self.font_system,
-                                    Metrics::new(ifont, iline),
-                                );
-                                buf.set_size(
-                                    &mut self.font_system,
-                                    Some(PALETTE_WIDTH * scale * 0.65),
-                                    Some(PALETTE_ITEM_HEIGHT * scale),
-                                );
-                                buf.set_text(
-                                    &mut self.font_system,
-                                    cmd.name,
-                                    Attrs::new().family(Family::SansSerif),
-                                    Shaping::Advanced,
-                                );
-                                buf.shape_until_scroll(&mut self.font_system, false);
-                                text_buffers.push(buf);
-                                text_meta.push((
-                                    ppos[0] + margin + 12.0 * scale,
-                                    y + (PALETTE_ITEM_HEIGHT * scale - iline) * 0.5,
-                                    TextColor::rgb(215, 215, 222),
-                                    full_bounds,
-                                ));
-
-                                if !cmd.shortcut.is_empty() {
-                                    let mut buf = TextBuffer::new(
-                                        &mut self.font_system,
-                                        Metrics::new(shortcut_font, shortcut_line),
-                                    );
-                                    buf.set_size(
-                                        &mut self.font_system,
-                                        Some(80.0 * scale),
-                                        Some(PALETTE_ITEM_HEIGHT * scale),
-                                    );
-                                    buf.set_text(
-                                        &mut self.font_system,
-                                        cmd.shortcut,
-                                        Attrs::new().family(Family::SansSerif),
-                                        Shaping::Advanced,
-                                    );
-                                    buf.shape_until_scroll(&mut self.font_system, false);
-                                    text_buffers.push(buf);
-                                    text_meta.push((
-                                        ppos[0] + PALETTE_WIDTH * scale - margin - 70.0 * scale,
-                                        y + (PALETTE_ITEM_HEIGHT * scale - shortcut_line) * 0.5,
-                                        TextColor::rgba(120, 120, 135, 180),
-                                        full_bounds,
-                                    ));
-                                }
-
-                                y += PALETTE_ITEM_HEIGHT * scale;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        if let Some(cm) = context_menu {
-            let (mpos, _msize) = cm.menu_rect(w, h, scale);
-            let pad = CTX_MENU_PADDING * scale;
-            let label_font = 13.0 * scale;
-            let label_line = 18.0 * scale;
-            let shortcut_font = 12.0 * scale;
-            let shortcut_line = 17.0 * scale;
-            let section_font = 11.0 * scale;
-            let section_line = 15.0 * scale;
-            let has_any_checked = cm.entries.iter().any(|e| matches!(e, ContextMenuEntry::Item(it) if it.checked));
-            let check_indent = if has_any_checked { 16.0 * scale } else { 0.0 };
-
-            let mut y = mpos[1] + pad;
-            for entry in &cm.entries {
-                match entry {
-                    ContextMenuEntry::Item(item) => {
-                        let mut buf = TextBuffer::new(
-                            &mut self.font_system,
-                            Metrics::new(label_font, label_line),
-                        );
-                        buf.set_size(
-                            &mut self.font_system,
-                            Some(CTX_MENU_WIDTH * scale * 0.55),
-                            Some(CTX_MENU_ITEM_HEIGHT * scale),
-                        );
-                        buf.set_text(
-                            &mut self.font_system,
-                            item.label,
-                            Attrs::new().family(Family::SansSerif),
-                            Shaping::Advanced,
-                        );
-                        buf.shape_until_scroll(&mut self.font_system, false);
-                        text_buffers.push(buf);
-                        text_meta.push((
-                            mpos[0] + pad + 10.0 * scale + check_indent,
-                            y + (CTX_MENU_ITEM_HEIGHT * scale - label_line) * 0.5,
-                            TextColor::rgb(220, 220, 228),
-                            full_bounds,
-                        ));
-
-                        if !item.shortcut.is_empty() {
-                            let mut buf = TextBuffer::new(
-                                &mut self.font_system,
-                                Metrics::new(shortcut_font, shortcut_line),
-                            );
-                            buf.set_size(
-                                &mut self.font_system,
-                                Some(60.0 * scale),
-                                Some(CTX_MENU_ITEM_HEIGHT * scale),
-                            );
-                            buf.set_text(
-                                &mut self.font_system,
-                                item.shortcut,
-                                Attrs::new().family(Family::SansSerif),
-                                Shaping::Advanced,
-                            );
-                            buf.shape_until_scroll(&mut self.font_system, false);
-                            text_buffers.push(buf);
-                            text_meta.push((
-                                mpos[0] + CTX_MENU_WIDTH * scale - pad - 50.0 * scale,
-                                y + (CTX_MENU_ITEM_HEIGHT * scale - shortcut_line) * 0.5,
-                                TextColor::rgba(120, 120, 135, 180),
-                                full_bounds,
-                            ));
-                        }
-
-                        y += CTX_MENU_ITEM_HEIGHT * scale;
-                    }
-                    ContextMenuEntry::Separator => {
-                        y += CTX_MENU_SEPARATOR_HEIGHT * scale;
-                    }
-                    ContextMenuEntry::SectionHeader(label) => {
-                        let mut buf = TextBuffer::new(
-                            &mut self.font_system,
-                            Metrics::new(section_font, section_line),
-                        );
-                        buf.set_size(
-                            &mut self.font_system,
-                            Some(CTX_MENU_WIDTH * scale * 0.8),
-                            Some(CTX_MENU_SECTION_HEIGHT * scale),
-                        );
-                        buf.set_text(
-                            &mut self.font_system,
-                            label,
-                            Attrs::new().family(Family::SansSerif),
-                            Shaping::Advanced,
-                        );
-                        buf.shape_until_scroll(&mut self.font_system, false);
-                        text_buffers.push(buf);
-                        text_meta.push((
-                            mpos[0] + pad + 10.0 * scale,
-                            y + (CTX_MENU_SECTION_HEIGHT * scale - section_line) * 0.5,
-                            TextColor::rgba(150, 150, 160, 200),
-                            full_bounds,
-                        ));
-                        y += CTX_MENU_SECTION_HEIGHT * scale;
-                    }
-                }
-            }
-        }
-
-        // Plugin editor text
-        if let Some(pe) = plugin_editor {
-            for te in pe.get_text_entries(w, h, scale) {
-                let mut buf = TextBuffer::new(
-                    &mut self.font_system,
-                    Metrics::new(te.font_size, te.line_height),
-                );
-                buf.set_size(&mut self.font_system, Some(te.max_width), Some(te.line_height * 2.0));
-                let attrs = Attrs::new()
-                    .family(Family::Name(".AppleSystemUIFont"))
-                    .weight(glyphon::Weight(te.weight));
-                buf.set_text(&mut self.font_system, &te.text, attrs, Shaping::Advanced);
-                buf.shape_until_scroll(&mut self.font_system, false);
-                text_buffers.push(buf);
-                text_meta.push((
-                    te.x,
-                    te.y,
-                    TextColor::rgba(te.color[0], te.color[1], te.color[2], te.color[3]),
-                    full_bounds,
-                ));
-            }
-        }
-
-        // Settings window text
-        if let Some(sw) = settings_window {
-            for te in sw.get_text_entries(settings, w, h, scale) {
-                let mut buf = TextBuffer::new(
-                    &mut self.font_system,
-                    Metrics::new(te.font_size, te.line_height),
-                );
-                buf.set_size(&mut self.font_system, Some(300.0 * scale), Some(te.line_height * 2.0));
-                let attrs = Attrs::new()
-                    .family(Family::Name(".AppleSystemUIFont"))
-                    .weight(glyphon::Weight(te.weight));
-                buf.set_text(&mut self.font_system, &te.text, attrs, Shaping::Advanced);
-                buf.shape_until_scroll(&mut self.font_system, false);
-                text_buffers.push(buf);
-                text_meta.push((
-                    te.x,
-                    te.y,
-                    TextColor::rgba(te.color[0], te.color[1], te.color[2], te.color[3]),
-                    full_bounds,
-                ));
-            }
-        }
-
-        // Export region "Render" label with duration (world-space → screen-space)
-        if let Some(er) = export_region {
-            let pill_world_x = er.position[0] + 4.0 / camera.zoom;
-            let pill_world_y = er.position[1] + 4.0 / camera.zoom;
-            let pill_screen_x = (pill_world_x - camera.position[0]) * camera.zoom;
-            let pill_screen_y = (pill_world_y - camera.position[1]) * camera.zoom;
-            let pill_w_screen = EXPORT_RENDER_PILL_W;
-            let pill_h_screen = EXPORT_RENDER_PILL_H;
-
-            let duration_secs = er.size[0] as f64 / PIXELS_PER_SECOND as f64;
-            let label_text = if duration_secs < 60.0 {
-                format!("Render  {:.1}s", duration_secs)
-            } else {
-                let mins = (duration_secs / 60.0) as u32;
-                let secs = duration_secs % 60.0;
-                format!("Render  {}:{:04.1}", mins, secs)
-            };
-
-            let label_font = 11.0 * scale;
-            let label_line = 16.0 * scale;
-            let mut buf = TextBuffer::new(&mut self.font_system, Metrics::new(label_font, label_line));
-            buf.set_size(
-                &mut self.font_system,
-                Some(pill_w_screen),
-                Some(pill_h_screen),
-            );
-            buf.set_text(
-                &mut self.font_system,
-                &label_text,
-                Attrs::new().family(Family::SansSerif),
-                Shaping::Advanced,
-            );
-            buf.shape_until_scroll(&mut self.font_system, false);
-            text_buffers.push(buf);
-            text_meta.push((
-                pill_screen_x + 8.0,
-                pill_screen_y + (pill_h_screen - label_line) * 0.5,
-                TextColor::rgb(255, 255, 255),
-                full_bounds,
-            ));
-        }
-
-        // Effect region name labels (world-space -> screen-space)
-        for (er_idx, er) in effect_regions.iter().enumerate() {
-            let region_screen_w = er.size[0] * camera.zoom;
-            if region_screen_w < 30.0 {
-                continue;
-            }
-
-            let pad = 6.0 / camera.zoom;
-            let name_x_world = er.position[0] + pad;
-            let name_y_world = er.position[1] - 18.0 / camera.zoom;
-            let name_screen_x = (name_x_world - camera.position[0]) * camera.zoom;
-            let name_screen_y = (name_y_world - camera.position[1]) * camera.zoom;
-
-            let display_name = if let Some((idx, ref text)) = editing_effect_name {
-                if idx == er_idx { format!("{}|", text) } else { er.name.clone() }
-            } else {
-                er.name.clone()
-            };
-
-            let name_font = 10.0 * scale;
-            let name_line = 14.0 * scale;
-            let mut buf = TextBuffer::new(
-                &mut self.font_system,
-                Metrics::new(name_font, name_line),
-            );
-            let max_text_w = (region_screen_w - 12.0 * scale).max(20.0);
-            buf.set_size(
-                &mut self.font_system,
-                Some(max_text_w),
-                Some(name_line),
-            );
-            let is_editing = editing_effect_name.map_or(false, |(idx, _)| idx == er_idx);
-            let alpha = if is_editing { 255 } else { 180 };
-            let attrs = Attrs::new()
-                .family(Family::Name(".AppleSystemUIFont"))
-                .weight(glyphon::Weight(500));
-            buf.set_text(&mut self.font_system, &display_name, attrs, Shaping::Advanced);
-            buf.shape_until_scroll(&mut self.font_system, false);
-            text_buffers.push(buf);
-            text_meta.push((
-                name_screen_x,
-                name_screen_y,
-                TextColor::rgba(255, 255, 255, alpha),
-                full_bounds,
-            ));
-        }
-
-        // Waveform sample name labels (world-space -> screen-space)
-        for (wf_idx, wf) in waveforms.iter().enumerate() {
-            let clip_screen_w = wf.size[0] * camera.zoom;
-            if clip_screen_w < 30.0 {
-                continue;
-            }
-
-            let pad = 6.0 / camera.zoom;
-            let name_x_world = wf.position[0] + pad;
-            let name_y_world = wf.position[1] + pad;
-            let name_screen_x = (name_x_world - camera.position[0]) * camera.zoom;
-            let name_screen_y = (name_y_world - camera.position[1]) * camera.zoom;
-
-            let display_name = if let Some((idx, ref text)) = editing_waveform_name {
-                if idx == wf_idx { format!("{}|", text) } else { wf.filename.clone() }
-            } else {
-                wf.filename.clone()
-            };
-
-            let name_font = 10.0 * scale;
-            let name_line = 14.0 * scale;
-            let mut buf = TextBuffer::new(
-                &mut self.font_system,
-                Metrics::new(name_font, name_line),
-            );
-            let max_text_w = (clip_screen_w - 12.0 * scale).max(20.0);
-            buf.set_size(
-                &mut self.font_system,
-                Some(max_text_w),
-                Some(name_line),
-            );
-            let is_editing = editing_waveform_name.map_or(false, |(idx, _)| idx == wf_idx);
-            let alpha = if is_editing { 255 } else { 180 };
-            let attrs = Attrs::new()
-                .family(Family::Name(".AppleSystemUIFont"))
-                .weight(glyphon::Weight(500));
-            buf.set_text(&mut self.font_system, &display_name, attrs, Shaping::Advanced);
-            buf.shape_until_scroll(&mut self.font_system, false);
-            text_buffers.push(buf);
-            text_meta.push((
-                name_screen_x,
-                name_screen_y,
-                TextColor::rgba(255, 255, 255, alpha),
-                full_bounds,
-            ));
-        }
-
-        // Effect region plugin name labels (world-space -> screen-space)
-        for er in effect_regions {
-            let labels = effects::plugin_label_rects(er, camera);
-            for (i, rect) in labels.iter().enumerate() {
-                let screen_x = (rect.position[0] - camera.position[0]) * camera.zoom;
-                let screen_y = (rect.position[1] - camera.position[1]) * camera.zoom;
-                let pill_w_screen = rect.size[0] * camera.zoom;
-                let pill_h_screen = rect.size[1] * camera.zoom;
-
-                let name = &er.chain[i].plugin_name;
-                let label_font = 10.0 * scale;
-                let label_line = 14.0 * scale;
-                let mut buf = TextBuffer::new(
-                    &mut self.font_system,
-                    Metrics::new(label_font, label_line),
-                );
-                buf.set_size(
-                    &mut self.font_system,
-                    Some(pill_w_screen - 8.0),
-                    Some(pill_h_screen),
-                );
-                let attrs = Attrs::new()
-                    .family(Family::Name(".AppleSystemUIFont"))
-                    .weight(glyphon::Weight(500));
-                buf.set_text(&mut self.font_system, name, attrs, Shaping::Advanced);
-                buf.shape_until_scroll(&mut self.font_system, false);
-                text_buffers.push(buf);
-                text_meta.push((
-                    screen_x + 4.0 * scale,
-                    screen_y + (pill_h_screen - label_line) * 0.5,
-                    TextColor::rgba(255, 255, 255, 220),
-                    full_bounds,
-                ));
-            }
-        }
-
-        // Transport panel time text
-        {
-            let (tp_pos, tp_size) = TransportPanel::panel_rect(w, h, scale);
-            let time_str = format_playback_time(playback_position);
-            let tfont = 13.0 * scale;
-            let tline = 18.0 * scale;
-            let mut buf = TextBuffer::new(&mut self.font_system, Metrics::new(tfont, tline));
-            buf.set_size(
-                &mut self.font_system,
-                Some(TRANSPORT_WIDTH * scale * 0.6),
-                Some(tline),
-            );
-            buf.set_text(
-                &mut self.font_system,
-                &time_str,
-                Attrs::new().family(Family::SansSerif),
-                Shaping::Advanced,
-            );
-            buf.shape_until_scroll(&mut self.font_system, false);
-            text_buffers.push(buf);
-            text_meta.push((
-                tp_pos[0] + 38.0 * scale,
-                tp_pos[1] + (tp_size[1] - tline) * 0.5,
-                TextColor::rgba(220, 220, 230, 220),
-                full_bounds,
-            ));
-        }
-
-        // Transport panel BPM text
-        {
-            let (tp_pos, tp_size) = TransportPanel::panel_rect(w, h, scale);
-            let bpm_str = format!("{} bpm", DEFAULT_BPM as u32);
-            let tfont = 13.0 * scale;
-            let tline = 18.0 * scale;
-            let mut buf = TextBuffer::new(&mut self.font_system, Metrics::new(tfont, tline));
-            buf.set_size(&mut self.font_system, Some(80.0 * scale), Some(tline));
-            buf.set_text(
-                &mut self.font_system,
-                &bpm_str,
-                Attrs::new().family(Family::SansSerif),
-                Shaping::Advanced,
-            );
-            buf.shape_until_scroll(&mut self.font_system, false);
-            text_buffers.push(buf);
-            text_meta.push((
-                tp_pos[0] + tp_size[0] - 80.0 * scale,
-                tp_pos[1] + (tp_size[1] - tline) * 0.5,
-                TextColor::rgba(220, 220, 230, 220),
-                full_bounds,
-            ));
-        }
-
-        self.viewport.update(
-            &self.queue,
-            Resolution {
-                width: self.config.width,
-                height: self.config.height,
-            },
-        );
-
-        let mut browser_text_areas: Vec<TextArea> = Vec::new();
-        if let Some(br) = sample_browser {
-            let panel_w = br.panel_width(scale);
-            let header_h = browser::HEADER_HEIGHT * scale;
-            for (idx, te) in br.cached_text.iter().enumerate() {
-                if idx >= self.browser_text_buffers.len() {
-                    break;
-                }
-                let actual_y = if te.is_header {
-                    te.base_y
-                } else {
-                    te.base_y - br.scroll_offset
-                };
-                if !te.is_header && (actual_y + te.line_height < header_h || actual_y > h) {
-                    continue;
-                }
-                let clip_top = if actual_y < header_h {
-                    header_h
-                } else {
-                    actual_y
-                };
-                browser_text_areas.push(TextArea {
-                    buffer: &self.browser_text_buffers[idx],
-                    left: te.x,
-                    top: actual_y,
-                    scale: 1.0,
-                    default_color: TextColor::rgba(
-                        te.color[0],
-                        te.color[1],
-                        te.color[2],
-                        te.color[3],
-                    ),
-                    bounds: TextBounds {
-                        left: 0,
-                        top: clip_top as i32,
-                        right: (panel_w - 8.0 * scale) as i32,
-                        bottom: (actual_y + te.line_height) as i32,
-                    },
-                    custom_glyphs: &[],
-                });
-            }
-        }
-
-        let other_areas = text_buffers.iter().zip(text_meta.iter()).map(
-            |(buffer, &(left, top, color, bounds))| TextArea {
-                buffer,
-                left,
-                top,
-                scale: 1.0,
-                bounds,
-                default_color: color,
-                custom_glyphs: &[],
-            },
-        );
-
-        let text_areas: Vec<TextArea> = browser_text_areas.into_iter().chain(other_areas).collect();
-
-        self.text_renderer
-            .prepare(
-                &self.device,
-                &self.queue,
-                &mut self.font_system,
-                &mut self.text_atlas,
-                &self.viewport,
-                text_areas,
-                &mut self.swash_cache,
-            )
-            .unwrap();
-
-        // --- render pass ---
-        let output = match self.surface.get_current_texture() {
-            Ok(t) => t,
-            Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => {
-                self.surface.configure(&self.device, &self.config);
-                return;
-            }
-            Err(e) => {
-                log::error!("Surface error: {e:?}");
-                return;
-            }
-        };
-
-        let view = output
-            .texture
-            .create_view(&wgpu::TextureViewDescriptor::default());
-
-        let mut encoder = self
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("frame encoder"),
-            });
-
-        {
-            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("main pass"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &view,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color {
-                            r: 0.09 * settings.brightness as f64,
-                            g: 0.09 * settings.brightness as f64,
-                            b: 0.12 * settings.brightness as f64,
-                            a: 1.0,
-                        }),
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                depth_stencil_attachment: None,
-                timestamp_writes: None,
-                occlusion_query_set: None,
-            });
-
-            pass.set_pipeline(&self.pipeline);
-            pass.set_bind_group(0, &self.camera_bind_group, &[]);
-            pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
-            pass.set_vertex_buffer(1, self.instance_buffer.slice(..));
-            pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
-            pass.draw_indexed(0..QUAD_INDICES.len() as u32, 0, 0..world_count as u32);
-
-            if wf_vert_count > 0 {
-                pass.set_pipeline(&self.waveform_pipeline);
-                pass.set_bind_group(0, &self.camera_bind_group, &[]);
-                pass.set_vertex_buffer(0, self.waveform_vertex_buffer.slice(..));
-                pass.draw(0..wf_vert_count as u32, 0..1);
-            }
-
-            if overlay_count > 0 {
-                pass.set_pipeline(&self.pipeline);
-                pass.set_bind_group(0, &self.screen_camera_bind_group, &[]);
-                pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
-                pass.set_vertex_buffer(1, self.instance_buffer.slice(..));
-                pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
-                pass.draw_indexed(
-                    0..QUAD_INDICES.len() as u32,
-                    0,
-                    world_count as u32..(world_count + overlay_count) as u32,
-                );
-            }
-
-            self.text_renderer
-                .render(&self.text_atlas, &self.viewport, &mut pass)
-                .unwrap();
-        }
-
-        self.queue.submit(std::iter::once(encoder.finish()));
-        output.present();
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -2626,7 +938,7 @@ struct App {
     gpu: Option<Gpu>,
     camera: Camera,
     objects: Vec<CanvasObject>,
-    waveforms: Vec<WaveformObject>,
+    waveforms: Vec<WaveformView>,
     audio_clips: Vec<AudioClipData>,
     audio_engine: Option<AudioEngine>,
     recorder: Option<AudioRecorder>,
@@ -2646,7 +958,6 @@ struct App {
     has_saved_state: bool,
     undo_stack: Vec<Snapshot>,
     redo_stack: Vec<Snapshot>,
-    current_project_id: String,
     current_project_name: String,
     effect_regions: Vec<effects::EffectRegion>,
     components: Vec<component::ComponentDef>,
@@ -2666,31 +977,65 @@ struct App {
     clipboard: Clipboard,
     settings: Settings,
     settings_window: Option<SettingsWindow>,
-    plugin_editor: Option<plugin_editor::PluginEditorWindow>,
+    plugin_editor: Option<ui::plugin_editor::PluginEditorWindow>,
     menu_state: Option<MenuState>,
+    toast_manager: ui::toast::ToastManager,
+    cached_instances: Vec<InstanceRaw>,
+    cached_wf_verts: Vec<WaveformVertex>,
+    render_generation: u64,
+    last_rendered_generation: u64,
+    last_rendered_camera_pos: [f32; 2],
+    last_rendered_camera_zoom: f32,
+    last_rendered_hovered: Option<HitTarget>,
+    last_rendered_selected_len: usize,
 }
 
 impl App {
+    fn mark_dirty(&mut self) {
+        self.render_generation = self.render_generation.wrapping_add(1);
+    }
+
     fn new() -> Self {
-        let project_id = "default".to_string();
-        let db_path = default_db_path();
-        println!("  Database: {}", db_path.display());
+        let base_path = default_base_path();
+        println!("  Storage: {}", base_path.display());
 
-        let storage = Storage::open(&db_path);
+        let mut storage = Storage::open(&base_path);
 
-        if let Some(s) = &storage {
+        // Try to open the most recently updated project, or create a temp one
+        let mut opened_project = false;
+        if let Some(s) = &mut storage {
             let projects = s.list_projects();
             if !projects.is_empty() {
                 println!("  Projects:");
                 for p in &projects {
-                    let marker = if p.project_id == project_id { " *" } else { "" };
-                    println!("    - {} ({}){}", p.name, p.project_id, marker);
+                    println!("    - {} ({})", p.name, p.path);
+                }
+                // Open the most recently updated project
+                let best = projects
+                    .iter()
+                    .max_by_key(|p| p.updated_at)
+                    .unwrap();
+                let path = PathBuf::from(&best.path);
+                if path.exists() && s.open_project(&path) {
+                    opened_project = true;
+                }
+            }
+            if !opened_project {
+                // Create a fresh temp project
+                if s.create_temp_project().is_some() {
+                    opened_project = true;
                 }
             }
         }
 
-        let loaded = storage.as_ref().and_then(|s| s.load(&project_id));
+        let loaded = if opened_project {
+            storage.as_ref().and_then(|s| s.load_project_state())
+        } else {
+            None
+        };
         let has_saved_state = loaded.is_some();
+
+        // Load audio + peaks from project DB if available
         let (
             camera,
             objects,
@@ -2703,6 +1048,7 @@ impl App {
             stored_effect_regions,
             stored_components,
             stored_component_instances,
+            audio_clips,
         ) = match loaded {
             Some(state) => {
                 println!(
@@ -2726,22 +1072,77 @@ impl App {
                 };
                 let expanded: HashSet<PathBuf> =
                     state.browser_expanded.iter().map(PathBuf::from).collect();
-                let waveforms: Vec<WaveformObject> = state.waveforms.into_iter().map(|sw| {
-                    WaveformObject {
+
+                let num_waveforms = state.waveforms.len();
+                let mut waveforms: Vec<WaveformView> = state
+                    .waveforms
+                    .into_iter()
+                    .map(|sw| WaveformView {
+                        audio: Arc::new(AudioData {
+                            left_samples: Arc::new(Vec::new()),
+                            right_samples: Arc::new(Vec::new()),
+                            left_peaks: Arc::new(WaveformPeaks::empty()),
+                            right_peaks: Arc::new(WaveformPeaks::empty()),
+                            sample_rate: sw.sample_rate,
+                            filename: sw.filename,
+                        }),
                         position: sw.position,
                         size: sw.size,
                         color: sw.color,
                         border_radius: sw.border_radius,
-                        left_samples: Arc::new(Vec::new()),
-                        right_samples: Arc::new(Vec::new()),
-                        left_peaks: Arc::new(WaveformPeaks::empty()),
-                        right_peaks: Arc::new(WaveformPeaks::empty()),
-                        sample_rate: sw.sample_rate,
-                        filename: sw.filename,
                         fade_in_px: sw.fade_in_px,
                         fade_out_px: sw.fade_out_px,
+                    })
+                    .collect();
+
+                // Restore audio data and peaks from DB
+                let mut audio_clips: Vec<AudioClipData> = Vec::new();
+                if let Some(s) = &storage {
+                    for i in 0..num_waveforms {
+                        let mut left_samples = Arc::new(Vec::new());
+                        let mut right_samples = Arc::new(Vec::new());
+                        let mut sample_rate = waveforms[i].audio.sample_rate;
+                        let mut left_peaks = waveforms[i].audio.left_peaks.clone();
+                        let mut right_peaks = waveforms[i].audio.right_peaks.clone();
+
+                        if let Some(audio) = s.load_audio(i as u64) {
+                            left_samples = Arc::new(storage::u8_slice_to_f32(&audio.left_samples));
+                            right_samples = Arc::new(storage::u8_slice_to_f32(&audio.right_samples));
+                            let mono = storage::u8_slice_to_f32(&audio.mono_samples);
+                            sample_rate = audio.sample_rate;
+                            audio_clips.push(AudioClipData {
+                                samples: Arc::new(mono),
+                                sample_rate: audio.sample_rate,
+                                duration_secs: audio.duration_secs,
+                            });
+                        } else {
+                            audio_clips.push(AudioClipData {
+                                samples: Arc::new(Vec::new()),
+                                sample_rate: 48000,
+                                duration_secs: 0.0,
+                            });
+                        }
+                        if let Some(peaks) = s.load_peaks(i as u64) {
+                            let lp = storage::u8_slice_to_f32(&peaks.left_peaks);
+                            let rp = storage::u8_slice_to_f32(&peaks.right_peaks);
+                            left_peaks = Arc::new(
+                                WaveformPeaks::from_raw(peaks.block_size as usize, lp),
+                            );
+                            right_peaks = Arc::new(
+                                WaveformPeaks::from_raw(peaks.block_size as usize, rp),
+                            );
+                        }
+                        waveforms[i].audio = Arc::new(AudioData {
+                            left_samples,
+                            right_samples,
+                            left_peaks,
+                            right_peaks,
+                            sample_rate,
+                            filename: waveforms[i].audio.filename.clone(),
+                        });
                     }
-                }).collect();
+                }
+
                 (
                     cam,
                     state.objects,
@@ -2754,6 +1155,7 @@ impl App {
                     state.effect_regions,
                     state.components,
                     state.component_instances,
+                    audio_clips,
                 )
             }
             None => {
@@ -2767,6 +1169,7 @@ impl App {
                     260.0,
                     false,
                     None,
+                    Vec::new(),
                     Vec::new(),
                     Vec::new(),
                     Vec::new(),
@@ -2792,7 +1195,10 @@ impl App {
         if let Some(ref engine) = audio_engine {
             let actual = engine.device_name();
             if settings.audio_output_device != actual {
-                println!("  Correcting stale output device setting: '{}' -> '{}'", settings.audio_output_device, actual);
+                println!(
+                    "  Correcting stale output device setting: '{}' -> '{}'",
+                    settings.audio_output_device, actual
+                );
                 settings.audio_output_device = actual.to_string();
                 settings.save();
             }
@@ -2808,38 +1214,43 @@ impl App {
         let plugin_registry = effects::PluginRegistry::new();
 
         // Restore effect region geometry; plugins will be loaded lazily on first scan
-        let restored_effect_regions: Vec<effects::EffectRegion> = stored_effect_regions.into_iter().map(|ser| {
-            let mut region = effects::EffectRegion::new(ser.position, ser.size);
-            region.name = ser.name;
-            for (pid, pname) in ser.plugin_ids.iter().zip(ser.plugin_names.iter()) {
-                region.chain.push(effects::PluginSlot {
-                    plugin_id: pid.clone(),
-                    plugin_name: pname.clone(),
-                    plugin_path: std::path::PathBuf::new(),
-                    bypass: false,
-                    instance: Arc::new(std::sync::Mutex::new(None)),
-                });
-            }
-            region
-        }).collect();
+        let restored_effect_regions: Vec<effects::EffectRegion> = stored_effect_regions
+            .into_iter()
+            .map(|ser| {
+                let mut region = effects::EffectRegion::new(ser.position, ser.size);
+                region.name = ser.name;
+                for (pid, pname) in ser.plugin_ids.iter().zip(ser.plugin_names.iter()) {
+                    region.chain.push(effects::PluginSlot {
+                        plugin_id: pid.clone(),
+                        plugin_name: pname.clone(),
+                        plugin_path: std::path::PathBuf::new(),
+                        bypass: false,
+                        instance: Arc::new(std::sync::Mutex::new(None)),
+                    });
+                }
+                region
+            })
+            .collect();
 
         let plugin_browser = browser::PluginBrowserSection::new();
 
-        let restored_components: Vec<component::ComponentDef> = stored_components.into_iter().map(|sc| {
-            component::ComponentDef {
+        let restored_components: Vec<component::ComponentDef> = stored_components
+            .into_iter()
+            .map(|sc| component::ComponentDef {
                 id: sc.id,
                 name: sc.name,
                 position: sc.position,
                 size: sc.size,
                 waveform_indices: sc.waveform_indices.iter().map(|&i| i as usize).collect(),
-            }
-        }).collect();
-        let restored_instances: Vec<component::ComponentInstance> = stored_component_instances.into_iter().map(|si| {
-            component::ComponentInstance {
+            })
+            .collect();
+        let restored_instances: Vec<component::ComponentInstance> = stored_component_instances
+            .into_iter()
+            .map(|si| component::ComponentInstance {
                 component_id: si.component_id,
                 position: si.position,
-            }
-        }).collect();
+            })
+            .collect();
         let next_component_id = restored_components.iter().map(|c| c.id).max().unwrap_or(0) + 1;
 
         Self {
@@ -2847,7 +1258,7 @@ impl App {
             camera,
             objects,
             waveforms,
-            audio_clips: Vec::new(),
+            audio_clips,
             audio_engine,
             recorder,
             recording_waveform_idx: None,
@@ -2866,7 +1277,6 @@ impl App {
             has_saved_state,
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
-            current_project_id: project_id,
             current_project_name: project_name,
             effect_regions: restored_effect_regions,
             components: restored_components,
@@ -2888,49 +1298,66 @@ impl App {
             settings_window: None,
             plugin_editor: None,
             menu_state: None,
+            toast_manager: ui::toast::ToastManager::new(),
+            cached_instances: Vec::with_capacity(2048),
+            cached_wf_verts: Vec::with_capacity(32768),
+            render_generation: 1,
+            last_rendered_generation: 0,
+            last_rendered_camera_pos: [f32::NAN, f32::NAN],
+            last_rendered_camera_zoom: f32::NAN,
+            last_rendered_hovered: None,
+            last_rendered_selected_len: 0,
         }
     }
 
-    fn save_project(&self) {
+    fn save_project_state(&self) {
         if let Some(storage) = &self.storage {
-            let stored_regions: Vec<storage::StoredEffectRegion> = self.effect_regions.iter().map(|er| {
-                storage::StoredEffectRegion {
+            let stored_regions: Vec<storage::StoredEffectRegion> = self
+                .effect_regions
+                .iter()
+                .map(|er| storage::StoredEffectRegion {
                     position: er.position,
                     size: er.size,
                     plugin_ids: er.chain.iter().map(|s| s.plugin_id.clone()).collect(),
                     plugin_names: er.chain.iter().map(|s| s.plugin_name.clone()).collect(),
                     name: er.name.clone(),
-                }
-            }).collect();
+                })
+                .collect();
 
-            let stored_components: Vec<storage::StoredComponent> = self.components.iter().map(|c| {
-                storage::StoredComponent {
+            let stored_components: Vec<storage::StoredComponent> = self
+                .components
+                .iter()
+                .map(|c| storage::StoredComponent {
                     id: c.id,
                     name: c.name.clone(),
                     position: c.position,
                     size: c.size,
                     waveform_indices: c.waveform_indices.iter().map(|&i| i as u64).collect(),
-                }
-            }).collect();
-            let stored_instances: Vec<storage::StoredComponentInstance> = self.component_instances.iter().map(|inst| {
-                storage::StoredComponentInstance {
+                })
+                .collect();
+            let stored_instances: Vec<storage::StoredComponentInstance> = self
+                .component_instances
+                .iter()
+                .map(|inst| storage::StoredComponentInstance {
                     component_id: inst.component_id,
                     position: inst.position,
-                }
-            }).collect();
+                })
+                .collect();
 
-            let stored_waveforms: Vec<storage::StoredWaveform> = self.waveforms.iter().map(|wf| {
-                storage::StoredWaveform {
+            let stored_waveforms: Vec<storage::StoredWaveform> = self
+                .waveforms
+                .iter()
+                .map(|wf| storage::StoredWaveform {
                     position: wf.position,
                     size: wf.size,
                     color: wf.color,
                     border_radius: wf.border_radius,
-                    filename: wf.filename.clone(),
+                    filename: wf.audio.filename.clone(),
                     fade_in_px: wf.fade_in_px,
                     fade_out_px: wf.fade_out_px,
-                    sample_rate: wf.sample_rate,
-                }
-            }).collect();
+                    sample_rate: wf.audio.sample_rate,
+                })
+                .collect();
 
             let state = ProjectState {
                 name: self.current_project_name.clone(),
@@ -2956,8 +1383,69 @@ impl App {
                 components: stored_components,
                 component_instances: stored_instances,
             };
-            storage.save(&self.current_project_id, state);
+            storage.save_project_state(state);
+
+            // Update project name in index
+            if let Some(path) = storage.current_project_path() {
+                let path_str = path.to_string_lossy().to_string();
+                storage.update_index_name(&path_str, &self.current_project_name);
+            }
+
+            // Save audio data and peaks for each waveform
+            storage.clear_audio_and_peaks();
+            for (i, wf) in self.waveforms.iter().enumerate() {
+                let mono = if i < self.audio_clips.len() {
+                    &self.audio_clips[i].samples
+                } else {
+                    continue;
+                };
+                let duration = if i < self.audio_clips.len() {
+                    self.audio_clips[i].duration_secs
+                } else {
+                    0.0
+                };
+                storage.save_audio(
+                    i as u64,
+                    &wf.audio.left_samples,
+                    &wf.audio.right_samples,
+                    mono,
+                    wf.audio.sample_rate,
+                    duration,
+                );
+                storage.save_peaks(
+                    i as u64,
+                    wf.audio.left_peaks.block_size as u64,
+                    &wf.audio.left_peaks.peaks,
+                    &wf.audio.right_peaks.peaks,
+                );
+            }
+
             println!("Project '{}' saved", self.current_project_name);
+        }
+    }
+
+    fn save_project(&mut self) {
+        self.save_project_state();
+        if let Some(storage) = &self.storage {
+            if storage.is_temp_project() {
+                self.save_project_as();
+            }
+        }
+    }
+
+    fn save_project_as(&mut self) {
+        println!("Showing Save Project dialog...");
+        let dest = rfd::FileDialog::new()
+            .set_title("Save Project")
+            .pick_folder();
+        if let Some(dest) = dest {
+            if let Some(storage) = &mut self.storage {
+                if storage.save_project_to(&dest) {
+                    println!("Project saved to {:?}", dest);
+                } else {
+                    println!("Failed to save project to {:?}", dest);
+                }
+            }
         }
     }
 
@@ -2983,28 +1471,30 @@ impl App {
                 Some(SettingsWindow::new())
             };
             self.request_redraw();
-        } else if let Some(project_id) = menu
+        } else if let Some(project_path) = menu
             .open_project_items
             .iter()
             .find(|(mid, _)| *mid == id)
-            .map(|(_, pid)| pid.clone())
+            .map(|(_, p)| p.clone())
         {
-            self.load_project(&project_id);
+            self.load_project(&project_path);
             self.refresh_open_project_menu();
             self.request_redraw();
         }
     }
 
     fn new_project(&mut self) {
-        self.save_project();
+        self.save_project_state();
 
-        let ts = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_millis();
-        self.current_project_id = format!("project_{ts}");
+        // Create a new temp project folder
+        if let Some(storage) = &mut self.storage {
+            if storage.create_temp_project().is_none() {
+                println!("Failed to create temp project");
+                return;
+            }
+        }
+
         self.current_project_name = "Untitled".to_string();
-
         self.objects = default_objects();
         self.waveforms.clear();
         self.audio_clips.clear();
@@ -3028,20 +1518,34 @@ impl App {
         }
 
         self.sync_audio_clips();
-        self.save_project();
-        println!("New project '{}'", self.current_project_id);
+        self.save_project_state();
+        println!("New project created");
     }
 
-    fn load_project(&mut self, project_id: &str) {
-        if project_id == self.current_project_id {
-            return;
+    fn load_project(&mut self, project_path: &str) {
+        // Check if same project
+        if let Some(s) = &self.storage {
+            if let Some(cur) = s.current_project_path() {
+                if cur.to_string_lossy() == project_path {
+                    return;
+                }
+            }
         }
-        self.save_project();
+        self.save_project_state();
 
-        let state = match self.storage.as_ref().and_then(|s| s.load(project_id)) {
+        // Open the project DB
+        let path = PathBuf::from(project_path);
+        if let Some(s) = &mut self.storage {
+            if !s.open_project(&path) {
+                println!("Failed to open project at '{project_path}'");
+                return;
+            }
+        }
+
+        let state = match self.storage.as_ref().and_then(|s| s.load_project_state()) {
             Some(s) => s,
             None => {
-                println!("Failed to load project '{project_id}'");
+                println!("Failed to load project state from '{project_path}'");
                 return;
             }
         };
@@ -3053,32 +1557,79 @@ impl App {
             state.waveforms.len(),
         );
 
-        self.current_project_id = project_id.to_string();
-        self.current_project_name = state.name;
+        self.current_project_name = state.name.clone();
         self.camera = Camera {
             position: state.camera_position,
             zoom: state.camera_zoom,
         };
         self.objects = state.objects;
+        let num_waveforms = state.waveforms.len();
         self.waveforms = state
             .waveforms
             .into_iter()
-            .map(|sw| WaveformObject {
+            .map(|sw| WaveformView {
+                audio: Arc::new(AudioData {
+                    left_samples: Arc::new(Vec::new()),
+                    right_samples: Arc::new(Vec::new()),
+                    left_peaks: Arc::new(WaveformPeaks::empty()),
+                    right_peaks: Arc::new(WaveformPeaks::empty()),
+                    sample_rate: sw.sample_rate,
+                    filename: sw.filename,
+                }),
                 position: sw.position,
                 size: sw.size,
                 color: sw.color,
                 border_radius: sw.border_radius,
-                left_samples: Arc::new(Vec::new()),
-                right_samples: Arc::new(Vec::new()),
-                left_peaks: Arc::new(WaveformPeaks::empty()),
-                right_peaks: Arc::new(WaveformPeaks::empty()),
-                sample_rate: sw.sample_rate,
-                filename: sw.filename,
                 fade_in_px: sw.fade_in_px,
                 fade_out_px: sw.fade_out_px,
             })
             .collect();
+
+        // Restore audio data and peaks from DB
         self.audio_clips.clear();
+        if let Some(s) = &self.storage {
+            for i in 0..num_waveforms {
+                let mut left_samples = Arc::new(Vec::new());
+                let mut right_samples = Arc::new(Vec::new());
+                let mut sample_rate = self.waveforms[i].audio.sample_rate;
+                let mut left_peaks = self.waveforms[i].audio.left_peaks.clone();
+                let mut right_peaks = self.waveforms[i].audio.right_peaks.clone();
+
+                if let Some(audio) = s.load_audio(i as u64) {
+                    left_samples = Arc::new(storage::u8_slice_to_f32(&audio.left_samples));
+                    right_samples = Arc::new(storage::u8_slice_to_f32(&audio.right_samples));
+                    let mono = storage::u8_slice_to_f32(&audio.mono_samples);
+                    sample_rate = audio.sample_rate;
+                    self.audio_clips.push(AudioClipData {
+                        samples: Arc::new(mono),
+                        sample_rate: audio.sample_rate,
+                        duration_secs: audio.duration_secs,
+                    });
+                } else {
+                    self.audio_clips.push(AudioClipData {
+                        samples: Arc::new(Vec::new()),
+                        sample_rate: 48000,
+                        duration_secs: 0.0,
+                    });
+                }
+                if let Some(peaks) = s.load_peaks(i as u64) {
+                    let lp = storage::u8_slice_to_f32(&peaks.left_peaks);
+                    let rp = storage::u8_slice_to_f32(&peaks.right_peaks);
+                    left_peaks =
+                        Arc::new(WaveformPeaks::from_raw(peaks.block_size as usize, lp));
+                    right_peaks =
+                        Arc::new(WaveformPeaks::from_raw(peaks.block_size as usize, rp));
+                }
+                self.waveforms[i].audio = Arc::new(AudioData {
+                    left_samples,
+                    right_samples,
+                    left_peaks,
+                    right_peaks,
+                    sample_rate,
+                    filename: self.waveforms[i].audio.filename.clone(),
+                });
+            }
+        }
 
         let restored_regions: Vec<effects::EffectRegion> = state
             .effect_regions
@@ -3119,14 +1670,14 @@ impl App {
                 position: si.position,
             })
             .collect();
-        self.next_component_id =
-            self.components.iter().map(|c| c.id).max().unwrap_or(0) + 1;
+        self.next_component_id = self.components.iter().map(|c| c.id).max().unwrap_or(0) + 1;
 
         self.sample_browser = if !state.browser_expanded.is_empty() {
             let folders: Vec<PathBuf> = state.browser_folders.iter().map(PathBuf::from).collect();
             let expanded: HashSet<PathBuf> =
                 state.browser_expanded.iter().map(PathBuf::from).collect();
-            let mut b = browser::SampleBrowser::from_state(folders, expanded, state.browser_visible);
+            let mut b =
+                browser::SampleBrowser::from_state(folders, expanded, state.browser_visible);
             b.width = if state.browser_width > 0.0 {
                 state.browser_width
             } else {
@@ -3166,7 +1717,7 @@ impl App {
         if let Some(s) = &self.storage {
             for entry in s.list_projects() {
                 let item = muda::MenuItem::new(&entry.name, true, None);
-                new_items.push((item.id().clone(), entry.project_id));
+                new_items.push((item.id().clone(), entry.path.clone()));
                 let _ = menu.open_submenu.append(&item);
             }
         }
@@ -3183,13 +1734,17 @@ impl App {
             objects: self.objects.clone(),
             waveforms: self.waveforms.clone(),
             audio_clips: self.audio_clips.clone(),
-            effect_regions: self.effect_regions.iter().map(|er| EffectRegionSnapshot {
-                position: er.position,
-                size: er.size,
-                plugin_ids: er.chain.iter().map(|s| s.plugin_id.clone()).collect(),
-                plugin_names: er.chain.iter().map(|s| s.plugin_name.clone()).collect(),
-                name: er.name.clone(),
-            }).collect(),
+            effect_regions: self
+                .effect_regions
+                .iter()
+                .map(|er| EffectRegionSnapshot {
+                    position: er.position,
+                    size: er.size,
+                    plugin_ids: er.chain.iter().map(|s| s.plugin_id.clone()).collect(),
+                    plugin_names: er.chain.iter().map(|s| s.plugin_name.clone()).collect(),
+                    name: er.name.clone(),
+                })
+                .collect(),
             components: self.components.clone(),
             component_instances: self.component_instances.clone(),
         }
@@ -3201,6 +1756,7 @@ impl App {
             self.undo_stack.remove(0);
         }
         self.redo_stack.clear();
+        self.mark_dirty();
     }
 
     fn undo(&mut self) {
@@ -3213,6 +1769,7 @@ impl App {
             self.components = prev.components;
             self.component_instances = prev.component_instances;
             self.selected.clear();
+            self.mark_dirty();
             self.sync_audio_clips();
             self.request_redraw();
         }
@@ -3228,31 +1785,35 @@ impl App {
             self.components = next.components;
             self.component_instances = next.component_instances;
             self.selected.clear();
+            self.mark_dirty();
             self.sync_audio_clips();
             self.request_redraw();
         }
     }
 
     fn restore_effect_regions(&mut self, snapshots: Vec<EffectRegionSnapshot>) {
-        self.effect_regions = snapshots.into_iter().map(|snap| {
-            let mut region = effects::EffectRegion::new(snap.position, snap.size);
-            region.name = snap.name;
-            for (pid, pname) in snap.plugin_ids.iter().zip(snap.plugin_names.iter()) {
-                let instance = if self.plugin_registry.is_scanned() {
-                    self.plugin_registry.load_plugin(pid, 48000.0, 512)
-                } else {
-                    None
-                };
-                region.chain.push(effects::PluginSlot {
-                    plugin_id: pid.clone(),
-                    plugin_name: pname.clone(),
-                    plugin_path: std::path::PathBuf::new(),
-                    bypass: false,
-                    instance: Arc::new(std::sync::Mutex::new(instance)),
-                });
-            }
-            region
-        }).collect();
+        self.effect_regions = snapshots
+            .into_iter()
+            .map(|snap| {
+                let mut region = effects::EffectRegion::new(snap.position, snap.size);
+                region.name = snap.name;
+                for (pid, pname) in snap.plugin_ids.iter().zip(snap.plugin_names.iter()) {
+                    let instance = if self.plugin_registry.is_scanned() {
+                        self.plugin_registry.load_plugin(pid, 48000.0, 512)
+                    } else {
+                        None
+                    };
+                    region.chain.push(effects::PluginSlot {
+                        plugin_id: pid.clone(),
+                        plugin_name: pname.clone(),
+                        plugin_path: std::path::PathBuf::new(),
+                        bypass: false,
+                        instance: Arc::new(std::sync::Mutex::new(instance)),
+                    });
+                }
+                region
+            })
+            .collect();
     }
 
     fn update_component_bounds(&mut self, comp_idx: usize) {
@@ -3270,15 +1831,22 @@ impl App {
 
     fn sync_audio_clips(&self) {
         if let Some(engine) = &self.audio_engine {
-            let mut positions: Vec<[f32; 2]> = self.waveforms.iter().map(|wf| wf.position).collect();
+            let mut positions: Vec<[f32; 2]> =
+                self.waveforms.iter().map(|wf| wf.position).collect();
             let mut sizes: Vec<[f32; 2]> = self.waveforms.iter().map(|wf| wf.size).collect();
             let mut clips: Vec<&AudioClipData> = self.audio_clips.iter().collect();
             let mut fade_ins: Vec<f32> = self.waveforms.iter().map(|wf| wf.fade_in_px).collect();
             let mut fade_outs: Vec<f32> = self.waveforms.iter().map(|wf| wf.fade_out_px).collect();
 
             // Add virtual clips for each component instance
+            let comp_map: std::collections::HashMap<component::ComponentId, usize> = self
+                .components
+                .iter()
+                .enumerate()
+                .map(|(i, c)| (c.id, i))
+                .collect();
             for inst in &self.component_instances {
-                if let Some(def) = self.components.iter().find(|c| c.id == inst.component_id) {
+                if let Some(def) = comp_map.get(&inst.component_id).map(|&i| &self.components[i]) {
                     let offset = [
                         inst.position[0] - def.position[0],
                         inst.position[1] - def.position[1],
@@ -3286,7 +1854,8 @@ impl App {
                     for &wf_idx in &def.waveform_indices {
                         if wf_idx < self.waveforms.len() && wf_idx < self.audio_clips.len() {
                             let wf = &self.waveforms[wf_idx];
-                            positions.push([wf.position[0] + offset[0], wf.position[1] + offset[1]]);
+                            positions
+                                .push([wf.position[0] + offset[0], wf.position[1] + offset[1]]);
                             sizes.push(wf.size);
                             clips.push(&self.audio_clips[wf_idx]);
                             fade_ins.push(wf.fade_in_px);
@@ -3299,15 +1868,17 @@ impl App {
             let owned_clips: Vec<AudioClipData> = clips.iter().map(|c| (*c).clone()).collect();
             engine.update_clips(&positions, &sizes, &owned_clips, &fade_ins, &fade_outs);
 
-            let regions: Vec<audio::AudioEffectRegion> = self.effect_regions.iter().map(|er| {
-                audio::AudioEffectRegion {
+            let regions: Vec<audio::AudioEffectRegion> = self
+                .effect_regions
+                .iter()
+                .map(|er| audio::AudioEffectRegion {
                     x_start_px: er.position[0],
                     x_end_px: er.position[0] + er.size[0],
                     y_start: er.position[1],
                     y_end: er.position[1] + er.size[1],
                     plugins: er.chain.iter().map(|slot| slot.instance.clone()).collect(),
-                }
-            }).collect();
+                })
+                .collect();
             engine.update_effect_regions(regions);
         }
     }
@@ -3325,11 +1896,14 @@ impl App {
                 if let Some(idx) = self.recording_waveform_idx.take() {
                     if idx < self.waveforms.len() {
                         self.waveforms[idx].size[0] = loaded.width;
-                        self.waveforms[idx].left_peaks = Arc::new(WaveformPeaks::build(&loaded.left_samples));
-                        self.waveforms[idx].right_peaks = Arc::new(WaveformPeaks::build(&loaded.right_samples));
-                        self.waveforms[idx].left_samples = loaded.left_samples.clone();
-                        self.waveforms[idx].right_samples = loaded.right_samples.clone();
-                        self.waveforms[idx].sample_rate = loaded.sample_rate;
+                        self.waveforms[idx].audio = Arc::new(AudioData {
+                            left_peaks: Arc::new(WaveformPeaks::build(&loaded.left_samples)),
+                            right_peaks: Arc::new(WaveformPeaks::build(&loaded.right_samples)),
+                            left_samples: loaded.left_samples.clone(),
+                            right_samples: loaded.right_samples.clone(),
+                            sample_rate: loaded.sample_rate,
+                            filename: self.waveforms[idx].audio.filename.clone(),
+                        });
                     }
                     if idx < self.audio_clips.len() {
                         self.audio_clips[idx] = AudioClipData {
@@ -3358,17 +1932,19 @@ impl App {
 
             self.push_undo();
             let idx = self.waveforms.len();
-            self.waveforms.push(WaveformObject {
+            self.waveforms.push(WaveformView {
+                audio: Arc::new(AudioData {
+                    left_samples: Arc::new(Vec::new()),
+                    right_samples: Arc::new(Vec::new()),
+                    left_peaks: Arc::new(WaveformPeaks::empty()),
+                    right_peaks: Arc::new(WaveformPeaks::empty()),
+                    sample_rate,
+                    filename: "Recording".to_string(),
+                }),
                 position: [world[0], world[1] - height * 0.5],
                 size: [0.0, height],
                 color: WAVEFORM_COLORS[color_idx],
                 border_radius: 8.0,
-                left_samples: Arc::new(Vec::new()),
-                right_samples: Arc::new(Vec::new()),
-                left_peaks: Arc::new(WaveformPeaks::empty()),
-                right_peaks: Arc::new(WaveformPeaks::empty()),
-                sample_rate,
-                filename: "Recording".to_string(),
                 fade_in_px: 0.0,
                 fade_out_px: 0.0,
             });
@@ -3391,11 +1967,15 @@ impl App {
         if let Some(loaded) = snapshot {
             if idx < self.waveforms.len() {
                 self.waveforms[idx].size[0] = loaded.width;
-                self.waveforms[idx].left_peaks = Arc::new(WaveformPeaks::build(&loaded.left_samples));
-                self.waveforms[idx].right_peaks = Arc::new(WaveformPeaks::build(&loaded.right_samples));
-                self.waveforms[idx].left_samples = loaded.left_samples;
-                self.waveforms[idx].right_samples = loaded.right_samples;
-                self.waveforms[idx].sample_rate = loaded.sample_rate;
+                self.waveforms[idx].audio = Arc::new(AudioData {
+                    left_peaks: Arc::new(WaveformPeaks::build(&loaded.left_samples)),
+                    right_peaks: Arc::new(WaveformPeaks::build(&loaded.right_samples)),
+                    left_samples: loaded.left_samples,
+                    right_samples: loaded.right_samples,
+                    sample_rate: loaded.sample_rate,
+                    filename: self.waveforms[idx].audio.filename.clone(),
+                });
+                self.mark_dirty();
             }
         }
     }
@@ -3457,15 +2037,19 @@ impl App {
                 x_end_px: er.position[0] + er.size[0],
                 y_start: er.position[1],
                 y_end: er.position[1] + er.size[1],
-                plugins: er
-                    .chain
-                    .iter()
-                    .map(|slot| slot.instance.clone())
-                    .collect(),
+                plugins: er.chain.iter().map(|slot| slot.instance.clone()).collect(),
             })
             .collect();
 
-        match audio::render_to_wav(&path, start_secs, end_secs, y_start, y_end, &clips, &effect_regions) {
+        match audio::render_to_wav(
+            &path,
+            start_secs,
+            end_secs,
+            y_start,
+            y_end,
+            &clips,
+            &effect_regions,
+        ) {
             Ok(()) => println!("  Exported WAV to {}", path.display()),
             Err(e) => println!("  Export failed: {}", e),
         }
@@ -3479,57 +2063,80 @@ impl App {
 
     fn update_cursor(&self) {
         if let Some(gpu) = &self.gpu {
-            let icon = match &self.drag {
-                DragState::Panning { .. } => CursorIcon::Grabbing,
-                DragState::MovingSelection { .. } => CursorIcon::Grabbing,
-                DragState::Selecting { .. } => CursorIcon::Crosshair,
-                DragState::DraggingFromBrowser { .. } => CursorIcon::Grabbing,
-                DragState::DraggingPlugin { .. } => CursorIcon::Grabbing,
-                DragState::ResizingBrowser => CursorIcon::EwResize,
-                DragState::MovingExportRegion { .. } => CursorIcon::Grabbing,
-                DragState::ResizingExportRegion { nwse, .. } => {
-                    if *nwse { CursorIcon::NwseResize } else { CursorIcon::NeswResize }
-                }
-                DragState::DraggingFade { .. } => CursorIcon::EwResize,
-                DragState::ResizingComponentDef { nwse, .. } => {
-                    if *nwse { CursorIcon::NwseResize } else { CursorIcon::NeswResize }
-                }
-                DragState::ResizingEffectRegion { nwse, .. } => {
-                    if *nwse { CursorIcon::NwseResize } else { CursorIcon::NeswResize }
-                }
-                DragState::None => {
-                    if self.sample_browser.visible && self.sample_browser.resize_hovered {
-                        CursorIcon::EwResize
-                    } else if self.fade_handle_hovered.is_some() {
-                        CursorIcon::EwResize
-                    } else if self.command_palette.is_some() {
-                        CursorIcon::Default
-                    } else {
-                        match self.component_def_hover {
-                            ComponentDefHover::CornerNW(_) | ComponentDefHover::CornerSE(_) => CursorIcon::NwseResize,
-                            ComponentDefHover::CornerNE(_) | ComponentDefHover::CornerSW(_) => CursorIcon::NeswResize,
-                            ComponentDefHover::None => match self.effect_region_hover {
-                                EffectRegionHover::CornerNW(_) | EffectRegionHover::CornerSE(_) => CursorIcon::NwseResize,
-                                EffectRegionHover::CornerNE(_) | EffectRegionHover::CornerSW(_) => CursorIcon::NeswResize,
-                                EffectRegionHover::PluginLabel(_, _) => CursorIcon::Pointer,
-                                EffectRegionHover::None => match self.export_hover {
-                                    ExportHover::CornerNW | ExportHover::CornerSE => CursorIcon::NwseResize,
-                                    ExportHover::CornerNE | ExportHover::CornerSW => CursorIcon::NeswResize,
-                                    ExportHover::RenderPill => CursorIcon::Pointer,
-                                    ExportHover::Body => CursorIcon::Grab,
-                                    ExportHover::None => {
-                                        if self.hovered.is_some() {
-                                            CursorIcon::Grab
-                                        } else {
-                                            CursorIcon::Default
-                                        }
-                                    }
-                                },
-                            },
+            let icon =
+                match &self.drag {
+                    DragState::Panning { .. } => CursorIcon::Grabbing,
+                    DragState::MovingSelection { .. } => CursorIcon::Grabbing,
+                    DragState::Selecting { .. } => CursorIcon::Crosshair,
+                    DragState::DraggingFromBrowser { .. } => CursorIcon::Grabbing,
+                    DragState::DraggingPlugin { .. } => CursorIcon::Grabbing,
+                    DragState::ResizingBrowser => CursorIcon::EwResize,
+                    DragState::MovingExportRegion { .. } => CursorIcon::Grabbing,
+                    DragState::ResizingExportRegion { nwse, .. } => {
+                        if *nwse {
+                            CursorIcon::NwseResize
+                        } else {
+                            CursorIcon::NeswResize
                         }
                     }
-                }
-            };
+                    DragState::DraggingFade { .. } => CursorIcon::EwResize,
+                    DragState::ResizingComponentDef { nwse, .. } => {
+                        if *nwse {
+                            CursorIcon::NwseResize
+                        } else {
+                            CursorIcon::NeswResize
+                        }
+                    }
+                    DragState::ResizingEffectRegion { nwse, .. } => {
+                        if *nwse {
+                            CursorIcon::NwseResize
+                        } else {
+                            CursorIcon::NeswResize
+                        }
+                    }
+                    DragState::None => {
+                        if self.sample_browser.visible && self.sample_browser.resize_hovered {
+                            CursorIcon::EwResize
+                        } else if self.fade_handle_hovered.is_some() {
+                            CursorIcon::EwResize
+                        } else if self.command_palette.is_some() {
+                            CursorIcon::Default
+                        } else {
+                            match self.component_def_hover {
+                                ComponentDefHover::CornerNW(_) | ComponentDefHover::CornerSE(_) => {
+                                    CursorIcon::NwseResize
+                                }
+                                ComponentDefHover::CornerNE(_) | ComponentDefHover::CornerSW(_) => {
+                                    CursorIcon::NeswResize
+                                }
+                                ComponentDefHover::None => match self.effect_region_hover {
+                                    EffectRegionHover::CornerNW(_)
+                                    | EffectRegionHover::CornerSE(_) => CursorIcon::NwseResize,
+                                    EffectRegionHover::CornerNE(_)
+                                    | EffectRegionHover::CornerSW(_) => CursorIcon::NeswResize,
+                                    EffectRegionHover::PluginLabel(_, _) => CursorIcon::Pointer,
+                                    EffectRegionHover::None => match self.export_hover {
+                                        ExportHover::CornerNW | ExportHover::CornerSE => {
+                                            CursorIcon::NwseResize
+                                        }
+                                        ExportHover::CornerNE | ExportHover::CornerSW => {
+                                            CursorIcon::NeswResize
+                                        }
+                                        ExportHover::RenderPill => CursorIcon::Pointer,
+                                        ExportHover::Body => CursorIcon::Grab,
+                                        ExportHover::None => {
+                                            if self.hovered.is_some() {
+                                                CursorIcon::Grab
+                                            } else {
+                                                CursorIcon::Default
+                                            }
+                                        }
+                                    },
+                                },
+                            }
+                        }
+                    }
+                };
             gpu.window.set_cursor(icon);
         }
     }
@@ -3543,7 +2150,16 @@ impl App {
         }
         let world = self.camera.screen_to_world(self.mouse_pos);
         self.fade_handle_hovered = hit_test_fade_handle(&self.waveforms, world, &self.camera);
-        self.hovered = hit_test(&self.objects, &self.waveforms, &self.effect_regions, &self.components, &self.component_instances, self.editing_component, world, &self.camera);
+        self.hovered = hit_test(
+            &self.objects,
+            &self.waveforms,
+            &self.effect_regions,
+            &self.components,
+            &self.component_instances,
+            self.editing_component,
+            world,
+            &self.camera,
+        );
 
         self.component_def_hover = ComponentDefHover::None;
         for (ci, def) in self.components.iter().enumerate() {
@@ -3560,7 +2176,11 @@ impl App {
             } else if point_in_rect(world, [p[0] - hs, p[1] + s[1] - hs], [handle_sz, handle_sz]) {
                 self.component_def_hover = ComponentDefHover::CornerSW(ci);
                 break;
-            } else if point_in_rect(world, [p[0] + s[0] - hs, p[1] + s[1] - hs], [handle_sz, handle_sz]) {
+            } else if point_in_rect(
+                world,
+                [p[0] + s[0] - hs, p[1] + s[1] - hs],
+                [handle_sz, handle_sz],
+            ) {
                 self.component_def_hover = ComponentDefHover::CornerSE(ci);
                 break;
             }
@@ -3590,7 +2210,11 @@ impl App {
             } else if point_in_rect(world, [p[0] - hs, p[1] + s[1] - hs], [handle_sz, handle_sz]) {
                 self.effect_region_hover = EffectRegionHover::CornerSW(i);
                 break;
-            } else if point_in_rect(world, [p[0] + s[0] - hs, p[1] + s[1] - hs], [handle_sz, handle_sz]) {
+            } else if point_in_rect(
+                world,
+                [p[0] + s[0] - hs, p[1] + s[1] - hs],
+                [handle_sz, handle_sz],
+            ) {
                 self.effect_region_hover = EffectRegionHover::CornerSE(i);
                 break;
             }
@@ -3609,7 +2233,11 @@ impl App {
                 self.export_hover = ExportHover::CornerNE;
             } else if point_in_rect(world, [p[0] - hs, p[1] + s[1] - hs], [handle_sz, handle_sz]) {
                 self.export_hover = ExportHover::CornerSW;
-            } else if point_in_rect(world, [p[0] + s[0] - hs, p[1] + s[1] - hs], [handle_sz, handle_sz]) {
+            } else if point_in_rect(
+                world,
+                [p[0] + s[0] - hs, p[1] + s[1] - hs],
+                [handle_sz, handle_sz],
+            ) {
                 self.export_hover = ExportHover::CornerSE;
             } else {
                 let pill_w = EXPORT_RENDER_PILL_W / self.camera.zoom;
@@ -3700,14 +2328,17 @@ impl App {
                         if i < self.effect_regions.len() {
                             let er = self.effect_regions[i].clone();
                             self.effect_regions.push(er);
-                            new_selected.push(HitTarget::EffectRegion(self.effect_regions.len() - 1));
+                            new_selected
+                                .push(HitTarget::EffectRegion(self.effect_regions.len() - 1));
                         }
                     }
                     HitTarget::ComponentInstance(i) => {
                         if i < self.component_instances.len() {
                             let inst = self.component_instances[i].clone();
                             self.component_instances.push(inst);
-                            new_selected.push(HitTarget::ComponentInstance(self.component_instances.len() - 1));
+                            new_selected.push(HitTarget::ComponentInstance(
+                                self.component_instances.len() - 1,
+                            ));
                         }
                     }
                     HitTarget::ComponentDef(i) => {
@@ -3779,7 +2410,10 @@ impl App {
                     self.selected.push(HitTarget::Object(i));
                 }
                 for i in 0..self.waveforms.len() {
-                    let in_component = self.components.iter().any(|c| c.waveform_indices.contains(&i));
+                    let in_component = self
+                        .components
+                        .iter()
+                        .any(|c| c.waveform_indices.contains(&i));
                     if !in_component {
                         self.selected.push(HitTarget::Waveform(i));
                     }
@@ -3848,7 +2482,11 @@ impl App {
             }
             CommandAction::RenameEffectRegion => {
                 let selected_er = self.selected.iter().find_map(|t| {
-                    if let HitTarget::EffectRegion(i) = t { Some(*i) } else { None }
+                    if let HitTarget::EffectRegion(i) = t {
+                        Some(*i)
+                    } else {
+                        None
+                    }
                 });
                 if let Some(idx) = selected_er {
                     if idx < self.effect_regions.len() {
@@ -3859,11 +2497,15 @@ impl App {
             }
             CommandAction::RenameSample => {
                 let selected_wf = self.selected.iter().find_map(|t| {
-                    if let HitTarget::Waveform(i) = t { Some(*i) } else { None }
+                    if let HitTarget::Waveform(i) = t {
+                        Some(*i)
+                    } else {
+                        None
+                    }
                 });
                 if let Some(idx) = selected_wf {
                     if idx < self.waveforms.len() {
-                        let current = self.waveforms[idx].filename.clone();
+                        let current = self.waveforms[idx].audio.filename.clone();
                         self.editing_waveform_name = Some((idx, current));
                     }
                 }
@@ -3875,6 +2517,7 @@ impl App {
             CommandAction::ToggleGrid => {
                 self.settings.grid_enabled = !self.settings.grid_enabled;
                 self.settings.save();
+                self.mark_dirty();
             }
             CommandAction::SetGridAdaptive(size) => {
                 self.settings.grid_mode = GridMode::Adaptive(size);
@@ -3910,6 +2553,11 @@ impl App {
                 self.settings.triplet_grid = !self.settings.triplet_grid;
                 self.settings.save();
             }
+            CommandAction::TestToast => {
+                self.toast_manager.push("This is an error toast", ui::toast::ToastKind::Error);
+                self.toast_manager.push("This is an info toast", ui::toast::ToastKind::Info);
+                self.toast_manager.push("This is a success toast", ui::toast::ToastKind::Success);
+            }
         }
         self.request_redraw();
     }
@@ -3943,7 +2591,11 @@ impl App {
         let idx = self.components.len() - 1;
         self.selected.clear();
         self.selected.push(HitTarget::ComponentDef(idx));
-        println!("Created component '{}' with {} waveforms", name, self.components[idx].waveform_indices.len());
+        println!(
+            "Created component '{}' with {} waveforms",
+            name,
+            self.components[idx].waveform_indices.len()
+        );
     }
 
     fn create_instance_of_selected_component(&mut self) {
@@ -3981,7 +2633,12 @@ impl App {
                 return;
             }
             let comp_id = self.component_instances[ii].component_id;
-            if let Some((ci, def)) = self.components.iter().enumerate().find(|(_, c)| c.id == comp_id) {
+            if let Some((ci, def)) = self
+                .components
+                .iter()
+                .enumerate()
+                .find(|(_, c)| c.id == comp_id)
+            {
                 let (sw, sh, _) = self.screen_info();
                 self.camera.position = [
                     def.position[0] + def.size[0] * 0.5 - sw * 0.5 / self.camera.zoom,
@@ -4050,8 +2707,7 @@ impl App {
                             waveform_indices: new_wf_indices,
                             ..new_comp
                         });
-                        new_selected
-                            .push(HitTarget::ComponentDef(self.components.len() - 1));
+                        new_selected.push(HitTarget::ComponentDef(self.components.len() - 1));
                     }
                 }
                 HitTarget::Waveform(i) => {
@@ -4072,8 +2728,7 @@ impl App {
                         let mut er = self.effect_regions[i].clone();
                         er.position[0] += er.size[0];
                         self.effect_regions.push(er);
-                        new_selected
-                            .push(HitTarget::EffectRegion(self.effect_regions.len() - 1));
+                        new_selected.push(HitTarget::EffectRegion(self.effect_regions.len() - 1));
                     }
                 }
                 HitTarget::Object(i) => {
@@ -4097,7 +2752,9 @@ impl App {
             match target {
                 HitTarget::Object(i) => {
                     if *i < self.objects.len() {
-                        self.clipboard.items.push(ClipboardItem::Object(self.objects[*i].clone()));
+                        self.clipboard
+                            .items
+                            .push(ClipboardItem::Object(self.objects[*i].clone()));
                     }
                 }
                 HitTarget::Waveform(i) => {
@@ -4107,23 +2764,22 @@ impl App {
                         } else {
                             None
                         };
-                        self.clipboard.items.push(ClipboardItem::Waveform(
-                            self.waveforms[*i].clone(),
-                            clip,
-                        ));
+                        self.clipboard
+                            .items
+                            .push(ClipboardItem::Waveform(self.waveforms[*i].clone(), clip));
                     }
                 }
                 HitTarget::EffectRegion(i) => {
                     if *i < self.effect_regions.len() {
-                        self.clipboard.items.push(ClipboardItem::EffectRegion(
-                            self.effect_regions[*i].clone(),
-                        ));
+                        self.clipboard
+                            .items
+                            .push(ClipboardItem::EffectRegion(self.effect_regions[*i].clone()));
                     }
                 }
                 HitTarget::ComponentDef(i) => {
                     if *i < self.components.len() {
                         let def = &self.components[*i];
-                        let wfs: Vec<(WaveformObject, Option<AudioClipData>)> = def
+                        let wfs: Vec<(WaveformView, Option<AudioClipData>)> = def
                             .waveform_indices
                             .iter()
                             .filter_map(|&wi| {
@@ -4139,7 +2795,9 @@ impl App {
                                 }
                             })
                             .collect();
-                        self.clipboard.items.push(ClipboardItem::ComponentDef(def.clone(), wfs));
+                        self.clipboard
+                            .items
+                            .push(ClipboardItem::ComponentDef(def.clone(), wfs));
                     }
                 }
                 HitTarget::ComponentInstance(i) => {
@@ -4170,8 +2828,12 @@ impl App {
                 ClipboardItem::ComponentDef(d, _) => d.position,
                 ClipboardItem::ComponentInstance(ci) => ci.position,
             };
-            if pos[0] < min_x { min_x = pos[0]; }
-            if pos[1] < min_y { min_y = pos[1]; }
+            if pos[0] < min_x {
+                min_x = pos[0];
+            }
+            if pos[1] < min_y {
+                min_y = pos[1];
+            }
         }
 
         let dx = world[0] - min_x;
@@ -4317,7 +2979,8 @@ impl App {
             if i < self.components.len() {
                 let comp = self.components.remove(i);
                 // Remove instances that reference this component
-                self.component_instances.retain(|inst| inst.component_id != comp.id);
+                self.component_instances
+                    .retain(|inst| inst.component_id != comp.id);
                 // Also delete the owned waveforms (sorted descending)
                 let mut owned_wf: Vec<usize> = comp.waveform_indices;
                 owned_wf.sort_unstable_by(|a, b| b.cmp(a));
@@ -4395,17 +3058,19 @@ impl App {
             );
             let left_peaks = Arc::new(WaveformPeaks::build(&loaded.left_samples));
             let right_peaks = Arc::new(WaveformPeaks::build(&loaded.right_samples));
-            self.waveforms.push(WaveformObject {
+            self.waveforms.push(WaveformView {
+                audio: Arc::new(AudioData {
+                    left_samples: loaded.left_samples,
+                    right_samples: loaded.right_samples,
+                    left_peaks,
+                    right_peaks,
+                    sample_rate: loaded.sample_rate,
+                    filename,
+                }),
                 position: [world[0] - loaded.width * 0.5, world[1] - height * 0.5],
                 size: [loaded.width, height],
                 color: WAVEFORM_COLORS[color_idx],
                 border_radius: 8.0,
-                left_samples: loaded.left_samples,
-                right_samples: loaded.right_samples,
-                left_peaks,
-                right_peaks,
-                sample_rate: loaded.sample_rate,
-                filename,
                 fade_in_px: 0.0,
                 fade_out_px: 0.0,
             });
@@ -4439,7 +3104,8 @@ impl App {
         }
         self.plugin_registry.ensure_scanned();
 
-        let entries: Vec<browser::PluginEntry> = self.plugin_registry
+        let entries: Vec<browser::PluginEntry> = self
+            .plugin_registry
             .plugins
             .iter()
             .map(|e| browser::PluginEntry {
@@ -4455,7 +3121,10 @@ impl App {
             for slot in &mut region.chain {
                 let has_instance = slot.instance.lock().ok().map_or(false, |g| g.is_some());
                 if !has_instance {
-                    if let Some(instance) = self.plugin_registry.load_plugin(&slot.plugin_id, 48000.0, 512) {
+                    if let Some(instance) =
+                        self.plugin_registry
+                            .load_plugin(&slot.plugin_id, 48000.0, 512)
+                    {
                         *slot.instance.lock().unwrap() = Some(instance);
                         println!("  Reloaded plugin '{}'", slot.plugin_name);
                     }
@@ -4470,7 +3139,10 @@ impl App {
         let sample_rate = 48000.0;
         let block_size = 512;
 
-        if let Some(instance) = self.plugin_registry.load_plugin(plugin_id, sample_rate, block_size) {
+        if let Some(instance) = self
+            .plugin_registry
+            .load_plugin(plugin_id, sample_rate, block_size)
+        {
             let slot = effects::PluginSlot {
                 plugin_id: plugin_id.to_string(),
                 plugin_name: plugin_name.to_string(),
@@ -4480,7 +3152,10 @@ impl App {
             };
             if region_idx < self.effect_regions.len() {
                 self.effect_regions[region_idx].chain.push(slot);
-                println!("  Added plugin '{}' to effect region {}", plugin_name, region_idx);
+                println!(
+                    "  Added plugin '{}' to effect region {}",
+                    plugin_name, region_idx
+                );
                 self.sync_audio_clips();
             }
         }
@@ -4540,8 +3215,44 @@ impl ApplicationHandler for App {
     ) {
         match event {
             WindowEvent::CloseRequested => {
-                self.save_project();
-                event_loop.exit();
+                let is_temp = self
+                    .storage
+                    .as_ref()
+                    .map(|s| s.is_temp_project())
+                    .unwrap_or(false);
+
+                if is_temp && !self.waveforms.is_empty() {
+                    // Unsaved temp project with content — show dialog
+                    let result = rfd::MessageDialog::new()
+                        .set_title("Save Project?")
+                        .set_description("This project hasn't been saved. Would you like to save it before closing?")
+                        .set_buttons(rfd::MessageButtons::YesNoCancel)
+                        .show();
+
+                    match result {
+                        rfd::MessageDialogResult::Yes => {
+                            // Save As flow, then exit
+                            self.save_project();
+                            event_loop.exit();
+                        }
+                        rfd::MessageDialogResult::No => {
+                            // Delete temp folder and exit
+                            if let Some(storage) = &mut self.storage {
+                                if let Some(path) = storage.current_project_path().map(|p| p.to_string_lossy().to_string()) {
+                                    storage.delete_project(&path);
+                                }
+                            }
+                            event_loop.exit();
+                        }
+                        _ => {
+                            // Cancel — do nothing, abort close
+                        }
+                    }
+                } else {
+                    // Saved project or empty temp — just auto-save and exit
+                    self.save_project_state();
+                    event_loop.exit();
+                }
             }
 
             WindowEvent::Resized(new_size) => {
@@ -4566,6 +3277,11 @@ impl ApplicationHandler for App {
                     .extension()
                     .map(|e| e.to_string_lossy().to_lowercase())
                     .unwrap_or_default();
+                let filename = path
+                    .file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .to_string();
 
                 if AUDIO_EXTENSIONS.contains(&ext.as_str()) {
                     if let Some(loaded) = load_audio_file(&path) {
@@ -4573,11 +3289,6 @@ impl ApplicationHandler for App {
                         let world = self.camera.screen_to_world(self.mouse_pos);
                         let height = 150.0;
                         let color_idx = self.waveforms.len() % WAVEFORM_COLORS.len();
-                        let filename = path
-                            .file_name()
-                            .unwrap_or_default()
-                            .to_string_lossy()
-                            .to_string();
                         println!(
                             "  Loaded: {} ({:.1}s, {} Hz, {} samples/ch)",
                             filename,
@@ -4587,17 +3298,19 @@ impl ApplicationHandler for App {
                         );
                         let left_peaks = Arc::new(WaveformPeaks::build(&loaded.left_samples));
                         let right_peaks = Arc::new(WaveformPeaks::build(&loaded.right_samples));
-                        self.waveforms.push(WaveformObject {
+                        self.waveforms.push(WaveformView {
+                            audio: Arc::new(AudioData {
+                                left_samples: loaded.left_samples,
+                                right_samples: loaded.right_samples,
+                                left_peaks,
+                                right_peaks,
+                                sample_rate: loaded.sample_rate,
+                                filename: filename.clone(),
+                            }),
                             position: [world[0] - loaded.width * 0.5, world[1] - height * 0.5],
                             size: [loaded.width, height],
                             color: WAVEFORM_COLORS[color_idx],
                             border_radius: 8.0,
-                            left_samples: loaded.left_samples,
-                            right_samples: loaded.right_samples,
-                            left_peaks,
-                            right_peaks,
-                            sample_rate: loaded.sample_rate,
-                            filename,
                             fade_in_px: 0.0,
                             fade_out_px: 0.0,
                         });
@@ -4607,7 +3320,23 @@ impl ApplicationHandler for App {
                             duration_secs: loaded.duration_secs,
                         });
                         self.sync_audio_clips();
+                    } else {
+                        self.toast_manager.push(
+                            format!(
+                                "Cannot load '{}' \u{2014} unsupported or corrupted file",
+                                filename
+                            ),
+                            ui::toast::ToastKind::Error,
+                        );
                     }
+                } else {
+                    self.toast_manager.push(
+                        format!(
+                            "Cannot load '{}' \u{2014} not a supported audio format",
+                            filename
+                        ),
+                        ui::toast::ToastKind::Error,
+                    );
                 }
                 self.request_redraw();
             }
@@ -4630,7 +3359,9 @@ impl ApplicationHandler for App {
                             let new_val = pe.slider_drag(idx, mx, scr_w, scr_h, scale);
                             let ri = pe.region_idx;
                             let si = pe.slot_idx;
-                            if let Some(slot) = self.effect_regions.get(ri).and_then(|er| er.chain.get(si)) {
+                            if let Some(slot) =
+                                self.effect_regions.get(ri).and_then(|er| er.chain.get(si))
+                            {
                                 if let Ok(mut guard) = slot.instance.lock() {
                                     if let Some(inst) = guard.as_mut() {
                                         let _ = inst.set_parameter(idx, new_val);
@@ -4656,6 +3387,7 @@ impl ApplicationHandler for App {
                             let idx = sw.dragging_slider.unwrap();
                             sw.slider_drag(idx, mx, &mut self.settings, scr_w, scr_h, scale);
                         }
+                        self.mark_dirty();
                         self.request_redraw();
                         return;
                     }
@@ -4702,7 +3434,10 @@ impl ApplicationHandler for App {
                         let plugin_y = self.plugin_section_y_offset(sh, scale);
                         let header_h = browser::HEADER_HEIGHT * scale;
                         let local_plugin_y = self.mouse_pos[1] - plugin_y;
-                        if local_plugin_y >= 0.0 && plugin_y >= header_h && !self.plugin_browser.plugins.is_empty() {
+                        if local_plugin_y >= 0.0
+                            && plugin_y >= header_h
+                            && !self.plugin_browser.plugins.is_empty()
+                        {
                             self.plugin_browser.update_hover(local_plugin_y, scale);
                             self.sample_browser.hovered_entry = None;
                         } else {
@@ -4728,13 +3463,19 @@ impl ApplicationHandler for App {
                 }
 
                 // If dragging from browser or plugin, just request redraw for ghost
-                if matches!(self.drag, DragState::DraggingFromBrowser { .. } | DragState::DraggingPlugin { .. }) {
+                if matches!(
+                    self.drag,
+                    DragState::DraggingFromBrowser { .. } | DragState::DraggingPlugin { .. }
+                ) {
                     self.request_redraw();
                     return;
                 }
 
                 // Resizing component def
-                if let DragState::ResizingComponentDef { comp_idx, anchor, .. } = self.drag {
+                if let DragState::ResizingComponentDef {
+                    comp_idx, anchor, ..
+                } = self.drag
+                {
                     let world = self.camera.screen_to_world(self.mouse_pos);
                     if comp_idx < self.components.len() {
                         let min_size = 40.0;
@@ -4743,8 +3484,10 @@ impl ApplicationHandler for App {
                         let x1 = anchor[0].max(world[0]);
                         let y1 = anchor[1].max(world[1]);
                         self.components[comp_idx].position = [x0, y0];
-                        self.components[comp_idx].size = [(x1 - x0).max(min_size), (y1 - y0).max(min_size)];
+                        self.components[comp_idx].size =
+                            [(x1 - x0).max(min_size), (y1 - y0).max(min_size)];
                     }
+                    self.mark_dirty();
                     self.request_redraw();
                     return;
                 }
@@ -4761,12 +3504,16 @@ impl ApplicationHandler for App {
                         er.position = [x0, y0];
                         er.size = [(x1 - x0).max(min_size), (y1 - y0).max(min_size)];
                     }
+                    self.mark_dirty();
                     self.request_redraw();
                     return;
                 }
 
                 // Resizing effect region
-                if let DragState::ResizingEffectRegion { region_idx, anchor, .. } = self.drag {
+                if let DragState::ResizingEffectRegion {
+                    region_idx, anchor, ..
+                } = self.drag
+                {
                     let world = self.camera.screen_to_world(self.mouse_pos);
                     if region_idx < self.effect_regions.len() {
                         let min_size = 40.0;
@@ -4775,8 +3522,10 @@ impl ApplicationHandler for App {
                         let x1 = anchor[0].max(world[0]);
                         let y1 = anchor[1].max(world[1]);
                         self.effect_regions[region_idx].position = [x0, y0];
-                        self.effect_regions[region_idx].size = [(x1 - x0).max(min_size), (y1 - y0).max(min_size)];
+                        self.effect_regions[region_idx].size =
+                            [(x1 - x0).max(min_size), (y1 - y0).max(min_size)];
                     }
+                    self.mark_dirty();
                     self.request_redraw();
                     return;
                 }
@@ -4787,12 +3536,17 @@ impl ApplicationHandler for App {
                     if let Some(ref mut er) = self.export_region {
                         er.position = [world[0] - offset[0], world[1] - offset[1]];
                     }
+                    self.mark_dirty();
                     self.request_redraw();
                     return;
                 }
 
                 // Dragging fade handle
-                if let DragState::DraggingFade { waveform_idx, is_fade_in } = self.drag {
+                if let DragState::DraggingFade {
+                    waveform_idx,
+                    is_fade_in,
+                } = self.drag
+                {
                     let world = self.camera.screen_to_world(self.mouse_pos);
                     if let Some(wf) = self.waveforms.get_mut(waveform_idx) {
                         let max_fade = wf.size[0] * 0.5;
@@ -4800,10 +3554,12 @@ impl ApplicationHandler for App {
                             let new_val = (world[0] - wf.position[0]).clamp(0.0, max_fade);
                             wf.fade_in_px = new_val;
                         } else {
-                            let new_val = (wf.position[0] + wf.size[0] - world[0]).clamp(0.0, max_fade);
+                            let new_val =
+                                (wf.position[0] + wf.size[0] - world[0]).clamp(0.0, max_fade);
                             wf.fade_out_px = new_val;
                         }
                     }
+                    self.mark_dirty();
                     self.sync_audio_clips();
                     self.request_redraw();
                     return;
@@ -4838,11 +3594,14 @@ impl ApplicationHandler for App {
                         for (target, offset) in &offsets {
                             let raw_x = world[0] - offset[0];
                             let snapped_x = snap_to_grid(raw_x, &self.settings, self.camera.zoom);
-                            self.set_target_pos(
+                            self.set_target_pos(target, [snapped_x, world[1] - offset[1]]);
+                            if matches!(
                                 target,
-                                [snapped_x, world[1] - offset[1]],
-                            );
-                            if matches!(target, HitTarget::Waveform(_) | HitTarget::EffectRegion(_) | HitTarget::ComponentDef(_) | HitTarget::ComponentInstance(_)) {
+                                HitTarget::Waveform(_)
+                                    | HitTarget::EffectRegion(_)
+                                    | HitTarget::ComponentDef(_)
+                                    | HitTarget::ComponentInstance(_)
+                            ) {
                                 needs_sync = true;
                             }
                         }
@@ -4852,6 +3611,7 @@ impl ApplicationHandler for App {
                         if needs_sync {
                             self.sync_audio_clips();
                         }
+                        self.mark_dirty();
                     }
                     Action::Other => {}
                 }
@@ -4883,7 +3643,16 @@ impl ApplicationHandler for App {
                     if state == ElementState::Pressed {
                         self.command_palette = None;
                         let world = self.camera.screen_to_world(self.mouse_pos);
-                        let hit = hit_test(&self.objects, &self.waveforms, &self.effect_regions, &self.components, &self.component_instances, self.editing_component, world, &self.camera);
+                        let hit = hit_test(
+                            &self.objects,
+                            &self.waveforms,
+                            &self.effect_regions,
+                            &self.components,
+                            &self.component_instances,
+                            self.editing_component,
+                            world,
+                            &self.camera,
+                        );
                         let menu_ctx = match hit {
                             Some(HitTarget::ComponentInstance(_)) => {
                                 if !self.selected.contains(&hit.unwrap()) {
@@ -4904,21 +3673,40 @@ impl ApplicationHandler for App {
                                     self.selected.clear();
                                     self.selected.push(target);
                                 }
-                                let has_waveforms = self.selected.iter().any(|t| matches!(t, HitTarget::Waveform(_)));
-                                let has_effect_region = self.selected.iter().any(|t| matches!(t, HitTarget::EffectRegion(_)));
-                                MenuContext::Selection { has_waveforms, has_effect_region }
+                                let has_waveforms = self
+                                    .selected
+                                    .iter()
+                                    .any(|t| matches!(t, HitTarget::Waveform(_)));
+                                let has_effect_region = self
+                                    .selected
+                                    .iter()
+                                    .any(|t| matches!(t, HitTarget::EffectRegion(_)));
+                                MenuContext::Selection {
+                                    has_waveforms,
+                                    has_effect_region,
+                                }
                             }
                             None => {
                                 if self.selected.is_empty() {
                                     MenuContext::Grid
                                 } else {
-                                    let has_waveforms = self.selected.iter().any(|t| matches!(t, HitTarget::Waveform(_)));
-                                    let has_effect_region = self.selected.iter().any(|t| matches!(t, HitTarget::EffectRegion(_)));
-                                    MenuContext::Selection { has_waveforms, has_effect_region }
+                                    let has_waveforms = self
+                                        .selected
+                                        .iter()
+                                        .any(|t| matches!(t, HitTarget::Waveform(_)));
+                                    let has_effect_region = self
+                                        .selected
+                                        .iter()
+                                        .any(|t| matches!(t, HitTarget::EffectRegion(_)));
+                                    MenuContext::Selection {
+                                        has_waveforms,
+                                        has_effect_region,
+                                    }
                                 }
                             }
                         };
-                        self.context_menu = Some(ContextMenu::new(self.mouse_pos, menu_ctx, &self.settings));
+                        self.context_menu =
+                            Some(ContextMenu::new(self.mouse_pos, menu_ctx, &self.settings));
                         self.request_redraw();
                     }
                 }
@@ -4928,22 +3716,30 @@ impl ApplicationHandler for App {
                         // Plugin editor click
                         if self.plugin_editor.is_some() {
                             let (scr_w, scr_h, scale) = self.screen_info();
-                            let inside = self
-                                .plugin_editor
-                                .as_ref()
-                                .map_or(false, |pe| pe.contains(self.mouse_pos, scr_w, scr_h, scale));
+                            let inside = self.plugin_editor.as_ref().map_or(false, |pe| {
+                                pe.contains(self.mouse_pos, scr_w, scr_h, scale)
+                            });
                             if inside {
-                                let slider_hit = self
-                                    .plugin_editor
-                                    .as_ref()
-                                    .and_then(|pe| pe.slider_hit_test(self.mouse_pos, scr_w, scr_h, scale));
+                                let slider_hit = self.plugin_editor.as_ref().and_then(|pe| {
+                                    pe.slider_hit_test(self.mouse_pos, scr_w, scr_h, scale)
+                                });
                                 if let Some(idx) = slider_hit {
                                     if let Some(pe) = &mut self.plugin_editor {
                                         pe.dragging_slider = Some(idx);
-                                        let new_val = pe.slider_drag(idx, self.mouse_pos[0], scr_w, scr_h, scale);
+                                        let new_val = pe.slider_drag(
+                                            idx,
+                                            self.mouse_pos[0],
+                                            scr_w,
+                                            scr_h,
+                                            scale,
+                                        );
                                         let ri = pe.region_idx;
                                         let si = pe.slot_idx;
-                                        if let Some(slot) = self.effect_regions.get(ri).and_then(|er| er.chain.get(si)) {
+                                        if let Some(slot) = self
+                                            .effect_regions
+                                            .get(ri)
+                                            .and_then(|er| er.chain.get(si))
+                                        {
                                             if let Ok(mut guard) = slot.instance.lock() {
                                                 if let Some(inst) = guard.as_mut() {
                                                     let _ = inst.set_parameter(idx, new_val);
@@ -4962,40 +3758,58 @@ impl ApplicationHandler for App {
                         // Settings window click
                         if self.settings_window.is_some() {
                             let (scr_w, scr_h, scale) = self.screen_info();
-                            let inside = self
-                                .settings_window
-                                .as_ref()
-                                .map_or(false, |sw| sw.contains(self.mouse_pos, scr_w, scr_h, scale));
+                            let inside = self.settings_window.as_ref().map_or(false, |sw| {
+                                sw.contains(self.mouse_pos, scr_w, scr_h, scale)
+                            });
                             if inside {
                                 // Try audio dropdown interaction first
                                 let prev_output_device = self.settings.audio_output_device.clone();
-                                let audio_consumed = self
-                                    .settings_window
-                                    .as_mut()
-                                    .map_or(false, |sw| {
-                                        sw.handle_audio_click(self.mouse_pos, &mut self.settings, scr_w, scr_h, scale)
+                                let audio_consumed =
+                                    self.settings_window.as_mut().map_or(false, |sw| {
+                                        sw.handle_audio_click(
+                                            self.mouse_pos,
+                                            &mut self.settings,
+                                            scr_w,
+                                            scr_h,
+                                            scale,
+                                        )
                                     });
                                 if audio_consumed {
                                     self.settings.save();
 
                                     if self.settings.audio_output_device != prev_output_device {
-                                        println!("[audio] Output device changed: '{}' -> '{}'", prev_output_device, self.settings.audio_output_device);
+                                        println!(
+                                            "[audio] Output device changed: '{}' -> '{}'",
+                                            prev_output_device, self.settings.audio_output_device
+                                        );
 
-                                        let old_pos = self.audio_engine.as_ref().map(|e| e.position_seconds());
-                                        let old_vol = self.audio_engine.as_ref().map(|e| e.master_volume());
-                                        let was_playing = self.audio_engine.as_ref().map_or(false, |e| e.is_playing());
+                                        let old_pos = self
+                                            .audio_engine
+                                            .as_ref()
+                                            .map(|e| e.position_seconds());
+                                        let old_vol =
+                                            self.audio_engine.as_ref().map(|e| e.master_volume());
+                                        let was_playing = self
+                                            .audio_engine
+                                            .as_ref()
+                                            .map_or(false, |e| e.is_playing());
 
-                                        let device_name = if self.settings.audio_output_device == "No Device" {
-                                            None
-                                        } else {
-                                            Some(self.settings.audio_output_device.as_str())
-                                        };
-                                        self.audio_engine = AudioEngine::new_with_device(device_name);
+                                        let device_name =
+                                            if self.settings.audio_output_device == "No Device" {
+                                                None
+                                            } else {
+                                                Some(self.settings.audio_output_device.as_str())
+                                            };
+                                        self.audio_engine =
+                                            AudioEngine::new_with_device(device_name);
 
                                         if let Some(ref engine) = self.audio_engine {
                                             let actual = engine.device_name().to_string();
                                             if self.settings.audio_output_device != actual {
-                                                println!("[audio] Device '{}' not available, using '{}'", self.settings.audio_output_device, actual);
+                                                println!(
+                                                    "[audio] Device '{}' not available, using '{}'",
+                                                    self.settings.audio_output_device, actual
+                                                );
                                                 self.settings.audio_output_device = actual;
                                                 self.settings.save();
                                             }
@@ -5021,23 +3835,50 @@ impl ApplicationHandler for App {
                                     return;
                                 }
 
-                                let slider_hit = self
-                                    .settings_window
-                                    .as_ref()
-                                    .and_then(|sw| {
-                                        sw.slider_hit_test(self.mouse_pos, &self.settings, scr_w, scr_h, scale)
+                                // Try developer dropdown interaction
+                                let dev_consumed =
+                                    self.settings_window.as_mut().map_or(false, |sw| {
+                                        sw.handle_developer_click(
+                                            self.mouse_pos,
+                                            &mut self.settings,
+                                            scr_w,
+                                            scr_h,
+                                            scale,
+                                        )
                                     });
+                                if dev_consumed {
+                                    self.settings.save();
+                                    self.request_redraw();
+                                    return;
+                                }
+
+                                let slider_hit = self.settings_window.as_ref().and_then(|sw| {
+                                    sw.slider_hit_test(
+                                        self.mouse_pos,
+                                        &self.settings,
+                                        scr_w,
+                                        scr_h,
+                                        scale,
+                                    )
+                                });
                                 if let Some(idx) = slider_hit {
                                     if let Some(sw) = &mut self.settings_window {
                                         sw.dragging_slider = Some(idx);
                                     }
                                     if let Some(sw) = &self.settings_window {
-                                        sw.slider_drag(idx, self.mouse_pos[0], &mut self.settings, scr_w, scr_h, scale);
+                                        sw.slider_drag(
+                                            idx,
+                                            self.mouse_pos[0],
+                                            &mut self.settings,
+                                            scr_w,
+                                            scr_h,
+                                            scale,
+                                        );
                                     }
-                                } else if let Some(cat_idx) = self
-                                    .settings_window
-                                    .as_ref()
-                                    .and_then(|sw| sw.category_at(self.mouse_pos, scr_w, scr_h, scale))
+                                } else if let Some(cat_idx) =
+                                    self.settings_window.as_ref().and_then(|sw| {
+                                        sw.category_at(self.mouse_pos, scr_w, scr_h, scale)
+                                    })
                                 {
                                     if let Some(sw) = &mut self.settings_window {
                                         sw.active_category = CATEGORIES[cat_idx];
@@ -5088,12 +3929,9 @@ impl ApplicationHandler for App {
 
                             if is_fader {
                                 if inside {
-                                    let hit = self
-                                        .command_palette
-                                        .as_ref()
-                                        .map_or(false, |p| {
-                                            p.fader_hit_test(self.mouse_pos, sw, sh, scale)
-                                        });
+                                    let hit = self.command_palette.as_ref().map_or(false, |p| {
+                                        p.fader_hit_test(self.mouse_pos, sw, sh, scale)
+                                    });
                                     if hit {
                                         if let Some(p) = &mut self.command_palette {
                                             p.fader_dragging = true;
@@ -5153,10 +3991,14 @@ impl ApplicationHandler for App {
 
                                     if local_plugin_y >= 0.0 && plugin_section_y >= header_h {
                                         if self.plugin_browser.hit_header(local_plugin_y, scale) {
-                                            self.plugin_browser.expanded = !self.plugin_browser.expanded;
+                                            self.plugin_browser.expanded =
+                                                !self.plugin_browser.expanded;
                                             self.plugin_browser.text_dirty = true;
-                                            self.sample_browser.extra_content_height = self.plugin_browser.section_height(scale);
-                                        } else if let Some(idx) = self.plugin_browser.item_at(local_plugin_y, scale) {
+                                            self.sample_browser.extra_content_height =
+                                                self.plugin_browser.section_height(scale);
+                                        } else if let Some(idx) =
+                                            self.plugin_browser.item_at(local_plugin_y, scale)
+                                        {
                                             let plugin = self.plugin_browser.plugins[idx].clone();
                                             self.drag = DragState::DraggingPlugin {
                                                 plugin_id: plugin.unique_id,
@@ -5199,7 +4041,10 @@ impl ApplicationHandler for App {
                                         center[0] - EXPORT_REGION_DEFAULT_WIDTH * 0.5,
                                         center[1] - EXPORT_REGION_DEFAULT_HEIGHT * 0.5,
                                     ],
-                                    size: [EXPORT_REGION_DEFAULT_WIDTH, EXPORT_REGION_DEFAULT_HEIGHT],
+                                    size: [
+                                        EXPORT_REGION_DEFAULT_WIDTH,
+                                        EXPORT_REGION_DEFAULT_HEIGHT,
+                                    ],
                                 });
                                 println!("  Created export region");
                                 self.request_redraw();
@@ -5286,7 +4131,9 @@ impl ApplicationHandler for App {
 
                         // --- plugin label click (opens parameter editor) ---
                         if let EffectRegionHover::PluginLabel(ri, si) = self.effect_region_hover {
-                            if ri < self.effect_regions.len() && si < self.effect_regions[ri].chain.len() {
+                            if ri < self.effect_regions.len()
+                                && si < self.effect_regions[ri].chain.len()
+                            {
                                 let slot = &self.effect_regions[ri].chain[si];
                                 let name = slot.plugin_name.clone();
                                 let mut params = Vec::new();
@@ -5298,9 +4145,11 @@ impl ApplicationHandler for App {
                                             let val = inst.get_parameter(idx).unwrap_or(0.0);
                                             let (pname, unit, default) = match info {
                                                 Ok(pi) => (pi.name, pi.unit, pi.default),
-                                                Err(_) => (format!("Param {}", idx), String::new(), 0.0),
+                                                Err(_) => {
+                                                    (format!("Param {}", idx), String::new(), 0.0)
+                                                }
                                             };
-                                            params.push(plugin_editor::ParamEntry {
+                                            params.push(ui::plugin_editor::ParamEntry {
                                                 name: pname,
                                                 unit,
                                                 value: val,
@@ -5309,7 +4158,7 @@ impl ApplicationHandler for App {
                                         }
                                     }
                                 }
-                                self.plugin_editor = Some(plugin_editor::PluginEditorWindow::new(
+                                self.plugin_editor = Some(ui::plugin_editor::PluginEditorWindow::new(
                                     ri, si, name, params,
                                 ));
                                 self.request_redraw();
@@ -5360,21 +4209,36 @@ impl ApplicationHandler for App {
                             let handle_sz = 12.0 / self.camera.zoom;
                             // (corner_center, anchor = opposite corner, nwse diagonal?)
                             let corners: [([f32; 2], [f32; 2], bool); 4] = [
-                                ([er.position[0], er.position[1]],
-                                 [er.position[0] + er.size[0], er.position[1] + er.size[1]], true),
-                                ([er.position[0] + er.size[0], er.position[1]],
-                                 [er.position[0], er.position[1] + er.size[1]], false),
-                                ([er.position[0], er.position[1] + er.size[1]],
-                                 [er.position[0] + er.size[0], er.position[1]], false),
-                                ([er.position[0] + er.size[0], er.position[1] + er.size[1]],
-                                 [er.position[0], er.position[1]], true),
+                                (
+                                    [er.position[0], er.position[1]],
+                                    [er.position[0] + er.size[0], er.position[1] + er.size[1]],
+                                    true,
+                                ),
+                                (
+                                    [er.position[0] + er.size[0], er.position[1]],
+                                    [er.position[0], er.position[1] + er.size[1]],
+                                    false,
+                                ),
+                                (
+                                    [er.position[0], er.position[1] + er.size[1]],
+                                    [er.position[0] + er.size[0], er.position[1]],
+                                    false,
+                                ),
+                                (
+                                    [er.position[0] + er.size[0], er.position[1] + er.size[1]],
+                                    [er.position[0], er.position[1]],
+                                    true,
+                                ),
                             ];
                             let mut hit_corner = false;
                             for (corner, anchor, is_nwse) in &corners {
                                 let hx = corner[0] - handle_sz * 0.5;
                                 let hy = corner[1] - handle_sz * 0.5;
                                 if point_in_rect(world, [hx, hy], [handle_sz, handle_sz]) {
-                                    self.drag = DragState::ResizingExportRegion { anchor: *anchor, nwse: *is_nwse };
+                                    self.drag = DragState::ResizingExportRegion {
+                                        anchor: *anchor,
+                                        nwse: *is_nwse,
+                                    };
                                     self.update_cursor();
                                     self.request_redraw();
                                     hit_corner = true;
@@ -5407,19 +4271,34 @@ impl ApplicationHandler for App {
                             hit_test_fade_handle(&self.waveforms, world, &self.camera)
                         {
                             self.push_undo();
-                            self.drag = DragState::DraggingFade { waveform_idx: wf_idx, is_fade_in };
+                            self.drag = DragState::DraggingFade {
+                                waveform_idx: wf_idx,
+                                is_fade_in,
+                            };
                             self.update_cursor();
                             self.request_redraw();
                             return;
                         }
 
-                        let hit = hit_test(&self.objects, &self.waveforms, &self.effect_regions, &self.components, &self.component_instances, self.editing_component, world, &self.camera);
+                        let hit = hit_test(
+                            &self.objects,
+                            &self.waveforms,
+                            &self.effect_regions,
+                            &self.components,
+                            &self.component_instances,
+                            self.editing_component,
+                            world,
+                            &self.camera,
+                        );
 
                         // Double-click detection: enter component edit mode
                         let now = std::time::Instant::now();
                         let elapsed = now.duration_since(self.last_click_time);
-                        let dist = ((world[0] - self.last_click_world[0]).powi(2) + (world[1] - self.last_click_world[1]).powi(2)).sqrt();
-                        let is_double_click = elapsed.as_millis() < 400 && dist < 10.0 / self.camera.zoom;
+                        let dist = ((world[0] - self.last_click_world[0]).powi(2)
+                            + (world[1] - self.last_click_world[1]).powi(2))
+                        .sqrt();
+                        let is_double_click =
+                            elapsed.as_millis() < 400 && dist < 10.0 / self.camera.zoom;
                         self.last_click_time = now;
                         self.last_click_world = world;
 
@@ -5427,7 +4306,10 @@ impl ApplicationHandler for App {
                             if let Some(HitTarget::ComponentDef(ci)) = hit {
                                 self.editing_component = Some(ci);
                                 self.selected.clear();
-                                println!("Entered component edit mode: {}", self.components[ci].name);
+                                println!(
+                                    "Entered component edit mode: {}",
+                                    self.components[ci].name
+                                );
                                 self.request_redraw();
                                 return;
                             }
@@ -5441,7 +4323,16 @@ impl ApplicationHandler for App {
                                     self.selected.clear();
                                     println!("Exited component edit mode");
                                     // Re-do hit test without edit mode
-                                    let hit2 = hit_test(&self.objects, &self.waveforms, &self.effect_regions, &self.components, &self.component_instances, None, world, &self.camera);
+                                    let hit2 = hit_test(
+                                        &self.objects,
+                                        &self.waveforms,
+                                        &self.effect_regions,
+                                        &self.components,
+                                        &self.component_instances,
+                                        None,
+                                        world,
+                                        &self.camera,
+                                    );
                                     if let Some(target) = hit2 {
                                         self.selected.push(target);
                                         self.begin_move_selection(world, self.modifiers.alt_key());
@@ -5532,7 +4423,11 @@ impl ApplicationHandler for App {
                         }
 
                         // --- finish moving/resizing export region ---
-                        if matches!(self.drag, DragState::MovingExportRegion { .. } | DragState::ResizingExportRegion { .. }) {
+                        if matches!(
+                            self.drag,
+                            DragState::MovingExportRegion { .. }
+                                | DragState::ResizingExportRegion { .. }
+                        ) {
                             self.drag = DragState::None;
                             self.update_cursor();
                             self.request_redraw();
@@ -5565,7 +4460,11 @@ impl ApplicationHandler for App {
                         }
 
                         // --- drop plugin from browser to canvas/effect region ---
-                        if let DragState::DraggingPlugin { ref plugin_id, ref plugin_name } = self.drag {
+                        if let DragState::DraggingPlugin {
+                            ref plugin_id,
+                            ref plugin_name,
+                        } = self.drag
+                        {
                             let plugin_id = plugin_id.clone();
                             let plugin_name = plugin_name.clone();
                             let (_, sh, scale) = self.screen_info();
@@ -5573,9 +4472,13 @@ impl ApplicationHandler for App {
                                 && self.sample_browser.contains(self.mouse_pos, sh, scale);
                             if !in_browser {
                                 let world = self.camera.screen_to_world(self.mouse_pos);
-                                let hit_er = self.effect_regions.iter().enumerate().rev().find(|(_, er)| {
-                                    point_in_rect(world, er.position, er.size)
-                                }).map(|(i, _)| i);
+                                let hit_er = self
+                                    .effect_regions
+                                    .iter()
+                                    .enumerate()
+                                    .rev()
+                                    .find(|(_, er)| point_in_rect(world, er.position, er.size))
+                                    .map(|(i, _)| i);
 
                                 if let Some(er_idx) = hit_er {
                                     self.add_plugin_to_region(er_idx, &plugin_id, &plugin_name);
@@ -5612,8 +4515,16 @@ impl ApplicationHandler for App {
                                     engine.seek_to_seconds(secs);
                                 }
                             } else {
-                                self.selected =
-                                    targets_in_rect(&self.objects, &self.waveforms, &self.effect_regions, &self.components, &self.component_instances, self.editing_component, rp, rs);
+                                self.selected = targets_in_rect(
+                                    &self.objects,
+                                    &self.waveforms,
+                                    &self.effect_regions,
+                                    &self.components,
+                                    &self.component_instances,
+                                    self.editing_component,
+                                    rp,
+                                    rs,
+                                );
                             }
                         }
 
@@ -5732,11 +4643,13 @@ impl ApplicationHandler for App {
                                     if idx < self.waveforms.len() {
                                         self.push_undo();
                                         let name = if text.trim().is_empty() {
-                                            self.waveforms[idx].filename.clone()
+                                            self.waveforms[idx].audio.filename.clone()
                                         } else {
                                             text
                                         };
-                                        self.waveforms[idx].filename = name;
+                                        let mut new_audio = (*self.waveforms[idx].audio).clone();
+                                        new_audio.filename = name;
+                                        self.waveforms[idx].audio = Arc::new(new_audio);
                                     }
                                 }
                                 self.request_redraw();
@@ -5829,7 +4742,7 @@ impl ApplicationHandler for App {
                             Key::Named(NamedKey::Backspace) => {
                                 if let Some(p) = &mut self.command_palette {
                                     p.search_text.pop();
-                                    p.update_filter();
+                                    p.update_filter(self.settings.dev_mode);
                                 }
                                 self.request_redraw();
                                 return;
@@ -5837,7 +4750,7 @@ impl ApplicationHandler for App {
                             Key::Character(ch) if !self.modifiers.super_key() => {
                                 if let Some(p) = &mut self.command_palette {
                                     p.search_text.push_str(ch.as_ref());
-                                    p.update_filter();
+                                    p.update_filter(self.settings.dev_mode);
                                 }
                                 self.request_redraw();
                                 return;
@@ -5856,10 +4769,16 @@ impl ApplicationHandler for App {
                                 } else {
                                     println!("  Effect region {} plugin chain:", idx);
                                     for (j, slot) in er.chain.iter().enumerate() {
-                                        let param_count = slot.instance.lock().ok()
+                                        let param_count = slot
+                                            .instance
+                                            .lock()
+                                            .ok()
                                             .and_then(|g| g.as_ref().map(|p| p.parameter_count()))
                                             .unwrap_or(0);
-                                        println!("    [{}] {} ({} params)", j, slot.plugin_name, param_count);
+                                        println!(
+                                            "    [{}] {} ({} params)",
+                                            j, slot.plugin_name, param_count
+                                        );
                                     }
                                 }
                             }
@@ -5901,7 +4820,7 @@ impl ApplicationHandler for App {
                                 self.command_palette = if self.command_palette.is_some() {
                                     None
                                 } else {
-                                    Some(CommandPalette::new())
+                                    Some(CommandPalette::new(self.settings.dev_mode))
                                 };
                                 self.request_redraw();
                             }
@@ -5916,8 +4835,14 @@ impl ApplicationHandler for App {
                                 self.open_add_folder_dialog();
                             }
                             "r" => {
-                                let has_er = self.selected.iter().any(|t| matches!(t, HitTarget::EffectRegion(_)));
-                                let has_wf = self.selected.iter().any(|t| matches!(t, HitTarget::Waveform(_)));
+                                let has_er = self
+                                    .selected
+                                    .iter()
+                                    .any(|t| matches!(t, HitTarget::EffectRegion(_)));
+                                let has_wf = self
+                                    .selected
+                                    .iter()
+                                    .any(|t| matches!(t, HitTarget::Waveform(_)));
                                 if has_er {
                                     self.execute_command(CommandAction::RenameEffectRegion);
                                 } else if has_wf {
@@ -6015,14 +4940,22 @@ impl ApplicationHandler for App {
             }
 
             WindowEvent::RedrawRequested => {
+                self.toast_manager.tick();
                 self.update_recording_waveform();
                 let (_pre_w, pre_h, pre_scale) = self.screen_info();
-                self.sample_browser.extra_content_height = self.plugin_browser.section_height(pre_scale);
+                self.sample_browser.extra_content_height =
+                    self.plugin_browser.section_height(pre_scale);
                 let plugin_section_y = self.plugin_section_y_offset(pre_h, pre_scale);
                 let plugin_panel_w = self.sample_browser.panel_width(pre_scale);
                 let clip_top = browser::HEADER_HEIGHT * pre_scale;
                 if self.sample_browser.visible && !self.plugin_browser.plugins.is_empty() {
-                    self.plugin_browser.get_text_entries(plugin_panel_w, plugin_section_y, pre_scale, clip_top, pre_h);
+                    self.plugin_browser.get_text_entries(
+                        plugin_panel_w,
+                        plugin_section_y,
+                        pre_scale,
+                        clip_top,
+                        pre_h,
+                    );
                 }
                 if let Some(gpu) = &mut self.gpu {
                     let w = gpu.config.width as f32;
@@ -6039,26 +4972,46 @@ impl ApplicationHandler for App {
                         .as_ref()
                         .map(|e| (e.position_seconds() * PIXELS_PER_SECOND as f64) as f32);
 
-                    let render_ctx = RenderContext {
-                        camera: &self.camera,
-                        screen_w: w,
-                        screen_h: h,
-                        objects: &self.objects,
-                        waveforms: &self.waveforms,
-                        effect_regions: &self.effect_regions,
-                        hovered: self.hovered,
-                        selected: &self.selected,
-                        selection_rect: sel_rect,
-                        file_hovering: self.file_hovering,
-                        playhead_world_x,
-                        export_region: self.export_region.as_ref(),
-                        components: &self.components,
-                        component_instances: &self.component_instances,
-                        editing_component: self.editing_component,
-                        settings: &self.settings,
-                    };
-                    let instances = build_instances(&render_ctx);
-                    let wf_verts = build_waveform_vertices(&render_ctx);
+                    let camera_moved = self.camera.position != self.last_rendered_camera_pos
+                        || self.camera.zoom != self.last_rendered_camera_zoom;
+                    let hover_changed = self.hovered != self.last_rendered_hovered;
+                    let sel_changed = self.selected.len() != self.last_rendered_selected_len;
+                    let gen_changed = self.render_generation != self.last_rendered_generation;
+                    let needs_rebuild = camera_moved || hover_changed || sel_changed || gen_changed
+                        || playhead_world_x.is_some() || sel_rect.is_some() || self.file_hovering;
+
+                    if needs_rebuild {
+                        let selected_set: HashSet<HitTarget> = self.selected.iter().copied().collect();
+                        let component_map: std::collections::HashMap<component::ComponentId, usize> =
+                            self.components.iter().enumerate().map(|(i, c)| (c.id, i)).collect();
+                        let render_ctx = RenderContext {
+                            camera: &self.camera,
+                            screen_w: w,
+                            screen_h: h,
+                            objects: &self.objects,
+                            waveforms: &self.waveforms,
+                            effect_regions: &self.effect_regions,
+                            hovered: self.hovered,
+                            selected: &selected_set,
+                            selection_rect: sel_rect,
+                            file_hovering: self.file_hovering,
+                            playhead_world_x,
+                            export_region: self.export_region.as_ref(),
+                            components: &self.components,
+                            component_instances: &self.component_instances,
+                            editing_component: self.editing_component,
+                            settings: &self.settings,
+                            component_map: &component_map,
+                        };
+                        build_instances(&mut self.cached_instances, &render_ctx);
+                        build_waveform_vertices(&mut self.cached_wf_verts, &render_ctx);
+
+                        self.last_rendered_generation = self.render_generation;
+                        self.last_rendered_camera_pos = self.camera.position;
+                        self.last_rendered_camera_zoom = self.camera.zoom;
+                        self.last_rendered_hovered = self.hovered;
+                        self.last_rendered_selected_len = self.selected.len();
+                    }
 
                     if self.sample_browser.visible {
                         self.sample_browser.get_text_entries(h, gpu.scale_factor);
@@ -6072,7 +5025,10 @@ impl ApplicationHandler for App {
                     let drag_ghost =
                         if let DragState::DraggingFromBrowser { ref filename, .. } = self.drag {
                             Some((filename.as_str(), self.mouse_pos))
-                        } else if let DragState::DraggingPlugin { ref plugin_name, .. } = self.drag {
+                        } else if let DragState::DraggingPlugin {
+                            ref plugin_name, ..
+                        } = self.drag
+                        {
                             Some((plugin_name.as_str(), self.mouse_pos))
                         } else {
                             None
@@ -6080,8 +5036,7 @@ impl ApplicationHandler for App {
 
                     if let Some(p) = &mut self.command_palette {
                         if p.mode == PaletteMode::VolumeFader {
-                            p.fader_rms =
-                                self.audio_engine.as_ref().map_or(0.0, |e| e.rms_peak());
+                            p.fader_rms = self.audio_engine.as_ref().map_or(0.0, |e| e.rms_peak());
                         }
                     }
 
@@ -6092,16 +5047,17 @@ impl ApplicationHandler for App {
                         .map_or(0.0, |e| e.position_seconds());
                     let is_recording = self.recorder.as_ref().map_or(false, |r| r.is_recording());
 
-                    let plugin_browser_ref = if self.sample_browser.visible && !self.plugin_browser.plugins.is_empty() {
-                        Some((&self.plugin_browser, plugin_section_y))
-                    } else {
-                        None
-                    };
+                    let plugin_browser_ref =
+                        if self.sample_browser.visible && !self.plugin_browser.plugins.is_empty() {
+                            Some((&self.plugin_browser, plugin_section_y))
+                        } else {
+                            None
+                        };
 
                     gpu.render(
                         &self.camera,
-                        &instances,
-                        &wf_verts,
+                        &self.cached_instances,
+                        &self.cached_wf_verts,
                         self.command_palette.as_ref(),
                         self.context_menu.as_ref(),
                         browser_ref,
@@ -6112,13 +5068,21 @@ impl ApplicationHandler for App {
                         playback_pos,
                         self.export_region.as_ref(),
                         &self.effect_regions,
-                        self.editing_effect_name.as_ref().map(|(idx, s)| (*idx, s.as_str())),
+                        self.editing_effect_name
+                            .as_ref()
+                            .map(|(idx, s)| (*idx, s.as_str())),
                         &self.waveforms,
-                        self.editing_waveform_name.as_ref().map(|(idx, s)| (*idx, s.as_str())),
+                        self.editing_waveform_name
+                            .as_ref()
+                            .map(|(idx, s)| (*idx, s.as_str())),
                         self.plugin_editor.as_ref(),
                         self.settings_window.as_ref(),
                         &self.settings,
+                        &self.toast_manager,
                     );
+                }
+                if self.toast_manager.has_active() {
+                    self.request_redraw();
                 }
             }
 
@@ -6175,7 +5139,7 @@ fn build_app_menu(storage: Option<&Storage>) -> MenuState {
     if let Some(s) = storage {
         for entry in s.list_projects() {
             let item = MenuItem::new(&entry.name, true, None);
-            open_items.push((item.id().clone(), entry.project_id));
+            open_items.push((item.id().clone(), entry.path.clone()));
             let _ = open_submenu.append(&item);
         }
     }

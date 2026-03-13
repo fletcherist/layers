@@ -1,3 +1,5 @@
+- FPS optimization: viewport culling for all entity types, dirty tracking with generation counter, HashSet for O(1) selection lookups, HashMap for component lookups, reusable Vec allocations, O(n²) elimination in hit testing (13.7k loc)
+- 2026-03-13: Show grid sizes as inline horizontal pills in right-click context menu instead of vertical rows, Ableton-style (11.9k loc)
 - Add Ableton-style grid settings context menu: right-click canvas for adaptive/fixed musical grid, snap-to-grid, triplet mode, Cmd+1/2/3/4 shortcuts, grid enable/disable (11.8k loc)
 - Fix effect region name label not rendering: correct text buffer height and position to match waveform name pattern (11.4k loc)
 - Fix waveform zoom-out lag: precomputed peak mipmap (256-sample blocks) replaces per-frame raw sample scanning (11.4k loc)

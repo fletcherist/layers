@@ -169,6 +169,8 @@ pub struct Settings {
     pub grid_mode: GridMode,
     #[serde(default = "default_triplet_grid")]
     pub triplet_grid: bool,
+    #[serde(default)]
+    pub dev_mode: bool,
 }
 
 fn default_driver_type() -> String {
@@ -206,6 +208,7 @@ impl Default for Settings {
             snap_to_grid: true,
             grid_mode: GridMode::default(),
             triplet_grid: false,
+            dev_mode: false,
         }
     }
 }
@@ -344,6 +347,7 @@ const AUDIO_DROPDOWN_COUNT: usize = 3;
 pub enum SettingsCategory {
     ThemeAndColors,
     Audio,
+    Developer,
 }
 
 impl SettingsCategory {
@@ -351,12 +355,17 @@ impl SettingsCategory {
         match self {
             Self::ThemeAndColors => "Theme & Colors",
             Self::Audio => "Audio",
+            Self::Developer => "Developer",
         }
     }
 }
 
-pub const CATEGORIES: &[SettingsCategory] =
-    &[SettingsCategory::ThemeAndColors, SettingsCategory::Audio];
+pub const CATEGORIES: &[SettingsCategory] = &[
+    SettingsCategory::ThemeAndColors,
+    SettingsCategory::Audio,
+    SettingsCategory::Developer,
+];
+
 
 struct SliderDef {
     label: &'static str,
@@ -794,6 +803,11 @@ impl SettingsWindow {
                     &mut out, settings, screen_w, screen_h, scale, content_x, content_w, wp,
                 );
             }
+            SettingsCategory::Developer => {
+                self.build_developer_instances(
+                    &mut out, settings, screen_w, screen_h, scale, content_x, content_w, wp,
+                );
+            }
         }
 
         out
@@ -962,6 +976,158 @@ impl SettingsWindow {
                 }
             }
         }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn build_developer_instances(
+        &self,
+        out: &mut Vec<InstanceRaw>,
+        settings: &Settings,
+        screen_w: f32,
+        screen_h: f32,
+        scale: f32,
+        _content_x: f32,
+        _content_w: f32,
+        _wp: [f32; 2],
+    ) {
+        let dd_br = 4.0 * scale;
+        let (dp, ds) = self.dropdown_rect(0, screen_w, screen_h, scale);
+
+        // Dropdown border
+        out.push(InstanceRaw {
+            position: [dp[0] - 1.0, dp[1] - 1.0],
+            size: [ds[0] + 2.0, ds[1] + 2.0],
+            color: [0.30, 0.30, 0.34, 1.0],
+            border_radius: dd_br + 1.0,
+        });
+
+        // Dropdown background
+        out.push(InstanceRaw {
+            position: dp,
+            size: ds,
+            color: [0.20, 0.20, 0.24, 1.0],
+            border_radius: dd_br,
+        });
+
+        // Arrow indicator
+        let arrow_size = 6.0 * scale;
+        let arrow_x = dp[0] + ds[0] - 14.0 * scale;
+        let arrow_y = dp[1] + (ds[1] - arrow_size) * 0.5;
+        out.push(InstanceRaw {
+            position: [arrow_x, arrow_y],
+            size: [arrow_size, arrow_size],
+            color: [1.0, 1.0, 1.0, 0.3],
+            border_radius: arrow_size * 0.5,
+        });
+
+        // Open dropdown popup
+        if let Some(0) = self.open_dropdown {
+            let options = Self::dev_mode_options();
+            let item_h = DROPDOWN_ITEM_HEIGHT * scale;
+            let popup_h = options.len() as f32 * item_h;
+            let popup_y = dp[1] + ds[1] + 2.0 * scale;
+            let popup_br = 6.0 * scale;
+
+            // Popup shadow
+            out.push(InstanceRaw {
+                position: [dp[0] + 4.0 * scale, popup_y + 4.0 * scale],
+                size: [ds[0], popup_h],
+                color: [0.0, 0.0, 0.0, 0.5],
+                border_radius: popup_br,
+            });
+
+            // Popup border
+            out.push(InstanceRaw {
+                position: [dp[0] - 1.0, popup_y - 1.0],
+                size: [ds[0] + 2.0, popup_h + 2.0],
+                color: [0.30, 0.30, 0.34, 1.0],
+                border_radius: popup_br + 1.0,
+            });
+
+            // Popup background
+            out.push(InstanceRaw {
+                position: [dp[0], popup_y],
+                size: [ds[0], popup_h],
+                color: [0.18, 0.18, 0.22, 1.0],
+                border_radius: popup_br,
+            });
+
+            let current_idx: usize = if settings.dev_mode { 1 } else { 0 };
+            for (j, _opt) in options.iter().enumerate() {
+                let iy = popup_y + j as f32 * item_h;
+                if j == current_idx {
+                    out.push(InstanceRaw {
+                        position: [dp[0] + 4.0 * scale, iy + 2.0 * scale],
+                        size: [ds[0] - 8.0 * scale, item_h - 4.0 * scale],
+                        color: [0.30, 0.50, 0.80, 0.5],
+                        border_radius: 4.0 * scale,
+                    });
+                }
+            }
+        }
+    }
+
+    fn dev_mode_options() -> &'static [&'static str] {
+        &["Production", "Development"]
+    }
+
+    pub fn handle_developer_click(
+        &mut self,
+        mouse: [f32; 2],
+        settings: &mut Settings,
+        screen_w: f32,
+        screen_h: f32,
+        scale: f32,
+    ) -> bool {
+        if self.active_category != SettingsCategory::Developer {
+            return false;
+        }
+
+        // Check if click is on open dropdown item
+        if self.open_dropdown == Some(0) {
+            let (dp, ds) = self.dropdown_rect(0, screen_w, screen_h, scale);
+            let options = Self::dev_mode_options();
+            let item_h = DROPDOWN_ITEM_HEIGHT * scale;
+            let popup_y = dp[1] + ds[1] + 2.0 * scale;
+            let popup_h = options.len() as f32 * item_h;
+
+            if mouse[0] >= dp[0]
+                && mouse[0] <= dp[0] + ds[0]
+                && mouse[1] >= popup_y
+                && mouse[1] <= popup_y + popup_h
+            {
+                let rel = mouse[1] - popup_y;
+                let idx = (rel / item_h) as usize;
+                if idx < options.len() {
+                    settings.dev_mode = idx == 1;
+                    self.open_dropdown = None;
+                    return true;
+                }
+            }
+        }
+
+        // Check if click is on dropdown button
+        let (dp, ds) = self.dropdown_rect(0, screen_w, screen_h, scale);
+        if mouse[0] >= dp[0]
+            && mouse[0] <= dp[0] + ds[0]
+            && mouse[1] >= dp[1]
+            && mouse[1] <= dp[1] + ds[1]
+        {
+            if self.open_dropdown == Some(0) {
+                self.open_dropdown = None;
+            } else {
+                self.open_dropdown = Some(0);
+            }
+            return true;
+        }
+
+        // Click elsewhere closes dropdown
+        if self.open_dropdown.is_some() {
+            self.open_dropdown = None;
+            return true;
+        }
+
+        false
     }
 }
 
@@ -1150,6 +1316,71 @@ impl SettingsWindow {
                                 weight: if is_selected { 600 } else { 400 },
                             });
                         }
+                    }
+                }
+            }
+            SettingsCategory::Developer => {
+                out.push(SettingsTextEntry {
+                    text: "Developer".to_string(),
+                    x: content_x + ROW_LABEL_X * scale,
+                    y: wp[1] + (SECTION_HEADER_HEIGHT * scale - section_line) * 0.5,
+                    font_size: section_font,
+                    line_height: section_line,
+                    color: [140, 140, 150, 200],
+                    weight: 600,
+                });
+
+                let label_font = 13.0 * scale;
+                let label_line = 18.0 * scale;
+                let dd_font = 12.0 * scale;
+                let dd_line = 16.0 * scale;
+
+                let row_y = wp[1] + SECTION_HEADER_HEIGHT * scale;
+                out.push(SettingsTextEntry {
+                    text: "Mode".to_string(),
+                    x: content_x + ROW_LABEL_X * scale,
+                    y: row_y + (ROW_HEIGHT * scale - label_line) * 0.5,
+                    font_size: label_font,
+                    line_height: label_line,
+                    color: [210, 210, 218, 255],
+                    weight: 400,
+                });
+
+                let current_text = if settings.dev_mode { "Development" } else { "Production" };
+                let (dp, ds) = self.dropdown_rect(0, screen_w, screen_h, scale);
+                out.push(SettingsTextEntry {
+                    text: current_text.to_string(),
+                    x: dp[0] + 10.0 * scale,
+                    y: dp[1] + (ds[1] - dd_line) * 0.5,
+                    font_size: dd_font,
+                    line_height: dd_line,
+                    color: [210, 210, 218, 255],
+                    weight: 400,
+                });
+
+                // Popup item text
+                if let Some(0) = self.open_dropdown {
+                    let options = Self::dev_mode_options();
+                    let item_h = DROPDOWN_ITEM_HEIGHT * scale;
+                    let popup_y = dp[1] + ds[1] + 2.0 * scale;
+                    let current_idx: usize = if settings.dev_mode { 1 } else { 0 };
+
+                    for (j, opt) in options.iter().enumerate() {
+                        let iy = popup_y + j as f32 * item_h;
+                        let is_selected = j == current_idx;
+                        out.push(SettingsTextEntry {
+                            text: opt.to_string(),
+                            x: dp[0] + 12.0 * scale,
+                            y: iy + (item_h - dd_line) * 0.5,
+                            font_size: dd_font,
+                            line_height: dd_line,
+                            color: if is_selected {
+                                [240, 240, 255, 255]
+                            } else {
+                                [200, 200, 210, 255]
+                            },
+                            weight: if is_selected { 600 } else { 400 },
+                        });
                     }
                 }
             }

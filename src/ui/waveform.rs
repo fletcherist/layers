@@ -37,6 +37,10 @@ impl WaveformPeaks {
         }
     }
 
+    pub fn from_raw(block_size: usize, peaks: Vec<f32>) -> Self {
+        WaveformPeaks { block_size, peaks }
+    }
+
     pub fn peak_in_range(&self, sample_start: usize, sample_end: usize) -> f32 {
         if self.peaks.is_empty() || sample_start >= sample_end {
             return 0.0;
@@ -55,20 +59,26 @@ impl WaveformPeaks {
 }
 
 #[derive(Clone)]
-pub struct WaveformObject {
-    pub position: [f32; 2],
-    pub size: [f32; 2],
-    pub color: [f32; 4],
-    pub border_radius: f32,
+pub struct AudioData {
     pub left_samples: Arc<Vec<f32>>,
     pub right_samples: Arc<Vec<f32>>,
     pub left_peaks: Arc<WaveformPeaks>,
     pub right_peaks: Arc<WaveformPeaks>,
     pub sample_rate: u32,
     pub filename: String,
+}
+
+#[derive(Clone)]
+pub struct WaveformView {
+    pub audio: Arc<AudioData>,
+    pub position: [f32; 2],
+    pub size: [f32; 2],
+    pub color: [f32; 4],
+    pub border_radius: f32,
     pub fade_in_px: f32,
     pub fade_out_px: f32,
 }
+
 
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]
@@ -96,7 +106,7 @@ fn fade_gain_at(x_in_clip: f32, clip_width: f32, fade_in_px: f32, fade_out_px: f
 }
 
 pub fn build_waveform_instances(
-    wf: &WaveformObject,
+    wf: &WaveformView,
     camera: &Camera,
     _world_left: f32,
     _world_right: f32,
@@ -515,14 +525,14 @@ fn push_wave_quad(
 }
 
 pub fn build_waveform_triangles(
-    wf: &WaveformObject,
+    wf: &WaveformView,
     camera: &Camera,
     world_left: f32,
     world_right: f32,
     is_hovered: bool,
     is_selected: bool,
 ) -> Vec<WaveformVertex> {
-    if wf.left_samples.is_empty() && wf.right_samples.is_empty() {
+    if wf.audio.left_samples.is_empty() && wf.audio.right_samples.is_empty() {
         return Vec::new();
     }
 
@@ -540,9 +550,9 @@ pub fn build_waveform_triangles(
     let mut all_verts = Vec::new();
 
     all_verts.extend(channel_triangles(
-        &wf.left_samples,
-        &wf.left_peaks,
-        wf.sample_rate,
+        &wf.audio.left_samples,
+        &wf.audio.left_peaks,
+        wf.audio.sample_rate,
         wf.position,
         wf.size,
         center_y,
@@ -557,9 +567,9 @@ pub fn build_waveform_triangles(
     ));
 
     all_verts.extend(channel_triangles(
-        &wf.right_samples,
-        &wf.right_peaks,
-        wf.sample_rate,
+        &wf.audio.right_samples,
+        &wf.audio.right_peaks,
+        wf.audio.sample_rate,
         wf.position,
         wf.size,
         center_y,

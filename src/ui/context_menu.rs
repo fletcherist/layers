@@ -1,4 +1,4 @@
-use crate::palette::CommandAction;
+use crate::ui::palette::CommandAction;
 use crate::settings::{AdaptiveGridSize, FixedGrid, GridMode, Settings};
 use crate::InstanceRaw;
 
@@ -8,6 +8,10 @@ pub const CTX_MENU_SECTION_HEIGHT: f32 = 26.0;
 pub const CTX_MENU_SEPARATOR_HEIGHT: f32 = 9.0;
 pub const CTX_MENU_PADDING: f32 = 4.0;
 pub const CTX_MENU_BORDER_RADIUS: f32 = 8.0;
+pub const CTX_MENU_INLINE_HEIGHT: f32 = 28.0;
+const INLINE_PILL_PAD_X: f32 = 7.0;
+const INLINE_PILL_GAP: f32 = 2.0;
+const INLINE_PILL_HEIGHT: f32 = 22.0;
 
 #[derive(Clone, Copy, PartialEq)]
 pub enum MenuContext {
@@ -25,10 +29,17 @@ pub struct ContextMenuItem {
     pub checked: bool,
 }
 
+pub struct InlinePill {
+    pub label: &'static str,
+    pub action: CommandAction,
+    pub active: bool,
+}
+
 pub enum ContextMenuEntry {
     Item(ContextMenuItem),
     Separator,
     SectionHeader(&'static str),
+    InlineGroup(Vec<InlinePill>),
 }
 
 pub struct ContextMenu {
@@ -36,6 +47,11 @@ pub struct ContextMenu {
     pub entries: Vec<ContextMenuEntry>,
     pub hovered_index: Option<usize>,
     pub context: MenuContext,
+}
+
+fn estimate_pill_width(label: &str, scale: f32) -> f32 {
+    let font_size = 11.0 * scale;
+    label.len() as f32 * font_size * 0.55 + INLINE_PILL_PAD_X * 2.0 * scale
 }
 
 fn grid_entries(settings: &Settings) -> Vec<ContextMenuEntry> {
@@ -49,44 +65,70 @@ fn grid_entries(settings: &Settings) -> Vec<ContextMenuEntry> {
     }));
     entries.push(ContextMenuEntry::Separator);
 
-    entries.push(ContextMenuEntry::SectionHeader("Adaptive Grid:"));
-    let adaptive_sizes = [
-        AdaptiveGridSize::Widest,
-        AdaptiveGridSize::Wide,
-        AdaptiveGridSize::Medium,
-        AdaptiveGridSize::Narrow,
-        AdaptiveGridSize::Narrowest,
-    ];
-    for size in adaptive_sizes {
-        let is_active = matches!(settings.grid_mode, GridMode::Adaptive(s) if s == size);
-        entries.push(ContextMenuEntry::Item(ContextMenuItem {
-            label: size.label(),
-            shortcut: "",
-            action: CommandAction::SetGridAdaptive(size),
-            checked: is_active,
-        }));
-    }
+    let is_adaptive = matches!(settings.grid_mode, GridMode::Adaptive(_));
 
-    entries.push(ContextMenuEntry::SectionHeader("Fixed Grid:"));
-    let fixed_grids = [
-        FixedGrid::Bars8,
-        FixedGrid::Bars4,
-        FixedGrid::Bars2,
-        FixedGrid::Bar1,
-        FixedGrid::Half,
-        FixedGrid::Quarter,
-        FixedGrid::Eighth,
-        FixedGrid::Sixteenth,
-        FixedGrid::ThirtySecond,
-    ];
-    for fg in fixed_grids {
-        let is_active = matches!(settings.grid_mode, GridMode::Fixed(f) if f == fg);
-        entries.push(ContextMenuEntry::Item(ContextMenuItem {
-            label: fg.label(),
-            shortcut: "",
-            action: CommandAction::SetGridFixed(fg),
-            checked: is_active,
-        }));
+    entries.push(ContextMenuEntry::SectionHeader("Grid Mode:"));
+    entries.push(ContextMenuEntry::InlineGroup(vec![
+        InlinePill {
+            label: "Adaptive",
+            action: CommandAction::SetGridAdaptive(
+                if let GridMode::Adaptive(s) = settings.grid_mode { s } else { AdaptiveGridSize::Medium }
+            ),
+            active: is_adaptive,
+        },
+        InlinePill {
+            label: "Fixed",
+            action: CommandAction::SetGridFixed(
+                if let GridMode::Fixed(f) = settings.grid_mode { f } else { FixedGrid::Quarter }
+            ),
+            active: !is_adaptive,
+        },
+    ]));
+
+    entries.push(ContextMenuEntry::SectionHeader("Grid Size:"));
+    if is_adaptive {
+        let sizes = [
+            AdaptiveGridSize::Widest,
+            AdaptiveGridSize::Wide,
+            AdaptiveGridSize::Medium,
+            AdaptiveGridSize::Narrow,
+            AdaptiveGridSize::Narrowest,
+        ];
+        entries.push(ContextMenuEntry::InlineGroup(
+            sizes.iter().map(|&s| InlinePill {
+                label: s.label(),
+                action: CommandAction::SetGridAdaptive(s),
+                active: matches!(settings.grid_mode, GridMode::Adaptive(cur) if cur == s),
+            }).collect(),
+        ));
+    } else {
+        let fine = [
+            FixedGrid::Bars8,
+            FixedGrid::Bars4,
+            FixedGrid::Bars2,
+            FixedGrid::Bar1,
+        ];
+        entries.push(ContextMenuEntry::InlineGroup(
+            fine.iter().map(|&f| InlinePill {
+                label: f.label(),
+                action: CommandAction::SetGridFixed(f),
+                active: matches!(settings.grid_mode, GridMode::Fixed(cur) if cur == f),
+            }).collect(),
+        ));
+        let subdivisions = [
+            FixedGrid::Half,
+            FixedGrid::Quarter,
+            FixedGrid::Eighth,
+            FixedGrid::Sixteenth,
+            FixedGrid::ThirtySecond,
+        ];
+        entries.push(ContextMenuEntry::InlineGroup(
+            subdivisions.iter().map(|&f| InlinePill {
+                label: f.label(),
+                action: CommandAction::SetGridFixed(f),
+                active: matches!(settings.grid_mode, GridMode::Fixed(cur) if cur == f),
+            }).collect(),
+        ));
     }
 
     entries.push(ContextMenuEntry::Separator);
@@ -118,6 +160,15 @@ fn grid_entries(settings: &Settings) -> Vec<ContextMenuEntry> {
     }));
 
     entries
+}
+
+fn entry_height(entry: &ContextMenuEntry, scale: f32) -> f32 {
+    match entry {
+        ContextMenuEntry::Item(_) => CTX_MENU_ITEM_HEIGHT * scale,
+        ContextMenuEntry::Separator => CTX_MENU_SEPARATOR_HEIGHT * scale,
+        ContextMenuEntry::SectionHeader(_) => CTX_MENU_SECTION_HEIGHT * scale,
+        ContextMenuEntry::InlineGroup(_) => CTX_MENU_INLINE_HEIGHT * scale,
+    }
 }
 
 impl ContextMenu {
@@ -260,15 +311,7 @@ impl ContextMenu {
     }
 
     pub fn content_height(&self, scale: f32) -> f32 {
-        let mut h = 0.0;
-        for entry in &self.entries {
-            h += match entry {
-                ContextMenuEntry::Item(_) => CTX_MENU_ITEM_HEIGHT * scale,
-                ContextMenuEntry::Separator => CTX_MENU_SEPARATOR_HEIGHT * scale,
-                ContextMenuEntry::SectionHeader(_) => CTX_MENU_SECTION_HEIGHT * scale,
-            };
-        }
-        h
+        self.entries.iter().map(|e| entry_height(e, scale)).sum()
     }
 
     pub fn menu_rect(&self, screen_w: f32, screen_h: f32, scale: f32) -> ([f32; 2], [f32; 2]) {
@@ -290,6 +333,8 @@ impl ContextMenu {
         pos[0] >= rp[0] && pos[0] <= rp[0] + rs[0] && pos[1] >= rp[1] && pos[1] <= rp[1] + rs[1]
     }
 
+    /// Returns a flat item index for the entry under `pos`.
+    /// InlineGroup pills each count as one item.
     pub fn item_at(
         &self,
         pos: [f32; 2],
@@ -297,23 +342,38 @@ impl ContextMenu {
         screen_h: f32,
         scale: f32,
     ) -> Option<usize> {
-        let (rp, _) = self.menu_rect(screen_w, screen_h, scale);
-        let mut y = rp[1] + CTX_MENU_PADDING * scale;
+        let (rp, _rs) = self.menu_rect(screen_w, screen_h, scale);
+        let pad = CTX_MENU_PADDING * scale;
+        let mut y = rp[1] + pad;
         let mut item_i = 0;
         for entry in &self.entries {
-            let rh = match entry {
-                ContextMenuEntry::Item(_) => CTX_MENU_ITEM_HEIGHT * scale,
-                ContextMenuEntry::Separator => CTX_MENU_SEPARATOR_HEIGHT * scale,
-                ContextMenuEntry::SectionHeader(_) => CTX_MENU_SECTION_HEIGHT * scale,
-            };
+            let rh = entry_height(entry, scale);
             if pos[1] >= y && pos[1] < y + rh {
-                return match entry {
-                    ContextMenuEntry::Item(_) => Some(item_i),
-                    _ => None,
-                };
+                match entry {
+                    ContextMenuEntry::Item(_) => return Some(item_i),
+                    ContextMenuEntry::InlineGroup(pills) => {
+                        let pill_h = INLINE_PILL_HEIGHT * scale;
+                        let pill_y = y + (rh - pill_h) * 0.5;
+                        if pos[1] < pill_y || pos[1] > pill_y + pill_h {
+                            return None;
+                        }
+                        let mut px = rp[0] + pad + 4.0 * scale;
+                        for (pi, pill) in pills.iter().enumerate() {
+                            let pw = estimate_pill_width(pill.label, scale);
+                            if pos[0] >= px && pos[0] < px + pw {
+                                return Some(item_i + pi);
+                            }
+                            px += pw + INLINE_PILL_GAP * scale;
+                        }
+                        return None;
+                    }
+                    _ => return None,
+                }
             }
-            if matches!(entry, ContextMenuEntry::Item(_)) {
-                item_i += 1;
+            match entry {
+                ContextMenuEntry::Item(_) => item_i += 1,
+                ContextMenuEntry::InlineGroup(pills) => item_i += pills.len(),
+                _ => {}
             }
             y += rh;
         }
@@ -323,11 +383,22 @@ impl ContextMenu {
     pub fn action_at(&self, index: usize) -> Option<CommandAction> {
         let mut item_i = 0;
         for entry in &self.entries {
-            if let ContextMenuEntry::Item(item) = entry {
-                if item_i == index {
-                    return Some(item.action);
+            match entry {
+                ContextMenuEntry::Item(item) => {
+                    if item_i == index {
+                        return Some(item.action);
+                    }
+                    item_i += 1;
                 }
-                item_i += 1;
+                ContextMenuEntry::InlineGroup(pills) => {
+                    for pill in pills {
+                        if item_i == index {
+                            return Some(pill.action);
+                        }
+                        item_i += 1;
+                    }
+                }
+                _ => {}
             }
         }
         None
@@ -360,6 +431,7 @@ impl ContextMenu {
         let mut y = pos[1] + pad;
         let mut item_i = 0;
         for entry in &self.entries {
+            let rh = entry_height(entry, scale);
             match entry {
                 ContextMenuEntry::Item(item) => {
                     if Some(item_i) == self.hovered_index {
@@ -382,7 +454,6 @@ impl ContextMenu {
                         });
                     }
                     item_i += 1;
-                    y += CTX_MENU_ITEM_HEIGHT * scale;
                 }
                 ContextMenuEntry::Separator => {
                     let sep_y = y + CTX_MENU_SEPARATOR_HEIGHT * scale * 0.5;
@@ -392,12 +463,37 @@ impl ContextMenu {
                         color: [1.0, 1.0, 1.0, 0.08],
                         border_radius: 0.0,
                     });
-                    y += CTX_MENU_SEPARATOR_HEIGHT * scale;
                 }
-                ContextMenuEntry::SectionHeader(_) => {
-                    y += CTX_MENU_SECTION_HEIGHT * scale;
+                ContextMenuEntry::SectionHeader(_) => {}
+                ContextMenuEntry::InlineGroup(pills) => {
+                    let pill_h = INLINE_PILL_HEIGHT * scale;
+                    let pill_r = pill_h * 0.5;
+                    let pill_y = y + (rh - pill_h) * 0.5;
+                    let mut px = pos[0] + pad + 4.0 * scale;
+                    for (pi, pill) in pills.iter().enumerate() {
+                        let pw = estimate_pill_width(pill.label, scale);
+                        let is_hovered = Some(item_i + pi) == self.hovered_index;
+                        if pill.active {
+                            out.push(InstanceRaw {
+                                position: [px, pill_y],
+                                size: [pw, pill_h],
+                                color: [0.32, 0.32, 0.40, 0.95],
+                                border_radius: pill_r,
+                            });
+                        } else if is_hovered {
+                            out.push(InstanceRaw {
+                                position: [px, pill_y],
+                                size: [pw, pill_h],
+                                color: [0.24, 0.24, 0.30, 0.7],
+                                border_radius: pill_r,
+                            });
+                        }
+                        px += pw + INLINE_PILL_GAP * scale;
+                    }
+                    item_i += pills.len();
                 }
             }
+            y += rh;
         }
 
         out

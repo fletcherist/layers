@@ -39,6 +39,7 @@ pub enum CommandAction {
     NarrowGrid,
     WidenGrid,
     ToggleTripletGrid,
+    TestToast,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -59,6 +60,7 @@ pub struct CommandDef {
     pub shortcut: &'static str,
     pub category: &'static str,
     pub action: CommandAction,
+    pub dev_only: bool,
 }
 
 pub const COMMANDS: &[CommandDef] = &[
@@ -67,84 +69,105 @@ pub const COMMANDS: &[CommandDef] = &[
         shortcut: "⌘A",
         category: "Suggestions",
         action: CommandAction::SelectAll,
+        dev_only: false,
     },
     CommandDef {
         name: "Copy",
         shortcut: "⌘C",
         category: "Edit",
         action: CommandAction::Copy,
+        dev_only: false,
     },
     CommandDef {
         name: "Paste",
         shortcut: "⌘V",
         category: "Edit",
         action: CommandAction::Paste,
+        dev_only: false,
     },
     CommandDef {
         name: "Delete",
         shortcut: "⌫",
         category: "Edit",
         action: CommandAction::Delete,
+        dev_only: false,
     },
     CommandDef {
         name: "Undo",
         shortcut: "⌘Z",
         category: "Edit",
         action: CommandAction::Undo,
+        dev_only: false,
     },
     CommandDef {
         name: "Redo",
         shortcut: "⇧⌘Z",
         category: "Edit",
         action: CommandAction::Redo,
+        dev_only: false,
     },
     CommandDef {
         name: "Zoom In",
         shortcut: "⌘+",
         category: "View",
         action: CommandAction::ZoomIn,
+        dev_only: false,
     },
     CommandDef {
         name: "Zoom Out",
         shortcut: "⌘−",
         category: "View",
         action: CommandAction::ZoomOut,
+        dev_only: false,
     },
     CommandDef {
         name: "Reset Zoom",
         shortcut: "⌘0",
         category: "View",
         action: CommandAction::ResetZoom,
+        dev_only: false,
     },
     CommandDef {
         name: "Toggle Sample Browser",
         shortcut: "⌘B",
         category: "View",
         action: CommandAction::ToggleBrowser,
+        dev_only: false,
     },
     CommandDef {
         name: "Save Project",
         shortcut: "⌘S",
         category: "Project",
         action: CommandAction::SaveProject,
+        dev_only: false,
     },
     CommandDef {
         name: "Add Folder to Browser",
         shortcut: "⇧⌘A",
         category: "Project",
         action: CommandAction::AddFolderToBrowser,
+        dev_only: false,
     },
     CommandDef {
         name: "Set Master Volume",
         shortcut: "",
         category: "Audio",
         action: CommandAction::SetMasterVolume,
+        dev_only: false,
     },
     CommandDef {
         name: "Open Settings",
         shortcut: "⌘,",
         category: "View",
         action: CommandAction::OpenSettings,
+        dev_only: false,
+    },
+    CommandDef {
+        name: "Test Toast",
+        shortcut: "",
+        category: "Debug",
+        action: CommandAction::TestToast,
+        dev_only: true,
     },
 ];
 
@@ -166,7 +189,7 @@ pub struct CommandPalette {
 }
 
 impl CommandPalette {
-    pub fn new() -> Self {
+    pub fn new(dev_mode: bool) -> Self {
         let mut p = Self {
             search_text: String::new(),
             rows: Vec::new(),
@@ -177,17 +200,18 @@ impl CommandPalette {
             fader_rms: 0.0,
             fader_dragging: false,
         };
-        p.rebuild_rows();
+        p.rebuild_rows(dev_mode);
         p
     }
 
-    fn rebuild_rows(&mut self) {
+    fn rebuild_rows(&mut self, dev_mode: bool) {
         let query = self.search_text.to_lowercase();
         let is_searching = !query.is_empty();
 
         let matched: Vec<usize> = COMMANDS
             .iter()
             .enumerate()
+            .filter(|(_, cmd)| dev_mode || !cmd.dev_only)
             .filter(|(_, cmd)| !is_searching || cmd.name.to_lowercase().contains(&query))
             .map(|(i, _)| i)
             .collect();
@@ -220,8 +244,8 @@ impl CommandPalette {
         }
     }
 
-    pub fn update_filter(&mut self) {
-        self.rebuild_rows();
+    pub fn update_filter(&mut self, dev_mode: bool) {
+        self.rebuild_rows(dev_mode);
     }
 
     pub fn move_selection(&mut self, delta: i32) {

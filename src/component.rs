@@ -1,4 +1,4 @@
-use crate::{push_border, Camera, InstanceRaw, WaveformObject};
+use crate::{push_border, Camera, InstanceRaw, WaveformView};
 
 pub type ComponentId = u64;
 
@@ -126,7 +126,7 @@ pub fn build_component_def_instances(
 pub fn build_component_instance_instances(
     inst: &ComponentInstance,
     def: &ComponentDef,
-    waveforms: &[WaveformObject],
+    waveforms: &[WaveformView],
     camera: &Camera,
     world_left: f32,
     world_right: f32,
@@ -195,7 +195,7 @@ pub fn build_component_instance_instances(
         let bar_world = bar_screen_px / camera.zoom;
         let gap_world = 1.0 / camera.zoom;
         let step = bar_world + gap_world;
-        let n_samples = wf.left_samples.len();
+        let n_samples = wf.audio.left_samples.len();
         if n_samples == 0 || step <= 0.0 {
             continue;
         }
@@ -217,7 +217,7 @@ pub fn build_component_instance_instances(
             let window = (n_samples / 200).max(1);
             let s_start = si.saturating_sub(window / 2);
             let s_end = (si + window / 2).min(n_samples);
-            let amp = wf.left_samples[s_start..s_end]
+            let amp = wf.audio.left_samples[s_start..s_end]
                 .iter()
                 .map(|s| s.abs())
                 .fold(0.0f32, f32::max)
@@ -276,7 +276,7 @@ pub fn build_component_instance_instances(
 }
 
 pub fn bounding_box_of_waveforms(
-    waveforms: &[WaveformObject],
+    waveforms: &[WaveformView],
     indices: &[usize],
 ) -> ([f32; 2], [f32; 2]) {
     let mut min_x = f32::MAX;
