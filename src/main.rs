@@ -17,7 +17,9 @@ use std::sync::Arc;
 use audio::{load_audio_file, AudioClipData, AudioEngine, AudioRecorder, PIXELS_PER_SECOND};
 use settings::GridMode;
 use ui::context_menu::{ContextMenu, MenuContext};
-use ui::palette::{CommandAction, CommandPalette, PaletteMode, PaletteRow, COMMANDS};
+use ui::palette::{
+    CommandAction, CommandPalette, PaletteMode, PaletteRow, COMMANDS, PALETTE_ITEM_HEIGHT,
+};
 pub(crate) use ui::waveform::WaveformView;
 use ui::waveform::{AudioData, WaveformPeaks, WaveformVertex};
 
@@ -52,6 +54,7 @@ pub(crate) enum HitTarget {
     Object(usize),
     Waveform(usize),
     EffectRegion(usize),
+    PluginBlock(usize),
     LoopRegion(usize),
     ExportRegion(usize),
     ComponentDef(usize),
@@ -64,8 +67,6 @@ const MAX_UNDO_HISTORY: usize = 50;
 struct EffectRegionSnapshot {
     position: [f32; 2],
     size: [f32; 2],
-    plugin_ids: Vec<String>,
-    plugin_names: Vec<String>,
     name: String,
 }
 
@@ -88,6 +89,7 @@ struct Snapshot {
     waveforms: Vec<WaveformView>,
     audio_clips: Vec<AudioClipData>,
     effect_regions: Vec<EffectRegionSnapshot>,
+    plugin_blocks: Vec<effects::PluginBlockSnapshot>,
     loop_regions: Vec<LoopRegionSnapshot>,
     export_regions: Vec<ExportRegionSnapshot>,
     components: Vec<component::ComponentDef>,
@@ -295,8 +297,6 @@ enum EffectRegionHover {
     CornerNE(usize),
     CornerSW(usize),
     CornerSE(usize),
-    PluginLabel(usize, usize),
-    PluginClose(usize, usize),
 }
 
 #[derive(Clone)]
@@ -304,6 +304,7 @@ enum ClipboardItem {
     Object(CanvasObject),
     Waveform(WaveformView, Option<AudioClipData>),
     EffectRegion(effects::EffectRegion),
+    PluginBlock(effects::PluginBlock),
     LoopRegion(LoopRegion),
     ExportRegion(ExportRegion),
     ComponentDef(
@@ -424,7 +425,7 @@ pub(crate) fn point_in_rect(pos: [f32; 2], rect_pos: [f32; 2], rect_size: [f32; 
         && pos[1] <= rect_pos[1] + rect_size[1]
 }
 
-fn rects_overlap(a_pos: [f32; 2], a_size: [f32; 2], b_pos: [f32; 2], b_size: [f32; 2]) -> bool {
+pub(crate) fn rects_overlap(a_pos: [f32; 2], a_size: [f32; 2], b_pos: [f32; 2], b_size: [f32; 2]) -> bool {
     a_pos[0] < b_pos[0] + b_size[0]
         && a_pos[0] + a_size[0] > b_pos[0]
         && a_pos[1] < b_pos[1] + b_size[1]
@@ -491,6 +492,7 @@ fn hit_test(
     objects: &[CanvasObject],
     waveforms: &[WaveformView],
     effect_regions: &[effects::EffectRegion],
+    plugin_blocks: &[effects::PluginBlock],
     loop_regions: &[LoopRegion],
     export_regions: &[ExportRegion],
     components: &[component::ComponentDef],
@@ -554,6 +556,11 @@ fn hit_test(
             return Some(HitTarget::ComponentDef(i));
         }
     }
+    for (i, pb) in plugin_blocks.iter().enumerate().rev() {
+        if pb.contains(world_pos) {
+            return Some(HitTarget::PluginBlock(i));
+        }
+    }
     for (i, er) in effect_regions.iter().enumerate().rev() {
         if er.hit_test_border(world_pos, camera) {
             return Some(HitTarget::EffectRegion(i));
@@ -576,6 +583,7 @@ fn targets_in_rect(
     objects: &[CanvasObject],
     waveforms: &[WaveformView],
     effect_regions: &[effects::EffectRegion],
+    plugin_blocks: &[effects::PluginBlock],
     loop_regions: &[LoopRegion],
     export_regions: &[ExportRegion],
     components: &[component::ComponentDef],
@@ -633,6 +641,11 @@ fn targets_in_rect(
             result.push(HitTarget::EffectRegion(i));
         }
     }
+    for (i, pb) in plugin_blocks.iter().enumerate() {
+        if rects_overlap(rect_pos, rect_size, pb.position, pb.size) {
+            result.push(HitTarget::PluginBlock(i));
+        }
+    }
     for (i, lr) in loop_regions.iter().enumerate() {
         if rects_overlap(rect_pos, rect_size, lr.position, lr.size) {
             result.push(HitTarget::LoopRegion(i));
@@ -670,6 +683,7 @@ struct RenderContext<'a> {
     objects: &'a [CanvasObject],
     waveforms: &'a [WaveformView],
     effect_regions: &'a [effects::EffectRegion],
+    plugin_blocks: &'a [effects::PluginBlock],
     hovered: Option<HitTarget>,
     selected: &'a HashSet<HitTarget>,
     selection_rect: Option<([f32; 2], [f32; 2])>,
@@ -787,6 +801,24 @@ fn build_instances(out: &mut Vec<InstanceRaw>, ctx: &RenderContext) {
         });
         out.extend(effects::build_effect_region_instances(
             er, camera, is_hov, is_sel, is_active,
+        ));
+    }
+
+    // --- plugin blocks ---
+    for (i, pb) in ctx.plugin_blocks.iter().enumerate() {
+        let pb_right = pb.position[0] + pb.size[0];
+        let pb_bottom = pb.position[1] + pb.size[1];
+        if pb_right < world_left
+            || pb.position[0] > world_right
+            || pb_bottom < world_top
+            || pb.position[1] > world_bottom
+        {
+            continue;
+        }
+        let is_sel = ctx.selected.contains(&HitTarget::PluginBlock(i));
+        let is_hov = ctx.hovered == Some(HitTarget::PluginBlock(i));
+        out.extend(effects::build_plugin_block_instances(
+            pb, camera, is_hov, is_sel,
         ));
     }
 
@@ -1077,6 +1109,7 @@ fn build_instances(out: &mut Vec<InstanceRaw>, ctx: &RenderContext) {
             ctx.objects,
             ctx.waveforms,
             ctx.effect_regions,
+            ctx.plugin_blocks,
             ctx.loop_regions,
             ctx.export_regions,
             ctx.components,
@@ -1206,6 +1239,7 @@ fn target_rect(
     objects: &[CanvasObject],
     waveforms: &[WaveformView],
     effect_regions: &[effects::EffectRegion],
+    plugin_blocks: &[effects::PluginBlock],
     loop_regions: &[LoopRegion],
     export_regions: &[ExportRegion],
     components: &[component::ComponentDef],
@@ -1217,6 +1251,7 @@ fn target_rect(
         HitTarget::Object(i) => (objects[*i].position, objects[*i].size),
         HitTarget::Waveform(i) => (waveforms[*i].position, waveforms[*i].size),
         HitTarget::EffectRegion(i) => (effect_regions[*i].position, effect_regions[*i].size),
+        HitTarget::PluginBlock(i) => (plugin_blocks[*i].position, plugin_blocks[*i].size),
         HitTarget::LoopRegion(i) => (loop_regions[*i].position, loop_regions[*i].size),
         HitTarget::ExportRegion(i) => (export_regions[*i].position, export_regions[*i].size),
         HitTarget::ComponentDef(i) => (components[*i].position, components[*i].size),
@@ -1280,6 +1315,7 @@ struct App {
     redo_stack: Vec<Snapshot>,
     current_project_name: String,
     effect_regions: Vec<effects::EffectRegion>,
+    plugin_blocks: Vec<effects::PluginBlock>,
     components: Vec<component::ComponentDef>,
     component_instances: Vec<component::ComponentInstance>,
     next_component_id: component::ComponentId,
@@ -1374,6 +1410,7 @@ impl App {
             browser_visible,
             browser_expanded,
             stored_effect_regions,
+            stored_plugin_blocks,
             stored_loop_regions,
             stored_components,
             stored_component_instances,
@@ -1491,6 +1528,7 @@ impl App {
                     state.browser_visible,
                     Some(expanded),
                     state.effect_regions,
+                    state.plugin_blocks,
                     state.loop_regions,
                     state.components,
                     state.component_instances,
@@ -1509,6 +1547,7 @@ impl App {
                     260.0,
                     false,
                     None,
+                    Vec::new(),
                     Vec::new(),
                     Vec::new(),
                     Vec::new(),
@@ -1555,25 +1594,66 @@ impl App {
 
         let plugin_registry = effects::PluginRegistry::new();
 
-        // Restore effect region geometry; plugins will be loaded lazily on first scan
+        // Restore effect region geometry
         let restored_effect_regions: Vec<effects::EffectRegion> = stored_effect_regions
             .into_iter()
             .map(|ser| {
                 let mut region = effects::EffectRegion::new(ser.position, ser.size);
                 region.name = ser.name;
-                for (pid, pname) in ser.plugin_ids.iter().zip(ser.plugin_names.iter()) {
-                    region.chain.push(effects::PluginSlot {
-                        plugin_id: pid.clone(),
-                        plugin_name: pname.clone(),
-                        plugin_path: std::path::PathBuf::new(),
-                        bypass: false,
-                        instance: Arc::new(std::sync::Mutex::new(None)),
-                        gui: Arc::new(std::sync::Mutex::new(None)),
-                    });
-                }
                 region
             })
             .collect();
+
+        // Restore plugin blocks; instances will be loaded lazily on first scan
+        let mut restored_plugin_blocks: Vec<effects::PluginBlock> = stored_plugin_blocks
+            .into_iter()
+            .map(|spb| {
+                let mut pb = effects::PluginBlock::new(
+                    spb.position,
+                    spb.plugin_id,
+                    spb.plugin_name,
+                    std::path::PathBuf::new(),
+                );
+                pb.size = spb.size;
+                pb.color = spb.color;
+                pb.bypass = spb.bypass;
+                pb
+            })
+            .collect();
+
+        // Migration: if old project had plugins in regions but no plugin_blocks, generate them
+        if restored_plugin_blocks.is_empty() {
+            // Read the raw stored regions before we stripped plugin data
+            // We already have the effect_regions loaded; check the original stored data
+            // by looking at the stored_effect_regions we consumed above.
+            // Unfortunately they're consumed, so use a separate path: if load found
+            // plugin_ids inside stored regions, we re-read from storage to migrate.
+            if let Some(s) = &storage {
+                if let Some(raw_state) = s.load_project_state() {
+                    for (_ri, ser) in raw_state.effect_regions.iter().enumerate() {
+                        if ser.plugin_ids.is_empty() {
+                            continue;
+                        }
+                        let region_pos = ser.position;
+                        let mut x_offset = 10.0;
+                        for (pid, pname) in ser.plugin_ids.iter().zip(ser.plugin_names.iter()) {
+                            let pos = [region_pos[0] + x_offset, region_pos[1] + 10.0];
+                            let pb = effects::PluginBlock::new(
+                                pos,
+                                pid.clone(),
+                                pname.clone(),
+                                std::path::PathBuf::new(),
+                            );
+                            restored_plugin_blocks.push(pb);
+                            x_offset += effects::PLUGIN_BLOCK_DEFAULT_SIZE[0] + 10.0;
+                        }
+                    }
+                    if !restored_plugin_blocks.is_empty() {
+                        println!("  Migrated {} plugin blocks from old region format", restored_plugin_blocks.len());
+                    }
+                }
+            }
+        }
 
         let plugin_browser = browser::PluginBrowserSection::new();
 
@@ -1634,6 +1714,7 @@ impl App {
             redo_stack: Vec::new(),
             current_project_name: project_name,
             effect_regions: restored_effect_regions,
+            plugin_blocks: restored_plugin_blocks,
             components: restored_components,
             component_instances: restored_instances,
             next_component_id,
@@ -1679,9 +1760,22 @@ impl App {
                 .map(|er| storage::StoredEffectRegion {
                     position: er.position,
                     size: er.size,
-                    plugin_ids: er.chain.iter().map(|s| s.plugin_id.clone()).collect(),
-                    plugin_names: er.chain.iter().map(|s| s.plugin_name.clone()).collect(),
+                    plugin_ids: Vec::new(),
+                    plugin_names: Vec::new(),
                     name: er.name.clone(),
+                })
+                .collect();
+
+            let stored_plugin_blocks: Vec<storage::StoredPluginBlock> = self
+                .plugin_blocks
+                .iter()
+                .map(|pb| storage::StoredPluginBlock {
+                    position: pb.position,
+                    size: pb.size,
+                    color: pb.color,
+                    plugin_id: pb.plugin_id.clone(),
+                    plugin_name: pb.plugin_name.clone(),
+                    bypass: pb.bypass,
                 })
                 .collect();
 
@@ -1745,6 +1839,7 @@ impl App {
                     .map(|p| p.to_string_lossy().to_string())
                     .collect(),
                 effect_regions: stored_regions,
+                plugin_blocks: stored_plugin_blocks,
                 loop_regions: self
                     .loop_regions
                     .iter()
@@ -1879,6 +1974,7 @@ impl App {
         self.waveforms.clear();
         self.audio_clips.clear();
         self.effect_regions.clear();
+        self.plugin_blocks.clear();
         self.components.clear();
         self.component_instances.clear();
         self.next_component_id = 1;
@@ -2026,20 +2122,27 @@ impl App {
             .map(|ser| {
                 let mut region = effects::EffectRegion::new(ser.position, ser.size);
                 region.name = ser.name;
-                for (pid, pname) in ser.plugin_ids.iter().zip(ser.plugin_names.iter()) {
-                    region.chain.push(effects::PluginSlot {
-                        plugin_id: pid.clone(),
-                        plugin_name: pname.clone(),
-                        plugin_path: std::path::PathBuf::new(),
-                        bypass: false,
-                        instance: Arc::new(std::sync::Mutex::new(None)),
-                        gui: Arc::new(std::sync::Mutex::new(None)),
-                    });
-                }
                 region
             })
             .collect();
         self.effect_regions = restored_regions;
+
+        self.plugin_blocks = state
+            .plugin_blocks
+            .into_iter()
+            .map(|spb| {
+                let mut pb = effects::PluginBlock::new(
+                    spb.position,
+                    spb.plugin_id,
+                    spb.plugin_name,
+                    std::path::PathBuf::new(),
+                );
+                pb.size = spb.size;
+                pb.color = spb.color;
+                pb.bypass = spb.bypass;
+                pb
+            })
+            .collect();
 
         self.components = state
             .components
@@ -2134,9 +2237,20 @@ impl App {
                 .map(|er| EffectRegionSnapshot {
                     position: er.position,
                     size: er.size,
-                    plugin_ids: er.chain.iter().map(|s| s.plugin_id.clone()).collect(),
-                    plugin_names: er.chain.iter().map(|s| s.plugin_name.clone()).collect(),
                     name: er.name.clone(),
+                })
+                .collect(),
+            plugin_blocks: self
+                .plugin_blocks
+                .iter()
+                .map(|pb| effects::PluginBlockSnapshot {
+                    position: pb.position,
+                    size: pb.size,
+                    color: pb.color,
+                    plugin_id: pb.plugin_id.clone(),
+                    plugin_name: pb.plugin_name.clone(),
+                    plugin_path: pb.plugin_path.clone(),
+                    bypass: pb.bypass,
                 })
                 .collect(),
             loop_regions: self
@@ -2177,6 +2291,7 @@ impl App {
             self.waveforms = prev.waveforms;
             self.audio_clips = prev.audio_clips;
             self.restore_effect_regions(prev.effect_regions);
+            self.restore_plugin_blocks(prev.plugin_blocks);
             self.restore_loop_regions(prev.loop_regions);
             self.restore_export_regions(prev.export_regions);
             self.components = prev.components;
@@ -2196,6 +2311,7 @@ impl App {
             self.waveforms = next.waveforms;
             self.audio_clips = next.audio_clips;
             self.restore_effect_regions(next.effect_regions);
+            self.restore_plugin_blocks(next.plugin_blocks);
             self.restore_loop_regions(next.loop_regions);
             self.restore_export_regions(next.export_regions);
             self.components = next.components;
@@ -2214,22 +2330,31 @@ impl App {
             .map(|snap| {
                 let mut region = effects::EffectRegion::new(snap.position, snap.size);
                 region.name = snap.name;
-                for (pid, pname) in snap.plugin_ids.iter().zip(snap.plugin_names.iter()) {
-                    let instance = if self.plugin_registry.is_scanned() {
-                        self.plugin_registry.load_plugin(pid, 48000.0, 512)
-                    } else {
-                        None
-                    };
-                    region.chain.push(effects::PluginSlot {
-                        plugin_id: pid.clone(),
-                        plugin_name: pname.clone(),
-                        plugin_path: std::path::PathBuf::new(),
-                        bypass: false,
-                        instance: Arc::new(std::sync::Mutex::new(instance)),
-                        gui: Arc::new(std::sync::Mutex::new(None)),
-                    });
-                }
                 region
+            })
+            .collect();
+    }
+
+    fn restore_plugin_blocks(&mut self, snapshots: Vec<effects::PluginBlockSnapshot>) {
+        self.plugin_blocks = snapshots
+            .into_iter()
+            .map(|snap| {
+                let instance = if self.plugin_registry.is_scanned() {
+                    self.plugin_registry.load_plugin(&snap.plugin_id, 48000.0, 512)
+                } else {
+                    None
+                };
+                effects::PluginBlock {
+                    position: snap.position,
+                    size: snap.size,
+                    color: snap.color,
+                    plugin_id: snap.plugin_id,
+                    plugin_name: snap.plugin_name,
+                    plugin_path: snap.plugin_path,
+                    bypass: snap.bypass,
+                    instance: Arc::new(std::sync::Mutex::new(instance)),
+                    gui: Arc::new(std::sync::Mutex::new(None)),
+                }
             })
             .collect();
     }
@@ -2332,12 +2457,18 @@ impl App {
             let regions: Vec<audio::AudioEffectRegion> = self
                 .effect_regions
                 .iter()
-                .map(|er| audio::AudioEffectRegion {
-                    x_start_px: er.position[0],
-                    x_end_px: er.position[0] + er.size[0],
-                    y_start: er.position[1],
-                    y_end: er.position[1] + er.size[1],
-                    plugins: er.chain.iter().map(|slot| slot.instance.clone()).collect(),
+                .map(|er| {
+                    let block_indices = effects::collect_plugins_for_region(er, &self.plugin_blocks);
+                    audio::AudioEffectRegion {
+                        x_start_px: er.position[0],
+                        x_end_px: er.position[0] + er.size[0],
+                        y_start: er.position[1],
+                        y_end: er.position[1] + er.size[1],
+                        plugins: block_indices
+                            .iter()
+                            .map(|&i| self.plugin_blocks[i].instance.clone())
+                            .collect(),
+                    }
                 })
                 .collect();
             engine.update_effect_regions(regions);
@@ -2604,12 +2735,18 @@ impl App {
         let effect_regions: Vec<audio::AudioEffectRegion> = self
             .effect_regions
             .iter()
-            .map(|er| audio::AudioEffectRegion {
-                x_start_px: er.position[0],
-                x_end_px: er.position[0] + er.size[0],
-                y_start: er.position[1],
-                y_end: er.position[1] + er.size[1],
-                plugins: er.chain.iter().map(|slot| slot.instance.clone()).collect(),
+            .map(|er| {
+                let block_indices = effects::collect_plugins_for_region(er, &self.plugin_blocks);
+                audio::AudioEffectRegion {
+                    x_start_px: er.position[0],
+                    x_end_px: er.position[0] + er.size[0],
+                    y_start: er.position[1],
+                    y_end: er.position[1] + er.size[1],
+                    plugins: block_indices
+                        .iter()
+                        .map(|&i| self.plugin_blocks[i].instance.clone())
+                        .collect(),
+                }
             })
             .collect();
 
@@ -2700,8 +2837,6 @@ impl App {
                                     | EffectRegionHover::CornerSE(_) => CursorIcon::NwseResize,
                                     EffectRegionHover::CornerNE(_)
                                     | EffectRegionHover::CornerSW(_) => CursorIcon::NeswResize,
-                                    EffectRegionHover::PluginLabel(_, _)
-                                    | EffectRegionHover::PluginClose(_, _) => CursorIcon::Pointer,
                                     EffectRegionHover::None => match self.export_hover {
                                         ExportHover::CornerNW(_) | ExportHover::CornerSE(_) => {
                                             CursorIcon::NwseResize
@@ -2753,6 +2888,7 @@ impl App {
             &self.objects,
             &self.waveforms,
             &self.effect_regions,
+            &self.plugin_blocks,
             &self.loop_regions,
             &self.export_regions,
             &self.components,
@@ -2788,22 +2924,7 @@ impl App {
         }
 
         self.effect_region_hover = EffectRegionHover::None;
-        'er_hover: for (i, er) in self.effect_regions.iter().enumerate() {
-            let labels = effects::plugin_label_rects(er, &self.camera);
-            // Check close buttons before pill body
-            for rect in &labels {
-                if point_in_rect(world, rect.close_position, rect.close_size) {
-                    self.effect_region_hover = EffectRegionHover::PluginClose(i, rect.slot_idx);
-                    break 'er_hover;
-                }
-            }
-            for rect in &labels {
-                if point_in_rect(world, rect.position, rect.size) {
-                    self.effect_region_hover = EffectRegionHover::PluginLabel(i, rect.slot_idx);
-                    break 'er_hover;
-                }
-            }
-
+        for (i, er) in self.effect_regions.iter().enumerate() {
             let handle_sz = 24.0 / self.camera.zoom;
             let hs = handle_sz * 0.5;
             let p = er.position;
@@ -2905,6 +3026,7 @@ impl App {
             HitTarget::Object(i) => self.objects[*i].position = pos,
             HitTarget::Waveform(i) => self.waveforms[*i].position = pos,
             HitTarget::EffectRegion(i) => self.effect_regions[*i].position = pos,
+            HitTarget::PluginBlock(i) => self.plugin_blocks[*i].position = pos,
             HitTarget::LoopRegion(i) => self.loop_regions[*i].position = pos,
             HitTarget::ExportRegion(i) => self.export_regions[*i].position = pos,
             HitTarget::ComponentDef(i) => {
@@ -2928,6 +3050,7 @@ impl App {
             HitTarget::Object(i) => self.objects[*i].position,
             HitTarget::Waveform(i) => self.waveforms[*i].position,
             HitTarget::EffectRegion(i) => self.effect_regions[*i].position,
+            HitTarget::PluginBlock(i) => self.plugin_blocks[*i].position,
             HitTarget::LoopRegion(i) => self.loop_regions[*i].position,
             HitTarget::ExportRegion(i) => self.export_regions[*i].position,
             HitTarget::ComponentDef(i) => self.components[*i].position,
@@ -2967,6 +3090,14 @@ impl App {
                             self.effect_regions.push(er);
                             new_selected
                                 .push(HitTarget::EffectRegion(self.effect_regions.len() - 1));
+                        }
+                    }
+                    HitTarget::PluginBlock(i) => {
+                        if i < self.plugin_blocks.len() {
+                            let pb = self.plugin_blocks[i].clone();
+                            self.plugin_blocks.push(pb);
+                            new_selected
+                                .push(HitTarget::PluginBlock(self.plugin_blocks.len() - 1));
                         }
                     }
                     HitTarget::LoopRegion(i) => {
@@ -3316,6 +3447,7 @@ impl App {
             &self.objects,
             &self.waveforms,
             &self.effect_regions,
+            &self.plugin_blocks,
             &self.loop_regions,
             &self.export_regions,
             &self.components,
@@ -3663,6 +3795,14 @@ impl App {
                         new_selected.push(HitTarget::EffectRegion(self.effect_regions.len() - 1));
                     }
                 }
+                HitTarget::PluginBlock(i) => {
+                    if i < self.plugin_blocks.len() {
+                        let mut pb = self.plugin_blocks[i].clone();
+                        pb.position[0] += pb.size[0];
+                        self.plugin_blocks.push(pb);
+                        new_selected.push(HitTarget::PluginBlock(self.plugin_blocks.len() - 1));
+                    }
+                }
                 HitTarget::LoopRegion(i) => {
                     if i < self.loop_regions.len() {
                         let mut lr = self.loop_regions[i].clone();
@@ -3722,6 +3862,13 @@ impl App {
                         self.clipboard
                             .items
                             .push(ClipboardItem::EffectRegion(self.effect_regions[*i].clone()));
+                    }
+                }
+                HitTarget::PluginBlock(i) => {
+                    if *i < self.plugin_blocks.len() {
+                        self.clipboard
+                            .items
+                            .push(ClipboardItem::PluginBlock(self.plugin_blocks[*i].clone()));
                     }
                 }
                 HitTarget::LoopRegion(i) => {
@@ -3787,6 +3934,7 @@ impl App {
                 ClipboardItem::Object(o) => o.position,
                 ClipboardItem::Waveform(w, _) => w.position,
                 ClipboardItem::EffectRegion(e) => e.position,
+                ClipboardItem::PluginBlock(pb) => pb.position,
                 ClipboardItem::LoopRegion(l) => l.position,
                 ClipboardItem::ExportRegion(x) => x.position,
                 ClipboardItem::ComponentDef(d, _) => d.position,
@@ -3834,6 +3982,12 @@ impl App {
                     e.position[1] += dy;
                     self.effect_regions.push(e);
                     new_selected.push(HitTarget::EffectRegion(self.effect_regions.len() - 1));
+                }
+                ClipboardItem::PluginBlock(mut pb) => {
+                    pb.position[0] += dx;
+                    pb.position[1] += dy;
+                    self.plugin_blocks.push(pb);
+                    new_selected.push(HitTarget::PluginBlock(self.plugin_blocks.len() - 1));
                 }
                 ClipboardItem::LoopRegion(mut l) => {
                     l.position[0] += dx;
@@ -3920,6 +4074,14 @@ impl App {
                 _ => None,
             })
             .collect();
+        let mut pb_indices: Vec<usize> = self
+            .selected
+            .iter()
+            .filter_map(|t| match t {
+                HitTarget::PluginBlock(i) => Some(*i),
+                _ => None,
+            })
+            .collect();
         let mut lr_indices: Vec<usize> = self
             .selected
             .iter()
@@ -3956,6 +4118,7 @@ impl App {
         obj_indices.sort_unstable_by(|a, b| b.cmp(a));
         wf_indices.sort_unstable_by(|a, b| b.cmp(a));
         er_indices.sort_unstable_by(|a, b| b.cmp(a));
+        pb_indices.sort_unstable_by(|a, b| b.cmp(a));
         lr_indices.sort_unstable_by(|a, b| b.cmp(a));
         xr_indices.sort_unstable_by(|a, b| b.cmp(a));
         comp_indices.sort_unstable_by(|a, b| b.cmp(a));
@@ -4015,6 +4178,11 @@ impl App {
         for &i in &er_indices {
             if i < self.effect_regions.len() {
                 self.effect_regions.remove(i);
+            }
+        }
+        for &i in &pb_indices {
+            if i < self.plugin_blocks.len() {
+                self.plugin_blocks.remove(i);
             }
         }
         for &i in &lr_indices {
@@ -4138,25 +4306,27 @@ impl App {
             .collect();
         self.plugin_browser.set_plugins(entries);
 
-        // Reload any saved plugins that were waiting for the scanner
-        for region in &mut self.effect_regions {
-            for slot in &mut region.chain {
-                let has_instance = slot.instance.lock().ok().map_or(false, |g| g.is_some());
-                if !has_instance {
-                    if let Some(instance) =
-                        self.plugin_registry
-                            .load_plugin(&slot.plugin_id, 48000.0, 512)
-                    {
-                        *slot.instance.lock().unwrap() = Some(instance);
-                        println!("  Reloaded plugin '{}'", slot.plugin_name);
+        // Reload any saved plugin blocks that were waiting for the scanner
+        for pb in &mut self.plugin_blocks {
+            let has_instance = pb.instance.lock().ok().map_or(false, |g| g.is_some());
+            if !has_instance {
+                if let Some(instance) =
+                    self.plugin_registry
+                        .load_plugin(&pb.plugin_id, 48000.0, 512)
+                {
+                    *pb.instance.lock().unwrap() = Some(instance);
+                    // Also update plugin_path from registry
+                    if let Some(entry) = self.plugin_registry.plugins.iter().find(|e| e.info.unique_id == pb.plugin_id) {
+                        pb.plugin_path = entry.info.path.clone();
                     }
+                    println!("  Reloaded plugin '{}'", pb.plugin_name);
                 }
             }
         }
         self.sync_audio_clips();
     }
 
-    fn add_plugin_to_region(&mut self, region_idx: usize, plugin_id: &str, plugin_name: &str) {
+    fn add_plugin_block(&mut self, position: [f32; 2], plugin_id: &str, plugin_name: &str) {
         self.ensure_plugins_scanned();
         let sample_rate = 48000.0;
         let block_size = 512;
@@ -4170,27 +4340,90 @@ impl App {
             .map(|e| e.info.path.clone())
             .unwrap_or_default();
 
+        let mut pb = effects::PluginBlock::new(
+            position,
+            plugin_id.to_string(),
+            plugin_name.to_string(),
+            plugin_path,
+        );
+
         if let Some(instance) = self
             .plugin_registry
             .load_plugin(plugin_id, sample_rate, block_size)
         {
-            let slot = effects::PluginSlot {
-                plugin_id: plugin_id.to_string(),
-                plugin_name: plugin_name.to_string(),
-                plugin_path,
-                bypass: false,
-                instance: Arc::new(std::sync::Mutex::new(Some(instance))),
-                gui: Arc::new(std::sync::Mutex::new(None)),
-            };
-            if region_idx < self.effect_regions.len() {
-                self.effect_regions[region_idx].chain.push(slot);
-                println!(
-                    "  Added plugin '{}' to effect region {}",
-                    plugin_name, region_idx
-                );
-                self.sync_audio_clips();
+            pb.instance = Arc::new(std::sync::Mutex::new(Some(instance)));
+        }
+
+        self.plugin_blocks.push(pb);
+        let idx = self.plugin_blocks.len() - 1;
+        println!("  Added plugin block '{}'", plugin_name);
+        self.sync_audio_clips();
+
+        // Try to open native VST3 GUI
+        let pb = &self.plugin_blocks[idx];
+        let path = pb.plugin_path.to_string_lossy().to_string();
+        if !path.is_empty() {
+            let uid = pb.plugin_id.clone();
+            let name = pb.plugin_name.clone();
+            if let Some(gui) = vst3_gui::Vst3Gui::open(&path, &uid, &name) {
+                println!("  Opened native GUI for '{}'", name);
+                if let Ok(mut g) = pb.gui.lock() {
+                    *g = Some(gui);
+                }
             }
         }
+    }
+
+    fn open_plugin_block_gui(&mut self, idx: usize) {
+        if idx >= self.plugin_blocks.len() {
+            return;
+        }
+        let pb = &self.plugin_blocks[idx];
+        let path = pb.plugin_path.to_string_lossy().to_string();
+        let uid = pb.plugin_id.clone();
+        let name = pb.plugin_name.clone();
+
+        if !path.is_empty() {
+            let already_open = pb.gui.lock()
+                .ok()
+                .map_or(false, |g| g.as_ref().map_or(false, |gui| gui.is_open()));
+            if !already_open {
+                if let Some(gui) = vst3_gui::Vst3Gui::open(&path, &uid, &name) {
+                    println!("  Opened native GUI for '{}'", name);
+                    if let Ok(mut g) = pb.gui.lock() {
+                        *g = Some(gui);
+                    }
+                    return;
+                }
+            } else {
+                return;
+            }
+        }
+
+        // Fallback: open parameter editor
+        let mut params = Vec::new();
+        if let Ok(guard) = pb.instance.lock() {
+            if let Some(inst) = guard.as_ref() {
+                let count = inst.parameter_count();
+                for param_idx in 0..count {
+                    let info = inst.parameter_info(param_idx);
+                    let val = inst.get_parameter(param_idx).unwrap_or(0.0);
+                    let (pname, unit, default) = match info {
+                        Ok(pi) => (pi.name, pi.unit, pi.default),
+                        Err(_) => (format!("Param {}", param_idx), String::new(), 0.0),
+                    };
+                    params.push(ui::plugin_editor::ParamEntry {
+                        name: pname,
+                        unit,
+                        value: val,
+                        default,
+                    });
+                }
+            }
+        }
+        self.plugin_editor = Some(ui::plugin_editor::PluginEditorWindow::new(
+            idx, 0, name, params,
+        ));
     }
 }
 
@@ -4398,12 +4631,9 @@ impl ApplicationHandler for App {
                         if let Some(pe) = &mut self.plugin_editor {
                             let idx = pe.dragging_slider.unwrap();
                             let new_val = pe.slider_drag(idx, mx, scr_w, scr_h, scale);
-                            let ri = pe.region_idx;
-                            let si = pe.slot_idx;
-                            if let Some(slot) =
-                                self.effect_regions.get(ri).and_then(|er| er.chain.get(si))
-                            {
-                                if let Ok(mut guard) = slot.instance.lock() {
+                            let pb_idx = pe.region_idx; // now repurposed as plugin_block index
+                            if let Some(pb) = self.plugin_blocks.get(pb_idx) {
+                                if let Ok(mut guard) = pb.instance.lock() {
                                     if let Some(inst) = guard.as_mut() {
                                         let _ = inst.set_parameter(idx, new_val);
                                     }
@@ -4727,6 +4957,7 @@ impl ApplicationHandler for App {
                                     &self.objects,
                                     &self.waveforms,
                                     &self.effect_regions,
+                                    &self.plugin_blocks,
                                     &self.loop_regions,
                                     &self.export_regions,
                                     &self.components,
@@ -4794,6 +5025,7 @@ impl ApplicationHandler for App {
                             &self.objects,
                             &self.waveforms,
                             &self.effect_regions,
+                            &self.plugin_blocks,
                             &self.loop_regions,
                             &self.export_regions,
                             &self.components,
@@ -4884,14 +5116,9 @@ impl ApplicationHandler for App {
                                             scr_h,
                                             scale,
                                         );
-                                        let ri = pe.region_idx;
-                                        let si = pe.slot_idx;
-                                        if let Some(slot) = self
-                                            .effect_regions
-                                            .get(ri)
-                                            .and_then(|er| er.chain.get(si))
-                                        {
-                                            if let Ok(mut guard) = slot.instance.lock() {
+                                        let pb_idx = pe.region_idx; // repurposed as plugin_block index
+                                        if let Some(pb) = self.plugin_blocks.get(pb_idx) {
+                                            if let Ok(mut guard) = pb.instance.lock() {
                                                 if let Some(inst) = guard.as_mut() {
                                                     let _ = inst.set_parameter(idx, new_val);
                                                 }
@@ -5250,70 +5477,6 @@ impl ApplicationHandler for App {
                             }
                         }
 
-                        // --- plugin label click (opens native GUI or parameter editor) ---
-                        if let EffectRegionHover::PluginLabel(ri, si) = self.effect_region_hover {
-                            if ri < self.effect_regions.len()
-                                && si < self.effect_regions[ri].chain.len()
-                            {
-                                let slot = &self.effect_regions[ri].chain[si];
-                                let name = slot.plugin_name.clone();
-                                let uid = slot.plugin_id.clone();
-                                let path = slot.plugin_path.to_string_lossy().to_string();
-
-                                // Try to open native VST3 GUI first
-                                if !path.is_empty() {
-                                    // Check if GUI is already open
-                                    let already_open = slot.gui.lock()
-                                        .ok()
-                                        .map_or(false, |g| g.as_ref().map_or(false, |gui| gui.is_open()));
-
-                                    if !already_open {
-                                        if let Some(gui) = vst3_gui::Vst3Gui::open(&path, &uid, &name) {
-                                            println!("  Opened native GUI for '{}'", name);
-                                            if let Ok(mut g) = slot.gui.lock() {
-                                                *g = Some(gui);
-                                            }
-                                            self.request_redraw();
-                                            return;
-                                        }
-                                    } else {
-                                        // GUI already open, do nothing
-                                        return;
-                                    }
-                                }
-
-                                // Fallback: open parameter editor
-                                let mut params = Vec::new();
-                                if let Ok(guard) = slot.instance.lock() {
-                                    if let Some(inst) = guard.as_ref() {
-                                        let count = inst.parameter_count();
-                                        for idx in 0..count {
-                                            let info = inst.parameter_info(idx);
-                                            let val = inst.get_parameter(idx).unwrap_or(0.0);
-                                            let (pname, unit, default) = match info {
-                                                Ok(pi) => (pi.name, pi.unit, pi.default),
-                                                Err(_) => {
-                                                    (format!("Param {}", idx), String::new(), 0.0)
-                                                }
-                                            };
-                                            params.push(ui::plugin_editor::ParamEntry {
-                                                name: pname,
-                                                unit,
-                                                value: val,
-                                                default,
-                                            });
-                                        }
-                                    }
-                                }
-                                self.plugin_editor =
-                                    Some(ui::plugin_editor::PluginEditorWindow::new(
-                                        ri, si, name, params,
-                                    ));
-                                self.request_redraw();
-                                return;
-                            }
-                        }
-
                         // --- effect region corner resize ---
                         {
                             let handle_sz = 24.0 / self.camera.zoom;
@@ -5480,6 +5643,7 @@ impl ApplicationHandler for App {
                             &self.objects,
                             &self.waveforms,
                             &self.effect_regions,
+                            &self.plugin_blocks,
                             &self.loop_regions,
                             &self.export_regions,
                             &self.components,
@@ -5511,6 +5675,11 @@ impl ApplicationHandler for App {
                                 self.request_redraw();
                                 return;
                             }
+                            if let Some(HitTarget::PluginBlock(idx)) = hit {
+                                self.open_plugin_block_gui(idx);
+                                self.request_redraw();
+                                return;
+                            }
                         }
 
                         // Click outside the editing component exits edit mode
@@ -5525,6 +5694,7 @@ impl ApplicationHandler for App {
                                         &self.objects,
                                         &self.waveforms,
                                         &self.effect_regions,
+                                        &self.plugin_blocks,
                                         &self.loop_regions,
                                         &self.export_regions,
                                         &self.components,
@@ -5706,21 +5876,11 @@ impl ApplicationHandler for App {
                                     .find(|(_, er)| point_in_rect(world, er.position, er.size))
                                     .map(|(i, _)| i);
 
-                                if let Some(er_idx) = hit_er {
-                                    self.add_plugin_to_region(er_idx, &plugin_id, &plugin_name);
-                                } else {
-                                    self.push_undo();
-                                    let w = effects::EFFECT_REGION_DEFAULT_WIDTH;
-                                    let h = effects::EFFECT_REGION_DEFAULT_HEIGHT;
-                                    self.effect_regions.push(effects::EffectRegion::new(
-                                        [world[0] - w * 0.5, world[1] - h * 0.5],
-                                        [w, h],
-                                    ));
-                                    let idx = self.effect_regions.len() - 1;
-                                    self.add_plugin_to_region(idx, &plugin_id, &plugin_name);
-                                    self.selected.clear();
-                                    self.selected.push(HitTarget::EffectRegion(idx));
-                                }
+                                self.push_undo();
+                                self.add_plugin_block(world, &plugin_id, &plugin_name);
+                                let idx = self.plugin_blocks.len() - 1;
+                                self.selected.clear();
+                                self.selected.push(HitTarget::PluginBlock(idx));
                             }
                             self.drag = DragState::None;
                             self.update_hover();
@@ -5754,6 +5914,7 @@ impl ApplicationHandler for App {
                                     &self.objects,
                                     &self.waveforms,
                                     &self.effect_regions,
+                                    &self.plugin_blocks,
                                     &self.loop_regions,
                                     &self.export_regions,
                                     &self.components,
@@ -6036,17 +6197,19 @@ impl ApplicationHandler for App {
                         }
                     }
 
-                    // --- Enter on selected effect region: show plugin info ---
+                    // --- Enter on selected effect region: show overlapping plugin info ---
                     if matches!(event.logical_key, Key::Named(NamedKey::Enter)) {
                         if let Some(HitTarget::EffectRegion(idx)) = self.selected.first().copied() {
                             if idx < self.effect_regions.len() {
                                 let er = &self.effect_regions[idx];
-                                if er.chain.is_empty() {
-                                    println!("  Effect region {} has no plugins", idx);
+                                let block_indices = effects::collect_plugins_for_region(er, &self.plugin_blocks);
+                                if block_indices.is_empty() {
+                                    println!("  Effect region {} has no overlapping plugins", idx);
                                 } else {
                                     println!("  Effect region {} plugin chain:", idx);
-                                    for (j, slot) in er.chain.iter().enumerate() {
-                                        let param_count = slot
+                                    for (j, &bi) in block_indices.iter().enumerate() {
+                                        let pb = &self.plugin_blocks[bi];
+                                        let param_count = pb
                                             .instance
                                             .lock()
                                             .ok()
@@ -6054,10 +6217,17 @@ impl ApplicationHandler for App {
                                             .unwrap_or(0);
                                         println!(
                                             "    [{}] {} ({} params)",
-                                            j, slot.plugin_name, param_count
+                                            j, pb.plugin_name, param_count
                                         );
                                     }
                                 }
+                            }
+                            self.request_redraw();
+                        }
+                        // Double-click on plugin block: open GUI
+                        if let Some(HitTarget::PluginBlock(idx)) = self.selected.first().copied() {
+                            if idx < self.plugin_blocks.len() {
+                                self.open_plugin_block_gui(idx);
                             }
                             self.request_redraw();
                         }
@@ -6230,10 +6400,26 @@ impl ApplicationHandler for App {
 
             // --- scroll = pan, Cmd+scroll = zoom, pinch = zoom ---
             WindowEvent::MouseWheel { delta, .. } => {
-                if self.command_palette.is_some() || self.context_menu.is_some() {
+                if self.context_menu.is_some() {
                     return;
                 }
                 let is_pixel_delta = matches!(delta, MouseScrollDelta::PixelDelta(_));
+                let (_dx_raw, dy_raw) = match delta {
+                    MouseScrollDelta::LineDelta(_x, y) => (_x, y),
+                    MouseScrollDelta::PixelDelta(pos) => (pos.x as f32, pos.y as f32),
+                };
+                if let Some(p) = &mut self.command_palette {
+                    let lines = if is_pixel_delta {
+                        -(dy_raw / PALETTE_ITEM_HEIGHT) as i32
+                    } else {
+                        -(dy_raw as i32)
+                    };
+                    if lines != 0 {
+                        p.scroll_by(lines);
+                    }
+                    self.request_redraw();
+                    return;
+                }
                 let (dx, dy) = match delta {
                     MouseScrollDelta::LineDelta(x, y) => (x * 50.0, y * 50.0),
                     MouseScrollDelta::PixelDelta(pos) => (pos.x as f32, pos.y as f32),
@@ -6341,6 +6527,7 @@ impl ApplicationHandler for App {
                             objects: &self.objects,
                             waveforms: &self.waveforms,
                             effect_regions: &self.effect_regions,
+                            plugin_blocks: &self.plugin_blocks,
                             hovered: self.hovered,
                             selected: &selected_set,
                             selection_rect: sel_rect,
@@ -6428,6 +6615,7 @@ impl ApplicationHandler for App {
                         playback_pos,
                         &self.export_regions,
                         &self.effect_regions,
+                        &self.plugin_blocks,
                         self.editing_effect_name
                             .as_ref()
                             .map(|(idx, s)| (*idx, s.as_str())),

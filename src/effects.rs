@@ -6,7 +6,7 @@ use rack::traits::{PluginInstance, PluginScanner};
 use rack::vst3::Vst3Scanner;
 use serde::{Deserialize, Serialize};
 
-use crate::{point_in_rect, push_border, Camera, InstanceRaw};
+use crate::{point_in_rect, push_border, rects_overlap, Camera, InstanceRaw};
 
 #[derive(Serialize, Deserialize)]
 struct CachedPluginInfo {
@@ -110,11 +110,14 @@ pub const EFFECT_REGION_DEFAULT_HEIGHT: f32 = 250.0;
 const EFFECT_BORDER_COLOR: [f32; 4] = [0.60, 0.30, 0.90, 0.50];
 const EFFECT_ACTIVE_BORDER: [f32; 4] = [0.70, 0.40, 1.00, 0.70];
 
+// ---------------------------------------------------------------------------
+// EffectRegion — spatial zone that controls when plugins sound
+// ---------------------------------------------------------------------------
+
 #[derive(Clone)]
 pub struct EffectRegion {
     pub position: [f32; 2],
     pub size: [f32; 2],
-    pub chain: Vec<PluginSlot>,
     pub name: String,
 }
 
@@ -123,14 +126,13 @@ impl EffectRegion {
         Self {
             position,
             size,
-            chain: Vec::new(),
             name: "effects".to_string(),
         }
     }
 
     pub fn hit_test_border(&self, world_pos: [f32; 2], camera: &Camera) -> bool {
         let border_thickness = 6.0 / camera.zoom;
-        let name_area_h = 20.0 / camera.zoom;
+        let name_area_h = 30.0 / camera.zoom;
         let p = self.position;
         let s = self.size;
         if !point_in_rect(world_pos, [p[0] - border_thickness, p[1] - border_thickness - name_area_h],
@@ -169,9 +171,19 @@ impl EffectRegion {
     }
 }
 
+// ---------------------------------------------------------------------------
+// PluginBlock — first-class canvas object for a single plugin
+// ---------------------------------------------------------------------------
+
+pub const PLUGIN_BLOCK_DEFAULT_SIZE: [f32; 2] = [120.0, 40.0];
+pub const PLUGIN_BLOCK_DEFAULT_COLOR: [f32; 4] = [0.55, 0.28, 0.85, 0.70];
+pub const PLUGIN_BLOCK_BORDER_RADIUS: f32 = 6.0;
+
 #[derive(Clone)]
-#[allow(dead_code)]
-pub struct PluginSlot {
+pub struct PluginBlock {
+    pub position: [f32; 2],
+    pub size: [f32; 2],
+    pub color: [f32; 4],
     pub plugin_id: String,
     pub plugin_name: String,
     pub plugin_path: PathBuf,
@@ -179,6 +191,171 @@ pub struct PluginSlot {
     pub instance: Arc<Mutex<Option<Box<dyn PluginInstance>>>>,
     pub gui: Arc<Mutex<Option<vst3_gui::Vst3Gui>>>,
 }
+
+impl PluginBlock {
+    pub fn new(position: [f32; 2], plugin_id: String, plugin_name: String, plugin_path: PathBuf) -> Self {
+        Self {
+            position,
+            size: PLUGIN_BLOCK_DEFAULT_SIZE,
+            color: PLUGIN_BLOCK_DEFAULT_COLOR,
+            plugin_id,
+            plugin_name,
+            plugin_path,
+            bypass: false,
+            instance: Arc::new(Mutex::new(None)),
+            gui: Arc::new(Mutex::new(None)),
+        }
+    }
+
+    pub fn contains(&self, world_pos: [f32; 2]) -> bool {
+        point_in_rect(world_pos, self.position, self.size)
+    }
+}
+
+#[derive(Clone)]
+pub struct PluginBlockSnapshot {
+    pub position: [f32; 2],
+    pub size: [f32; 2],
+    pub color: [f32; 4],
+    pub plugin_id: String,
+    pub plugin_name: String,
+    pub plugin_path: PathBuf,
+    pub bypass: bool,
+}
+
+/// Returns indices of plugin_blocks that spatially overlap the given effect region,
+/// sorted by X position (left-to-right chaining order).
+pub fn collect_plugins_for_region(
+    region: &EffectRegion,
+    blocks: &[PluginBlock],
+) -> Vec<usize> {
+    let mut overlapping: Vec<usize> = blocks
+        .iter()
+        .enumerate()
+        .filter(|(_, b)| {
+            !b.bypass
+                && rects_overlap(region.position, region.size, b.position, b.size)
+        })
+        .map(|(i, _)| i)
+        .collect();
+    overlapping.sort_by(|&a, &b| {
+        blocks[a].position[0]
+            .partial_cmp(&blocks[b].position[0])
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    overlapping
+}
+
+pub fn build_plugin_block_instances(
+    block: &PluginBlock,
+    camera: &Camera,
+    is_hovered: bool,
+    is_selected: bool,
+) -> Vec<InstanceRaw> {
+    let mut out = Vec::new();
+
+    let mut color = block.color;
+    if block.bypass {
+        color[3] *= 0.4;
+    }
+    if is_hovered && !is_selected {
+        color[3] = (color[3] + 0.10).min(1.0);
+    }
+
+    // Main block rectangle
+    out.push(InstanceRaw {
+        position: block.position,
+        size: block.size,
+        color,
+        border_radius: PLUGIN_BLOCK_BORDER_RADIUS / camera.zoom,
+    });
+
+    // Selection border
+    if is_selected {
+        let bw = 2.0 / camera.zoom;
+        push_border(&mut out, block.position, block.size, bw, [0.35, 0.65, 1.0, 0.8]);
+    }
+
+    out
+}
+
+// ---------------------------------------------------------------------------
+// EffectRegion rendering (no more pill labels)
+// ---------------------------------------------------------------------------
+
+pub fn build_effect_region_instances(
+    region: &EffectRegion,
+    camera: &Camera,
+    is_hovered: bool,
+    is_selected: bool,
+    is_active: bool,
+) -> Vec<InstanceRaw> {
+    let mut out = Vec::new();
+
+    let border_color = if is_active {
+        EFFECT_ACTIVE_BORDER
+    } else {
+        EFFECT_BORDER_COLOR
+    };
+
+    let bw = if is_selected { 2.5 } else { 1.5 } / camera.zoom;
+    let mut bc = border_color;
+    if is_hovered && !is_selected {
+        bc[3] = (bc[3] + 0.15).min(1.0);
+    }
+    push_border(&mut out, region.position, region.size, bw, bc);
+
+    // Dashed top indicator
+    let dash_h = 3.0 / camera.zoom;
+    let dash_w = 20.0 / camera.zoom;
+    let gap = 10.0 / camera.zoom;
+    let y = region.position[1] - dash_h - 2.0 / camera.zoom;
+    let mut x = region.position[0];
+    while x < region.position[0] + region.size[0] {
+        let w = dash_w.min(region.position[0] + region.size[0] - x);
+        out.push(InstanceRaw {
+            position: [x, y],
+            size: [w, dash_h],
+            color: [0.60, 0.30, 0.90, 0.40],
+            border_radius: 1.0 / camera.zoom,
+        });
+        x += dash_w + gap;
+    }
+
+    // "FX" badge at top-left
+    let badge_w = 28.0 / camera.zoom;
+    let badge_h = 16.0 / camera.zoom;
+    out.push(InstanceRaw {
+        position: [
+            region.position[0] + 4.0 / camera.zoom,
+            region.position[1] + 4.0 / camera.zoom,
+        ],
+        size: [badge_w, badge_h],
+        color: [0.55, 0.28, 0.85, 0.70],
+        border_radius: 3.0 / camera.zoom,
+    });
+
+    if is_selected {
+        let handle_sz = 8.0 / camera.zoom;
+        let handle_color = [0.55, 0.28, 0.85, 0.90];
+        for &hx in &[region.position[0] - handle_sz * 0.5, region.position[0] + region.size[0] - handle_sz * 0.5] {
+            for &hy in &[region.position[1] - handle_sz * 0.5, region.position[1] + region.size[1] - handle_sz * 0.5] {
+                out.push(InstanceRaw {
+                    position: [hx, hy],
+                    size: [handle_sz, handle_sz],
+                    color: handle_color,
+                    border_radius: 2.0 / camera.zoom,
+                });
+            }
+        }
+    }
+
+    out
+}
+
+// ---------------------------------------------------------------------------
+// PluginRegistry (unchanged)
+// ---------------------------------------------------------------------------
 
 pub struct PluginRegistryEntry {
     pub info: PluginInfo,
@@ -297,136 +474,4 @@ impl PluginRegistry {
             }
         }
     }
-}
-
-pub const PLUGIN_LABEL_COLOR: [f32; 4] = [0.55, 0.28, 0.85, 0.55];
-pub const PLUGIN_LABEL_W: f32 = 80.0;
-pub const PLUGIN_LABEL_H: f32 = 16.0;
-pub const PLUGIN_LABEL_GAP: f32 = 4.0;
-pub const PLUGIN_CLOSE_SIZE: f32 = 14.0;
-
-#[allow(dead_code)]
-pub struct PluginLabelRect {
-    pub position: [f32; 2],
-    pub size: [f32; 2],
-    pub close_position: [f32; 2],
-    pub close_size: [f32; 2],
-    pub region_idx: usize,
-    pub slot_idx: usize,
-}
-
-pub fn plugin_label_rects(region: &EffectRegion, camera: &Camera) -> Vec<PluginLabelRect> {
-    let badge_h = PLUGIN_LABEL_H / camera.zoom;
-    let start_x = region.position[0] + 36.0 / camera.zoom;
-    let y = region.position[1] + 4.0 / camera.zoom;
-    let pill_w = PLUGIN_LABEL_W / camera.zoom;
-    let gap = PLUGIN_LABEL_GAP / camera.zoom;
-    let close_sz = PLUGIN_CLOSE_SIZE / camera.zoom;
-
-    region
-        .chain
-        .iter()
-        .enumerate()
-        .map(|(i, _slot)| {
-            let x = start_x + i as f32 * (pill_w + gap);
-            let close_x = x + pill_w - close_sz - 1.0 / camera.zoom;
-            let close_y = y + (badge_h - close_sz) * 0.5;
-            PluginLabelRect {
-                position: [x, y],
-                size: [pill_w, badge_h],
-                close_position: [close_x, close_y],
-                close_size: [close_sz, close_sz],
-                region_idx: 0,
-                slot_idx: i,
-            }
-        })
-        .collect()
-}
-
-pub fn build_effect_region_instances(
-    region: &EffectRegion,
-    camera: &Camera,
-    is_hovered: bool,
-    is_selected: bool,
-    is_active: bool,
-) -> Vec<InstanceRaw> {
-    let mut out = Vec::new();
-
-    let border_color = if is_active {
-        EFFECT_ACTIVE_BORDER
-    } else {
-        EFFECT_BORDER_COLOR
-    };
-
-    let bw = if is_selected { 2.5 } else { 1.5 } / camera.zoom;
-    let mut bc = border_color;
-    if is_hovered && !is_selected {
-        bc[3] = (bc[3] + 0.15).min(1.0);
-    }
-    push_border(&mut out, region.position, region.size, bw, bc);
-
-    // Dashed top indicator
-    let dash_h = 3.0 / camera.zoom;
-    let dash_w = 20.0 / camera.zoom;
-    let gap = 10.0 / camera.zoom;
-    let y = region.position[1] - dash_h - 2.0 / camera.zoom;
-    let mut x = region.position[0];
-    while x < region.position[0] + region.size[0] {
-        let w = dash_w.min(region.position[0] + region.size[0] - x);
-        out.push(InstanceRaw {
-            position: [x, y],
-            size: [w, dash_h],
-            color: [0.60, 0.30, 0.90, 0.40],
-            border_radius: 1.0 / camera.zoom,
-        });
-        x += dash_w + gap;
-    }
-
-    // "FX" badge at top-left
-    let badge_w = 28.0 / camera.zoom;
-    let badge_h = 16.0 / camera.zoom;
-    out.push(InstanceRaw {
-        position: [
-            region.position[0] + 4.0 / camera.zoom,
-            region.position[1] + 4.0 / camera.zoom,
-        ],
-        size: [badge_w, badge_h],
-        color: [0.55, 0.28, 0.85, 0.70],
-        border_radius: 3.0 / camera.zoom,
-    });
-
-    // Plugin name label pills (one per plugin in chain)
-    let labels = plugin_label_rects(region, camera);
-    for rect in &labels {
-        out.push(InstanceRaw {
-            position: rect.position,
-            size: rect.size,
-            color: PLUGIN_LABEL_COLOR,
-            border_radius: rect.size[1] * 0.5,
-        });
-        // Close button circle on the right edge
-        out.push(InstanceRaw {
-            position: rect.close_position,
-            size: rect.close_size,
-            color: [0.45, 0.20, 0.75, 0.60],
-            border_radius: rect.close_size[1] * 0.5,
-        });
-    }
-
-    if is_selected {
-        let handle_sz = 8.0 / camera.zoom;
-        let handle_color = [0.55, 0.28, 0.85, 0.90];
-        for &hx in &[region.position[0] - handle_sz * 0.5, region.position[0] + region.size[0] - handle_sz * 0.5] {
-            for &hy in &[region.position[1] - handle_sz * 0.5, region.position[1] + region.size[1] - handle_sz * 0.5] {
-                out.push(InstanceRaw {
-                    position: [hx, hy],
-                    size: [handle_sz, handle_sz],
-                    color: handle_color,
-                    border_radius: 2.0 / camera.zoom,
-                });
-            }
-        }
-    }
-
-    out
 }

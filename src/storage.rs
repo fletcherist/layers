@@ -36,6 +36,16 @@ pub struct StoredEffectRegion {
 }
 
 #[derive(Clone, SurrealValue)]
+pub struct StoredPluginBlock {
+    pub position: [f32; 2],
+    pub size: [f32; 2],
+    pub color: [f32; 4],
+    pub plugin_id: String,
+    pub plugin_name: String,
+    pub bypass: bool,
+}
+
+#[derive(Clone, SurrealValue)]
 pub struct StoredLoopRegion {
     pub position: [f32; 2],
     pub size: [f32; 2],
@@ -69,6 +79,7 @@ pub struct ProjectState {
     pub browser_visible: bool,
     pub browser_expanded: Vec<String>,
     pub effect_regions: Vec<StoredEffectRegion>,
+    pub plugin_blocks: Vec<StoredPluginBlock>,
     pub loop_regions: Vec<StoredLoopRegion>,
     pub components: Vec<StoredComponent>,
     pub component_instances: Vec<StoredComponentInstance>,

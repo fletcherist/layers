@@ -296,7 +296,7 @@ pub(crate) struct Gpu {
 
     cached_wf_label_bufs: Vec<(TextLabelCacheKey, TextBuffer)>,
     cached_er_label_bufs: Vec<(TextLabelCacheKey, TextBuffer)>,
-    cached_plugin_label_bufs: Vec<(TextLabelCacheKey, TextBuffer)>,
+    cached_plugin_block_bufs: Vec<(TextLabelCacheKey, TextBuffer)>,
 }
 
 impl Gpu {
@@ -602,7 +602,7 @@ impl Gpu {
             browser_text_generation: 0,
             cached_wf_label_bufs: Vec::new(),
             cached_er_label_bufs: Vec::new(),
-            cached_plugin_label_bufs: Vec::new(),
+            cached_plugin_block_bufs: Vec::new(),
         }
     }
 
@@ -629,6 +629,7 @@ impl Gpu {
         playback_position: f64,
         export_regions: &[ExportRegion],
         effect_regions: &[effects::EffectRegion],
+        plugin_blocks: &[effects::PluginBlock],
         editing_effect_name: Option<(usize, &str)>,
         waveforms: &[waveform::WaveformView],
         editing_waveform_name: Option<(usize, &str)>,
@@ -1519,75 +1520,72 @@ impl Gpu {
         }
         self.cached_wf_label_bufs = new_wf_cache;
 
-        // Effect region plugin name labels (cached shaping, positions recomputed each frame)
-        let mut old_plugin_cache = std::mem::take(&mut self.cached_plugin_label_bufs);
-        let mut new_plugin_cache: Vec<(TextLabelCacheKey, TextBuffer)> = Vec::new();
-        let mut plugin_label_meta: Vec<(f32, f32, TextColor, TextBounds)> = Vec::new();
-        for er in effect_regions {
-            if settings_window.is_some() || command_palette.is_some() {
-                break;
-            }
-            let er_right = er.position[0] + er.size[0];
-            let er_bottom = er.position[1] + er.size[1];
-            if er_right < world_left
-                || er.position[0] > world_right
-                || er_bottom < world_top
-                || er.position[1] > world_bottom
-            {
-                continue;
-            }
-            let labels = effects::plugin_label_rects(er, camera);
-            for (i, rect) in labels.iter().enumerate() {
-                let screen_x = (rect.position[0] - camera.position[0]) * camera.zoom;
-                let screen_y = (rect.position[1] - camera.position[1]) * camera.zoom;
-                let pill_w_screen = rect.size[0] * camera.zoom;
-                let pill_h_screen = rect.size[1] * camera.zoom;
+        // Plugin block name labels (cached shaping, positions recomputed each frame)
+        let mut old_pb_cache = std::mem::take(&mut self.cached_plugin_block_bufs);
+        let mut new_pb_cache: Vec<(TextLabelCacheKey, TextBuffer)> = Vec::new();
+        let mut pb_label_meta: Vec<(f32, f32, TextColor, TextBounds)> = Vec::new();
+        if settings_window.is_none() && command_palette.is_none() {
+            for pb in plugin_blocks {
+                let pb_right = pb.position[0] + pb.size[0];
+                let pb_bottom = pb.position[1] + pb.size[1];
+                if pb_right < world_left
+                    || pb.position[0] > world_right
+                    || pb_bottom < world_top
+                    || pb.position[1] > world_bottom
+                {
+                    continue;
+                }
+                let screen_x = (pb.position[0] - camera.position[0]) * camera.zoom;
+                let screen_y = (pb.position[1] - camera.position[1]) * camera.zoom;
+                let block_w_screen = pb.size[0] * camera.zoom;
+                let block_h_screen = pb.size[1] * camera.zoom;
 
                 if let Some((cm_pos, cm_size)) = ctx_menu_rect {
-                    if screen_x + pill_w_screen > cm_pos[0]
+                    if screen_x + block_w_screen > cm_pos[0]
                         && screen_x < cm_pos[0] + cm_size[0]
-                        && screen_y + pill_h_screen > cm_pos[1]
+                        && screen_y + block_h_screen > cm_pos[1]
                         && screen_y < cm_pos[1] + cm_size[1]
                     {
                         continue;
                     }
                 }
 
-                let name = &er.chain[i].plugin_name;
-                let label_font = 10.0 * scale;
-                let label_line = 14.0 * scale;
-                let max_w = pill_w_screen - 8.0;
+                let name = &pb.plugin_name;
+                let label_font = 12.0 * scale;
+                let label_line = 18.0 * scale;
+                let pad = 8.0;
+                let max_w = ((block_w_screen - pad * 2.0) * scale).max(10.0);
 
                 let key = TextLabelCacheKey {
                     text: name.clone(),
                     max_width_q: (max_w * 2.0) as i32,
                     font_size_q: (label_font * 2.0) as i32,
                 };
-                if let Some(pos) = old_plugin_cache.iter().position(|(k, _)| *k == key) {
-                    new_plugin_cache.push(old_plugin_cache.swap_remove(pos));
+                if let Some(pos) = old_pb_cache.iter().position(|(k, _)| *k == key) {
+                    new_pb_cache.push(old_pb_cache.swap_remove(pos));
                 } else {
                     let mut buf = TextBuffer::new(
                         &mut self.font_system,
                         Metrics::new(label_font, label_line),
                     );
-                    buf.set_size(&mut self.font_system, Some(max_w), Some(pill_h_screen));
+                    buf.set_size(&mut self.font_system, Some(max_w), Some(label_line));
                     let attrs = Attrs::new()
                         .family(Family::Name(".AppleSystemUIFont"))
                         .weight(glyphon::Weight(500));
                     buf.set_text(&mut self.font_system, name, attrs, Shaping::Advanced);
                     buf.shape_until_scroll(&mut self.font_system, false);
-                    new_plugin_cache.push((key, buf));
+                    new_pb_cache.push((key, buf));
                 }
 
-                plugin_label_meta.push((
-                    screen_x + 4.0 * scale,
-                    screen_y + (pill_h_screen - label_line) * 0.5,
-                    TextColor::rgba(255, 255, 255, 220),
+                pb_label_meta.push((
+                    screen_x + pad,
+                    screen_y + (block_h_screen - label_line / scale) * 0.5,
+                    TextColor::rgba(255, 255, 255, 230),
                     full_bounds,
                 ));
             }
         }
-        self.cached_plugin_label_bufs = new_plugin_cache;
+        self.cached_plugin_block_bufs = new_pb_cache;
 
         // Transport panel time text
         {
@@ -1773,9 +1771,9 @@ impl Gpu {
             .zip(er_label_meta.iter())
             .map(|(e, m)| cached_label_area(e, m));
         let plugin_areas = self
-            .cached_plugin_label_bufs
+            .cached_plugin_block_bufs
             .iter()
-            .zip(plugin_label_meta.iter())
+            .zip(pb_label_meta.iter())
             .map(|(e, m)| cached_label_area(e, m));
 
         let text_areas: Vec<TextArea> = browser_text_areas

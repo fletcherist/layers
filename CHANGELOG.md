@@ -1,3 +1,5 @@
+- Add scroll support for command palette rows (keyboard and mouse wheel) (15.7k loc)
+- Add close "x" button on plugin label pills to remove plugins from effect chain (15.6k loc)
 - Expanded sample color palette to 16 Logic-Pro-inspired colors in two rows (15.5k loc)
 - Color picker: right-click a sample to change its color via preset swatches (15.5k loc)
 - Remove +Effects and Export buttons from transport bar (15.3k loc)

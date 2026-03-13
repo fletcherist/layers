@@ -233,6 +233,7 @@ pub struct CommandPalette {
     pub rows: Vec<PaletteRow>,
     pub command_count: usize,
     pub selected_index: usize,
+    pub scroll_row_offset: usize,
     pub mode: PaletteMode,
     pub fader_value: f32,
     pub fader_rms: f32,
@@ -247,6 +248,7 @@ impl CommandPalette {
             rows: Vec::new(),
             command_count: 0,
             selected_index: 0,
+            scroll_row_offset: 0,
             mode: PaletteMode::Commands,
             fader_value: 1.0,
             fader_rms: 0.0,
@@ -295,6 +297,8 @@ impl CommandPalette {
         } else if self.selected_index >= self.command_count {
             self.selected_index = self.command_count - 1;
         }
+        self.scroll_row_offset = 0;
+        self.ensure_selected_visible();
     }
 
     pub fn update_filter(&mut self, dev_mode: bool) {
@@ -307,6 +311,60 @@ impl CommandPalette {
         }
         let len = self.command_count as i32;
         self.selected_index = ((self.selected_index as i32 + delta).rem_euclid(len)) as usize;
+        self.ensure_selected_visible();
+    }
+
+    fn row_index_for_selected(&self) -> Option<usize> {
+        let mut cmd_i = 0;
+        for (ri, row) in self.rows.iter().enumerate() {
+            if let PaletteRow::Command(_) = row {
+                if cmd_i == self.selected_index {
+                    return Some(ri);
+                }
+                cmd_i += 1;
+            }
+        }
+        None
+    }
+
+    fn ensure_selected_visible(&mut self) {
+        let Some(sel_row) = self.row_index_for_selected() else {
+            return;
+        };
+        if sel_row < self.scroll_row_offset {
+            self.scroll_row_offset = sel_row;
+        }
+        let end = self.scroll_row_offset + PALETTE_MAX_VISIBLE_ROWS;
+        if sel_row >= end {
+            self.scroll_row_offset = sel_row + 1 - PALETTE_MAX_VISIBLE_ROWS;
+        }
+        self.clamp_scroll_offset();
+    }
+
+    fn clamp_scroll_offset(&mut self) {
+        let max = self.rows.len().saturating_sub(PALETTE_MAX_VISIBLE_ROWS);
+        if self.scroll_row_offset > max {
+            self.scroll_row_offset = max;
+        }
+    }
+
+    pub fn scroll_by(&mut self, delta: i32) {
+        if self.rows.len() <= PALETTE_MAX_VISIBLE_ROWS {
+            return;
+        }
+        let max = self.rows.len() - PALETTE_MAX_VISIBLE_ROWS;
+        let new = (self.scroll_row_offset as i32 + delta).clamp(0, max as i32);
+        self.scroll_row_offset = new as usize;
+    }
+
+    pub fn visible_command_offset(&self) -> usize {
+        let mut count = 0;
+        for row in &self.rows[..self.scroll_row_offset] {
+            if matches!(row, PaletteRow::Command(_)) {
+                count += 1;
+            }
+        }
+        count
     }
 
     pub fn selected_action(&self) -> Option<CommandAction> {
@@ -329,8 +387,9 @@ impl CommandPalette {
         ) {
             return &[];
         }
-        let n = self.rows.len().min(PALETTE_MAX_VISIBLE_ROWS);
-        &self.rows[..n]
+        let start = self.scroll_row_offset.min(self.rows.len());
+        let end = (start + PALETTE_MAX_VISIBLE_ROWS).min(self.rows.len());
+        &self.rows[start..end]
     }
 
     pub fn content_height(&self, scale: f32) -> f32 {
@@ -369,7 +428,7 @@ impl CommandPalette {
         pos[0] >= rp[0] && pos[0] <= rp[0] + rs[0] && pos[1] >= rp[1] && pos[1] <= rp[1] + rs[1]
     }
 
-    /// Returns the command-relative index (not the row index) if mouse is on a command row.
+    /// Returns the global command-relative index if mouse is on a command row.
     pub fn item_at(
         &self,
         pos: [f32; 2],
@@ -385,6 +444,7 @@ impl CommandPalette {
         }
         let (rp, _) = self.palette_rect(screen_w, screen_h, scale);
         let list_top = rp[1] + PALETTE_INPUT_HEIGHT * scale + 1.0 * scale;
+        let base_cmd = self.visible_command_offset();
         let mut y = list_top;
         let mut cmd_i = 0;
         for row in self.visible_rows() {
@@ -395,7 +455,7 @@ impl CommandPalette {
             if pos[1] >= y && pos[1] < y + rh {
                 return match row {
                     PaletteRow::Section(_) => None,
-                    PaletteRow::Command(_) => Some(cmd_i),
+                    PaletteRow::Command(_) => Some(base_cmd + cmd_i),
                 };
             }
             if matches!(row, PaletteRow::Command(_)) {
@@ -524,6 +584,7 @@ impl CommandPalette {
         match self.mode {
             PaletteMode::Commands => {
                 let mut y = list_top + 1.0 * scale;
+                let base_cmd = self.visible_command_offset();
                 let mut cmd_i = 0;
                 for row in self.visible_rows() {
                     match row {
@@ -531,7 +592,7 @@ impl CommandPalette {
                             y += PALETTE_SECTION_HEIGHT * scale;
                         }
                         PaletteRow::Command(_) => {
-                            if cmd_i == self.selected_index {
+                            if base_cmd + cmd_i == self.selected_index {
                                 out.push(InstanceRaw {
                                     position: [pos[0] + margin, y],
                                     size: [size[0] - margin * 2.0, PALETTE_ITEM_HEIGHT * scale],
