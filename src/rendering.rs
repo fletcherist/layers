@@ -671,11 +671,10 @@ pub(crate) fn build_instances(out: &mut Vec<InstanceRaw>, ctx: &RenderContext) {
                     });
                 }
                 crate::user::DragPreview::MovingEntities { targets } => {
-                    for (_target, pos) in targets {
-                        let sz = 60.0 / camera.zoom;
+                    for (_target, pos, size) in targets {
                         out.push(InstanceRaw {
                             position: *pos,
-                            size: [sz, sz],
+                            size: *size,
                             color: ghost_color,
                             border_radius: 4.0 / camera.zoom,
                         });

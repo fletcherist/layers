@@ -2729,6 +2729,45 @@ impl App {
         }
     }
 
+    fn get_target_size(&self, target: &HitTarget) -> [f32; 2] {
+        match target {
+            HitTarget::Object(i) => self.objects.get(i).map(|o| o.size).unwrap_or([50.0; 2]),
+            HitTarget::Waveform(i) => self.waveforms.get(i).map(|w| w.size).unwrap_or([50.0; 2]),
+            HitTarget::EffectRegion(i) => self.effect_regions.get(i).map(|e| e.size).unwrap_or([50.0; 2]),
+            HitTarget::PluginBlock(i) => self.plugin_blocks.get(i).map(|p| p.size).unwrap_or([50.0; 2]),
+            HitTarget::LoopRegion(i) => self.loop_regions.get(i).map(|l| l.size).unwrap_or([50.0; 2]),
+            HitTarget::ExportRegion(i) => self.export_regions.get(i).map(|e| e.size).unwrap_or([50.0; 2]),
+            HitTarget::ComponentDef(i) => self.components.get(i).map(|c| c.size).unwrap_or([50.0; 2]),
+            HitTarget::ComponentInstance(i) => {
+                self.component_instances.get(i)
+                    .and_then(|ci| self.components.get(&ci.component_id))
+                    .map(|c| c.size)
+                    .unwrap_or([50.0; 2])
+            }
+            HitTarget::MidiClip(i) => self.midi_clips.get(i).map(|m| m.size).unwrap_or([50.0; 2]),
+            HitTarget::InstrumentRegion(i) => self.instrument_regions.get(i).map(|r| r.size).unwrap_or([50.0; 2]),
+        }
+    }
+
+    /// Broadcast a drag preview to remote users (not throttled — called alongside cursor broadcast).
+    fn broadcast_drag_preview(&self, preview: crate::user::DragPreview) {
+        if self.network.is_connected() {
+            self.network.send_ephemeral(crate::ephemeral::EphemeralMessage::DragUpdate {
+                user_id: self.local_user.id,
+                preview,
+            });
+        }
+    }
+
+    /// Broadcast drag end to remote users.
+    fn broadcast_drag_end(&self) {
+        if self.network.is_connected() {
+            self.network.send_ephemeral(crate::ephemeral::EphemeralMessage::DragEnd {
+                user_id: self.local_user.id,
+            });
+        }
+    }
+
     fn is_snap_override_active(&self) -> bool {
         self.modifiers.super_key()
     }

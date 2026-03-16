@@ -763,6 +763,15 @@ impl ApplicationHandler for App {
                             self.sync_audio_clips();
                             self.sync_loop_region();
                         }
+                        // Broadcast drag preview to remote users
+                        let preview_targets: Vec<_> = offsets.iter().map(|(t, _)| {
+                            let pos = self.get_target_pos(t);
+                            let size = self.get_target_size(t);
+                            (t.clone(), pos, size)
+                        }).collect();
+                        self.broadcast_drag_preview(crate::user::DragPreview::MovingEntities {
+                            targets: preview_targets,
+                        });
                         self.mark_dirty();
                     }
                     Action::Other => {
@@ -829,6 +838,11 @@ impl ApplicationHandler for App {
                                             mc.notes[ni].pitch = pitch;
                                         }
                                     }
+                                    // Broadcast clip as drag preview so remote sees note-editing activity
+                                    let mc = &self.midi_clips[&clip_id];
+                                    self.broadcast_drag_preview(crate::user::DragPreview::MovingEntities {
+                                        targets: vec![(HitTarget::MidiClip(clip_id), mc.position, mc.size)],
+                                    });
                                     self.mark_dirty();
                                 }
                             }
@@ -911,6 +925,10 @@ impl ApplicationHandler for App {
                                     snap_to_grid(raw_x, &self.settings, self.camera.zoom, self.bpm)
                                 };
                                 self.midi_clips.get_mut(&clip_id).unwrap().position = [snapped_x, world[1] - offset[1]];
+                                let mc = &self.midi_clips[&clip_id];
+                                self.broadcast_drag_preview(crate::user::DragPreview::MovingEntities {
+                                    targets: vec![(HitTarget::MidiClip(clip_id), mc.position, mc.size)],
+                                });
                                 self.mark_dirty();
                                 self.sync_audio_clips();
                             }
@@ -2264,6 +2282,7 @@ impl ApplicationHandler for App {
 
                         // --- finish MIDI note drag/resize ---
                         if matches!(self.drag, DragState::MovingMidiNote { .. } | DragState::ResizingMidiNote { .. } | DragState::ResizingMidiNoteLeft { .. } | DragState::ResizingMidiClip { .. }) {
+                            self.broadcast_drag_end();
                             let old_drag = std::mem::replace(&mut self.drag, DragState::None);
                             if let Some(note_idx) = self.pending_midi_note_click.take() {
                                 // No-op click — restore before state
@@ -2344,6 +2363,7 @@ impl ApplicationHandler for App {
 
                         // --- finish MIDI clip move ---
                         if matches!(self.drag, DragState::MovingMidiClip { .. }) {
+                            self.broadcast_drag_end();
                             if let DragState::MovingMidiClip { clip_id, before, .. } =
                                 std::mem::replace(&mut self.drag, DragState::None)
                             {
@@ -2496,6 +2516,7 @@ impl ApplicationHandler for App {
 
                         // --- finish moving selection ---
                         if matches!(self.drag, DragState::MovingSelection { .. }) {
+                            self.broadcast_drag_end();
                             if let DragState::MovingSelection { before_states, .. } =
                                 std::mem::replace(&mut self.drag, DragState::None)
                             {

@@ -13,7 +13,8 @@ pub struct User {
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub enum DragPreview {
     MovingEntities {
-        targets: Vec<(crate::HitTarget, [f32; 2])>,
+        /// (target, position, size)
+        targets: Vec<(crate::HitTarget, [f32; 2], [f32; 2])>,
     },
     ResizingEntity {
         target: crate::HitTarget,
