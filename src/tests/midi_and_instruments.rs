@@ -3,6 +3,7 @@ use crate::instruments;
 use crate::midi;
 use crate::settings::{GridMode, Settings};
 use crate::App;
+use crate::DragState;
 use crate::HitTarget;
 
 // ---------------------------------------------------------------------------
@@ -991,4 +992,247 @@ fn test_copy_paste_midi_notes() {
     // Undo reverts paste
     app.undo();
     assert_eq!(app.midi_clips[mc_idx].notes.len(), 2);
+}
+
+// ---------------------------------------------------------------------------
+// Note overlap resolution
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_resolve_note_overlaps_tail_crop() {
+    let mut app = App::new_headless();
+    app.add_midi_clip();
+    let mc_idx = 0;
+
+    // Note A at start=0, duration=100, pitch=60
+    app.midi_clips[mc_idx].notes.push(midi::MidiNote {
+        pitch: 60,
+        start_px: 0.0,
+        duration_px: 100.0,
+        velocity: 100,
+    });
+    // Note B at start=150, duration=50, pitch=60 (will be moved to overlap A)
+    app.midi_clips[mc_idx].notes.push(midi::MidiNote {
+        pitch: 60,
+        start_px: 150.0,
+        duration_px: 50.0,
+        velocity: 100,
+    });
+
+    // Simulate moving note B to start=50 so it overlaps A's tail
+    app.midi_clips[mc_idx].notes[1].start_px = 50.0;
+    let new_indices = app.midi_clips[mc_idx].resolve_note_overlaps(&[1]);
+
+    assert_eq!(app.midi_clips[mc_idx].notes.len(), 2);
+    // A's tail should be cropped to end where B starts
+    assert_eq!(app.midi_clips[mc_idx].notes[0].duration_px, 50.0);
+    // B should be unchanged
+    assert_eq!(app.midi_clips[mc_idx].notes[1].start_px, 50.0);
+    assert_eq!(app.midi_clips[mc_idx].notes[1].duration_px, 50.0);
+    assert_eq!(new_indices, vec![1]);
+}
+
+#[test]
+fn test_resolve_note_overlaps_full_cover_delete() {
+    let mut app = App::new_headless();
+    app.add_midi_clip();
+    let mc_idx = 0;
+
+    // Small note that will be fully covered
+    app.midi_clips[mc_idx].notes.push(midi::MidiNote {
+        pitch: 60,
+        start_px: 40.0,
+        duration_px: 20.0,
+        velocity: 100,
+    });
+    // Large note that will be moved to cover the small one
+    app.midi_clips[mc_idx].notes.push(midi::MidiNote {
+        pitch: 60,
+        start_px: 200.0,
+        duration_px: 100.0,
+        velocity: 100,
+    });
+
+    // Move large note to start=30, covering the small note (30..130 covers 40..60)
+    app.midi_clips[mc_idx].notes[1].start_px = 30.0;
+    let new_indices = app.midi_clips[mc_idx].resolve_note_overlaps(&[1]);
+
+    // Small note should be deleted
+    assert_eq!(app.midi_clips[mc_idx].notes.len(), 1);
+    assert_eq!(app.midi_clips[mc_idx].notes[0].start_px, 30.0);
+    assert_eq!(app.midi_clips[mc_idx].notes[0].duration_px, 100.0);
+    // Active index should be remapped (was 1, now 0 after deletion of index 0)
+    assert_eq!(new_indices, vec![0]);
+}
+
+#[test]
+fn test_resolve_note_overlaps_different_pitch_no_op() {
+    let mut app = App::new_headless();
+    app.add_midi_clip();
+    let mc_idx = 0;
+
+    app.midi_clips[mc_idx].notes.push(midi::MidiNote {
+        pitch: 60,
+        start_px: 0.0,
+        duration_px: 100.0,
+        velocity: 100,
+    });
+    app.midi_clips[mc_idx].notes.push(midi::MidiNote {
+        pitch: 62, // different pitch
+        start_px: 50.0,
+        duration_px: 50.0,
+        velocity: 100,
+    });
+
+    let new_indices = app.midi_clips[mc_idx].resolve_note_overlaps(&[1]);
+
+    // No cropping or deletion — different pitches
+    assert_eq!(app.midi_clips[mc_idx].notes.len(), 2);
+    assert_eq!(app.midi_clips[mc_idx].notes[0].duration_px, 100.0);
+    assert_eq!(app.midi_clips[mc_idx].notes[1].start_px, 50.0);
+    assert_eq!(new_indices, vec![1]);
+}
+
+#[test]
+fn test_resolve_note_overlaps_tiny_remainder_deleted() {
+    let mut app = App::new_headless();
+    app.add_midi_clip();
+    let mc_idx = 0;
+
+    // Note A: very close to where B will start, so cropping leaves < 10px
+    app.midi_clips[mc_idx].notes.push(midi::MidiNote {
+        pitch: 60,
+        start_px: 45.0,
+        duration_px: 20.0,
+        velocity: 100,
+    });
+    // Note B: will be moved to start=50, leaving A with only 5px
+    app.midi_clips[mc_idx].notes.push(midi::MidiNote {
+        pitch: 60,
+        start_px: 200.0,
+        duration_px: 60.0,
+        velocity: 100,
+    });
+
+    app.midi_clips[mc_idx].notes[1].start_px = 50.0;
+    let new_indices = app.midi_clips[mc_idx].resolve_note_overlaps(&[1]);
+
+    // A would be cropped to 5px which is < 10px minimum, so it gets deleted
+    assert_eq!(app.midi_clips[mc_idx].notes.len(), 1);
+    assert_eq!(app.midi_clips[mc_idx].notes[0].start_px, 50.0);
+    assert_eq!(new_indices, vec![0]);
+}
+
+#[test]
+fn test_resolve_note_overlaps_head_crop() {
+    let mut app = App::new_headless();
+    app.add_midi_clip();
+    let mc_idx = 0;
+
+    // Note A (will be moved right so its tail overlaps B's head)
+    app.midi_clips[mc_idx].notes.push(midi::MidiNote {
+        pitch: 60,
+        start_px: 0.0,
+        duration_px: 100.0,
+        velocity: 100,
+    });
+    // Note B (stationary, starts at 150)
+    app.midi_clips[mc_idx].notes.push(midi::MidiNote {
+        pitch: 60,
+        start_px: 150.0,
+        duration_px: 80.0,
+        velocity: 100,
+    });
+
+    // Move A right so it ends at 200, overlapping B (150..230)
+    app.midi_clips[mc_idx].notes[0].start_px = 100.0;
+    let new_indices = app.midi_clips[mc_idx].resolve_note_overlaps(&[0]);
+
+    // B should be deleted since A's tail overlaps its head
+    assert_eq!(app.midi_clips[mc_idx].notes.len(), 1);
+    assert_eq!(app.midi_clips[mc_idx].notes[0].start_px, 100.0);
+    assert_eq!(app.midi_clips[mc_idx].notes[0].duration_px, 100.0);
+    assert_eq!(new_indices, vec![0]);
+}
+
+#[test]
+fn test_resolve_note_overlaps_head_crop_deletes_small() {
+    let mut app = App::new_headless();
+    app.add_midi_clip();
+    let mc_idx = 0;
+
+    // Note A moved so its tail nearly covers all of B
+    app.midi_clips[mc_idx].notes.push(midi::MidiNote {
+        pitch: 60,
+        start_px: 0.0,
+        duration_px: 100.0,
+        velocity: 100,
+    });
+    // Note B: only 5px would remain after crop (< 10px min)
+    app.midi_clips[mc_idx].notes.push(midi::MidiNote {
+        pitch: 60,
+        start_px: 90.0,
+        duration_px: 15.0,
+        velocity: 100,
+    });
+
+    let new_indices = app.midi_clips[mc_idx].resolve_note_overlaps(&[0]);
+
+    // B's remainder would be 5px (105 - 100 = 5) which is < 10, so deleted
+    assert_eq!(app.midi_clips[mc_idx].notes.len(), 1);
+    assert_eq!(app.midi_clips[mc_idx].notes[0].start_px, 0.0);
+    assert_eq!(new_indices, vec![0]);
+}
+
+#[test]
+fn test_click_selected_note_clears_multi_selection() {
+    let mut app = App::new_headless();
+    app.add_midi_clip();
+    app.editing_midi_clip = Some(0);
+
+    app.midi_clips[0].notes.push(midi::MidiNote {
+        pitch: 60,
+        start_px: 10.0,
+        duration_px: 30.0,
+        velocity: 100,
+    });
+    app.midi_clips[0].notes.push(midi::MidiNote {
+        pitch: 64,
+        start_px: 50.0,
+        duration_px: 30.0,
+        velocity: 80,
+    });
+    app.midi_clips[0].notes.push(midi::MidiNote {
+        pitch: 67,
+        start_px: 90.0,
+        duration_px: 30.0,
+        velocity: 90,
+    });
+
+    // Multi-select all three notes
+    app.selected_midi_notes = vec![0, 1, 2];
+    assert_eq!(app.selected_midi_notes.len(), 3);
+
+    // Simulate mouse-down on note 1 (already selected):
+    // The handler sets pending_midi_note_click and starts a MovingMidiNote drag
+    // with push_undo() called before.
+    app.push_undo();
+    app.pending_midi_note_click = Some(1);
+    let offsets = app.selected_midi_notes.iter().map(|_| [0.0f32, 0.0f32]).collect();
+    app.drag = DragState::MovingMidiNote {
+        clip_idx: 0,
+        note_indices: app.selected_midi_notes.clone(),
+        offsets,
+        start_world: [50.0, 0.0],
+    };
+
+    // Simulate mouse-up without movement: pending_midi_note_click is still Some
+    if let Some(note_idx) = app.pending_midi_note_click.take() {
+        app.undo();
+        app.selected_midi_notes = vec![note_idx];
+    }
+    app.drag = DragState::None;
+
+    // Only note 1 should be selected
+    assert_eq!(app.selected_midi_notes, vec![1]);
 }

@@ -690,36 +690,45 @@ impl ApplicationHandler for App {
                                 );
                             }
                         }
-                        if let DragState::MovingMidiNote { clip_idx, note_indices, offsets } = &self.drag {
+                        if let DragState::MovingMidiNote { clip_idx, note_indices, offsets, start_world } = &self.drag {
                             let clip_idx = *clip_idx;
                             let note_indices = note_indices.clone();
                             let offsets = offsets.clone();
+                            let sw = *start_world;
                             if clip_idx < self.midi_clips.len() {
-                                let mc_pos = self.midi_clips[clip_idx].position;
-                                let mc_pr = self.midi_clips[clip_idx].pitch_range;
-                                let editing = self.editing_midi_clip == Some(clip_idx);
-                                let area_h = self.midi_clips[clip_idx].note_area_height(editing);
-                                let first_raw_x = world[0] - offsets[0][0];
-                                let mc_gm = self.midi_clips[clip_idx].grid_mode;
-                                let mc_trip = self.midi_clips[clip_idx].triplet_grid;
-                                let snap_delta = if self.is_snap_override_active() {
-                                    0.0
-                                } else {
-                                    snap_to_clip_grid(first_raw_x, &self.settings, mc_gm, mc_trip, self.camera.zoom, self.bpm) - first_raw_x
-                                };
-                                for (i, &ni) in note_indices.iter().enumerate() {
-                                    if ni < self.midi_clips[clip_idx].notes.len() {
-                                        let raw_x = world[0] - offsets[i][0];
-                                        let ny = world[1] - offsets[i][1];
-                                        let start_px = (raw_x + snap_delta - mc_pos[0]).max(0.0);
-                                        let nh = area_h / (mc_pr.1 - mc_pr.0) as f32;
-                                        let relative = mc_pos[1] + area_h - ny;
-                                        let pitch = ((relative / nh) as u8 + mc_pr.0).clamp(mc_pr.0, mc_pr.1 - 1);
-                                        self.midi_clips[clip_idx].notes[ni].start_px = start_px;
-                                        self.midi_clips[clip_idx].notes[ni].pitch = pitch;
+                                let drag_threshold = 3.0 / self.camera.zoom;
+                                let dx = world[0] - sw[0];
+                                let dy = world[1] - sw[1];
+                                let below_threshold = self.pending_midi_note_click.is_some()
+                                    && (dx * dx + dy * dy) < drag_threshold * drag_threshold;
+                                if !below_threshold {
+                                    self.pending_midi_note_click = None;
+                                    let mc_pos = self.midi_clips[clip_idx].position;
+                                    let mc_pr = self.midi_clips[clip_idx].pitch_range;
+                                    let editing = self.editing_midi_clip == Some(clip_idx);
+                                    let area_h = self.midi_clips[clip_idx].note_area_height(editing);
+                                    let first_raw_x = world[0] - offsets[0][0];
+                                    let mc_gm = self.midi_clips[clip_idx].grid_mode;
+                                    let mc_trip = self.midi_clips[clip_idx].triplet_grid;
+                                    let snap_delta = if self.is_snap_override_active() {
+                                        0.0
+                                    } else {
+                                        snap_to_clip_grid(first_raw_x, &self.settings, mc_gm, mc_trip, self.camera.zoom, self.bpm) - first_raw_x
+                                    };
+                                    for (i, &ni) in note_indices.iter().enumerate() {
+                                        if ni < self.midi_clips[clip_idx].notes.len() {
+                                            let raw_x = world[0] - offsets[i][0];
+                                            let ny = world[1] - offsets[i][1];
+                                            let start_px = (raw_x + snap_delta - mc_pos[0]).max(0.0);
+                                            let nh = area_h / (mc_pr.1 - mc_pr.0) as f32;
+                                            let relative = mc_pos[1] + area_h - ny;
+                                            let pitch = ((relative / nh) as u8 + mc_pr.0).clamp(mc_pr.0, mc_pr.1 - 1);
+                                            self.midi_clips[clip_idx].notes[ni].start_px = start_px;
+                                            self.midi_clips[clip_idx].notes[ni].pitch = pitch;
+                                        }
                                     }
+                                    self.mark_dirty();
                                 }
-                                self.mark_dirty();
                             }
                         }
                         if let DragState::ResizingMidiNote { clip_idx, anchor_idx, note_indices, original_durations } = &self.drag {
@@ -1863,7 +1872,7 @@ impl ApplicationHandler for App {
                                             }
                                             midi::MidiNoteHitZone::Body => {
                                                 if self.selected_midi_notes.contains(&note_idx) {
-                                                    // Already selected -> drag whole selection
+                                                    self.pending_midi_note_click = Some(note_idx);
                                                 } else if self.modifiers.shift_key() {
                                                     self.selected_midi_notes.push(note_idx);
                                                 } else {
@@ -1892,6 +1901,7 @@ impl ApplicationHandler for App {
                                                         clip_idx: mc_idx,
                                                         note_indices: new_indices,
                                                         offsets,
+                                                        start_world: world,
                                                     };
                                                 } else {
                                                     self.push_undo();
@@ -1906,6 +1916,7 @@ impl ApplicationHandler for App {
                                                         clip_idx: mc_idx,
                                                         note_indices: self.selected_midi_notes.clone(),
                                                         offsets,
+                                                        start_world: world,
                                                     };
                                                 }
                                             }
@@ -2068,6 +2079,21 @@ impl ApplicationHandler for App {
 
                         // --- finish MIDI note drag/resize ---
                         if matches!(self.drag, DragState::MovingMidiNote { .. } | DragState::ResizingMidiNote { .. } | DragState::ResizingMidiNoteLeft { .. } | DragState::ResizingMidiClip { .. }) {
+                            if let Some(note_idx) = self.pending_midi_note_click.take() {
+                                self.undo();
+                                self.selected_midi_notes = vec![note_idx];
+                            } else {
+                                let (clip_idx, note_indices) = match &self.drag {
+                                    DragState::MovingMidiNote { clip_idx, note_indices, .. } => (*clip_idx, note_indices.clone()),
+                                    DragState::ResizingMidiNote { clip_idx, note_indices, .. } => (*clip_idx, note_indices.clone()),
+                                    DragState::ResizingMidiNoteLeft { clip_idx, note_indices, .. } => (*clip_idx, note_indices.clone()),
+                                    _ => (0, vec![]),
+                                };
+                                if clip_idx < self.midi_clips.len() && !note_indices.is_empty() {
+                                    let new_indices = self.midi_clips[clip_idx].resolve_note_overlaps(&note_indices);
+                                    self.selected_midi_notes = new_indices;
+                                }
+                            }
                             self.drag = DragState::None;
                             self.sync_audio_clips();
                             self.update_cursor();
@@ -2347,7 +2373,7 @@ impl ApplicationHandler for App {
                                             new_indices.push(self.midi_clips[mc_idx].notes.len() - 1);
                                         }
                                     }
-                                    self.selected_midi_notes = new_indices;
+                                    self.selected_midi_notes = self.midi_clips[mc_idx].resolve_note_overlaps(&new_indices);
                                     self.sync_audio_clips();
                                     self.mark_dirty();
                                     self.request_redraw();
@@ -2376,6 +2402,7 @@ impl ApplicationHandler for App {
                                                     self.midi_clips[mc_idx].notes[ni].duration_px += delta;
                                                 }
                                             }
+                                            self.selected_midi_notes = self.midi_clips[mc_idx].resolve_note_overlaps(&self.selected_midi_notes);
                                             self.sync_audio_clips();
                                             self.mark_dirty();
                                             self.request_redraw();
@@ -2394,6 +2421,7 @@ impl ApplicationHandler for App {
                                                     self.midi_clips[mc_idx].notes[ni].start_px += delta;
                                                 }
                                             }
+                                            self.selected_midi_notes = self.midi_clips[mc_idx].resolve_note_overlaps(&self.selected_midi_notes);
                                             self.sync_audio_clips();
                                             self.mark_dirty();
                                             self.request_redraw();
@@ -2424,6 +2452,7 @@ impl ApplicationHandler for App {
                                                     (self.midi_clips[mc_idx].notes[ni].pitch as i16 + delta) as u8;
                                             }
                                         }
+                                        self.selected_midi_notes = self.midi_clips[mc_idx].resolve_note_overlaps(&self.selected_midi_notes);
                                         self.sync_audio_clips();
                                         self.mark_dirty();
                                         self.request_redraw();

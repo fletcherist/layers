@@ -2033,109 +2033,116 @@ impl Gpu {
         }
         self.cached_midi_note_label_bufs = new_midi_cache;
 
-        // Per-note name labels (only when editing a clip)
+        // Per-note name labels (all visible clips; zoom thresholds hide when zoomed out)
         let mut old_pn_cache = std::mem::take(&mut self.cached_midi_per_note_bufs);
         let mut new_pn_cache: Vec<(TextLabelCacheKey, TextBuffer)> = Vec::new();
         let mut pn_label_meta: Vec<(f32, f32, TextColor, TextBounds)> = Vec::new();
         if settings_window.is_none() && command_palette.is_none() {
-            if let Some(edit_idx) = editing_midi_clip {
-                if let Some(mc) = midi_clips.get(edit_idx) {
-                    let nh = mc.note_height_editing(true);
-                    let row_screen_h = nh * camera.zoom;
-                    if row_screen_h >= 6.0 {
-                        let pn_font = (row_screen_h * 0.65).clamp(6.0, 12.0) * scale;
-                        let pn_line = (pn_font * 1.3).min(row_screen_h * scale);
-                        let min_note_screen_w = pn_font * 2.5;
+            for (mc_idx, mc) in midi_clips.iter().enumerate() {
+                let mc_right = mc.position[0] + mc.size[0];
+                let mc_bottom = mc.position[1] + mc.size[1];
+                if mc_right < world_left
+                    || mc.position[0] > world_right
+                    || mc_bottom < world_top
+                    || mc.position[1] > world_bottom
+                {
+                    continue;
+                }
 
-                        let mc_right = mc.position[0] + mc.size[0];
-                        let mc_bottom = mc.position[1] + mc.size[1];
-                        let clip_screen_left =
-                            (mc.position[0] - camera.position[0]) * camera.zoom;
-                        let clip_screen_right = (mc_right - camera.position[0]) * camera.zoom;
-                        let clip_screen_top =
-                            (mc.position[1] - camera.position[1]) * camera.zoom;
-                        let clip_screen_bottom =
-                            (mc_bottom - camera.position[1]) * camera.zoom;
+                let is_editing = editing_midi_clip == Some(mc_idx);
+                let nh = mc.note_height_editing(is_editing);
+                let row_screen_h = nh * camera.zoom;
+                if row_screen_h >= 6.0 {
+                    let pn_font = (row_screen_h * 0.65).clamp(6.0, 12.0) * scale;
+                    let pn_line = (pn_font * 1.3).min(row_screen_h * scale);
+                    let min_note_screen_w = pn_font * 2.5;
 
-                        for note in &mc.notes {
-                            let nx = mc.position[0] + note.start_px;
-                            let nw = note.duration_px;
-                            let note_screen_w = nw * camera.zoom;
-                            if note_screen_w < min_note_screen_w {
-                                continue;
-                            }
+                    let clip_screen_left =
+                        (mc.position[0] - camera.position[0]) * camera.zoom;
+                    let clip_screen_right = (mc_right - camera.position[0]) * camera.zoom;
+                    let clip_screen_top =
+                        (mc.position[1] - camera.position[1]) * camera.zoom;
+                    let clip_screen_bottom =
+                        (mc_bottom - camera.position[1]) * camera.zoom;
 
-                            let ny = mc.pitch_to_y_editing(note.pitch, true);
-                            let screen_x =
-                                (nx - camera.position[0]) * camera.zoom + 2.0 * scale;
-                            let y_world =
-                                ny + (nh - pn_line / camera.zoom) * 0.5;
-                            let screen_y = (y_world - camera.position[1]) * camera.zoom;
-
-                            if screen_y + pn_line < clip_screen_top
-                                || screen_y > clip_screen_bottom
-                                || screen_x > clip_screen_right
-                            {
-                                continue;
-                            }
-
-                            let note_screen_right =
-                                (nx + nw - camera.position[0]) * camera.zoom;
-                            let bounds = TextBounds {
-                                left: screen_x.max(clip_screen_left).max(0.0) as i32,
-                                top: screen_y.max(clip_screen_top).max(0.0) as i32,
-                                right: note_screen_right
-                                    .min(clip_screen_right)
-                                    .min(w) as i32,
-                                bottom: (screen_y + pn_line)
-                                    .min(clip_screen_bottom)
-                                    .min(h) as i32,
-                            };
-                            if bounds.left >= bounds.right || bounds.top >= bounds.bottom {
-                                continue;
-                            }
-
-                            let max_w = note_screen_w - 4.0 * scale;
-                            let name = midi::note_name(note.pitch);
-                            let key = TextLabelCacheKey {
-                                text: name.clone(),
-                                max_width_q: (max_w * 2.0) as i32,
-                                font_size_q: (pn_font * 2.0) as i32,
-                            };
-                            if let Some(pos) =
-                                old_pn_cache.iter().position(|(k, _)| *k == key)
-                            {
-                                new_pn_cache.push(old_pn_cache.swap_remove(pos));
-                            } else {
-                                let mut buf = TextBuffer::new(
-                                    &mut self.font_system,
-                                    Metrics::new(pn_font, pn_line),
-                                );
-                                buf.set_size(
-                                    &mut self.font_system,
-                                    Some(max_w),
-                                    Some(pn_line),
-                                );
-                                let attrs = Attrs::new()
-                                    .family(Family::Name(".AppleSystemUIFont"))
-                                    .weight(glyphon::Weight(500));
-                                buf.set_text(
-                                    &mut self.font_system,
-                                    &name,
-                                    attrs,
-                                    Shaping::Advanced,
-                                );
-                                buf.shape_until_scroll(&mut self.font_system, false);
-                                new_pn_cache.push((key, buf));
-                            }
-
-                            pn_label_meta.push((
-                                screen_x,
-                                screen_y,
-                                TextColor::rgba(255, 255, 255, 180),
-                                bounds,
-                            ));
+                    for note in &mc.notes {
+                        let nx = mc.position[0] + note.start_px;
+                        let nw = note.duration_px;
+                        let note_screen_w = nw * camera.zoom;
+                        if note_screen_w < min_note_screen_w {
+                            continue;
                         }
+
+                        let ny = mc.pitch_to_y_editing(note.pitch, is_editing);
+                        let screen_x =
+                            (nx - camera.position[0]) * camera.zoom + 2.0 * scale;
+                        let y_world =
+                            ny + (nh - pn_line / camera.zoom) * 0.5;
+                        let screen_y = (y_world - camera.position[1]) * camera.zoom;
+
+                        if screen_y + pn_line < clip_screen_top
+                            || screen_y > clip_screen_bottom
+                            || screen_x > clip_screen_right
+                        {
+                            continue;
+                        }
+
+                        let note_screen_right =
+                            (nx + nw - camera.position[0]) * camera.zoom;
+                        let bounds = TextBounds {
+                            left: screen_x.max(clip_screen_left).max(0.0) as i32,
+                            top: screen_y.max(clip_screen_top).max(0.0) as i32,
+                            right: note_screen_right
+                                .min(clip_screen_right)
+                                .min(w) as i32,
+                            bottom: (screen_y + pn_line)
+                                .min(clip_screen_bottom)
+                                .min(h) as i32,
+                        };
+                        if bounds.left >= bounds.right || bounds.top >= bounds.bottom {
+                            continue;
+                        }
+
+                        let max_w = note_screen_w - 4.0 * scale;
+                        let name = midi::note_name(note.pitch);
+                        let key = TextLabelCacheKey {
+                            text: name.clone(),
+                            max_width_q: (max_w * 2.0) as i32,
+                            font_size_q: (pn_font * 2.0) as i32,
+                        };
+                        if let Some(pos) =
+                            old_pn_cache.iter().position(|(k, _)| *k == key)
+                        {
+                            new_pn_cache.push(old_pn_cache.swap_remove(pos));
+                        } else {
+                            let mut buf = TextBuffer::new(
+                                &mut self.font_system,
+                                Metrics::new(pn_font, pn_line),
+                            );
+                            buf.set_size(
+                                &mut self.font_system,
+                                Some(max_w),
+                                Some(pn_line),
+                            );
+                            let attrs = Attrs::new()
+                                .family(Family::Name(".AppleSystemUIFont"))
+                                .weight(glyphon::Weight(500));
+                            buf.set_text(
+                                &mut self.font_system,
+                                &name,
+                                attrs,
+                                Shaping::Advanced,
+                            );
+                            buf.shape_until_scroll(&mut self.font_system, false);
+                            new_pn_cache.push((key, buf));
+                        }
+
+                        pn_label_meta.push((
+                            screen_x,
+                            screen_y,
+                            TextColor::rgba(255, 255, 255, 180),
+                            bounds,
+                        ));
                     }
                 }
             }

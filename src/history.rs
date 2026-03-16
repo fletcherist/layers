@@ -42,6 +42,7 @@ pub(crate) struct Snapshot {
     pub(crate) components: Vec<component::ComponentDef>,
     pub(crate) component_instances: Vec<component::ComponentInstance>,
     pub(crate) midi_clips: Vec<midi::MidiClip>,
+    pub(crate) selected_midi_notes: Vec<usize>,
     pub(crate) instrument_regions: Vec<instruments::InstrumentRegionSnapshot>,
 }
 
@@ -93,6 +94,7 @@ impl App {
             components: self.components.clone(),
             component_instances: self.component_instances.clone(),
             midi_clips: self.midi_clips.clone(),
+            selected_midi_notes: self.selected_midi_notes.clone(),
             instrument_regions: self
                 .instrument_regions
                 .iter()
@@ -155,6 +157,7 @@ impl App {
             self.components = prev.components;
             self.component_instances = prev.component_instances;
             self.midi_clips = prev.midi_clips;
+            self.selected_midi_notes = prev.selected_midi_notes;
             self.restore_instrument_regions(prev.instrument_regions);
             self.selected.clear();
             self.mark_dirty();
@@ -177,6 +180,7 @@ impl App {
             self.components = next.components;
             self.component_instances = next.component_instances;
             self.midi_clips = next.midi_clips;
+            self.selected_midi_notes = next.selected_midi_notes;
             self.restore_instrument_regions(next.instrument_regions);
             self.selected.clear();
             self.mark_dirty();

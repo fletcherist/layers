@@ -175,6 +175,7 @@ enum DragState {
         clip_idx: usize,
         note_indices: Vec<usize>,
         offsets: Vec<[f32; 2]>,
+        start_world: [f32; 2],
     },
     ResizingMidiNote {
         clip_idx: usize,
@@ -385,6 +386,7 @@ struct App {
     instrument_regions: Vec<instruments::InstrumentRegion>,
     editing_midi_clip: Option<usize>,
     selected_midi_notes: Vec<usize>,
+    pending_midi_note_click: Option<usize>,
     midi_note_select_rect: Option<[f32; 4]>,
     editing_component: Option<usize>,
     editing_effect_name: Option<(usize, String)>,
@@ -465,6 +467,7 @@ impl App {
             instrument_regions: Vec::new(),
             editing_midi_clip: None,
             selected_midi_notes: Vec::new(),
+            pending_midi_note_click: None,
             midi_note_select_rect: None,
             editing_component: None,
             editing_effect_name: None,
@@ -981,6 +984,7 @@ impl App {
             instrument_regions: restored_instrument_regions,
             editing_midi_clip: None,
             selected_midi_notes: Vec::new(),
+            pending_midi_note_click: None,
             midi_note_select_rect: None,
             editing_component: None,
             editing_effect_name: None,
@@ -3639,7 +3643,7 @@ impl App {
                         self.midi_clips[mc_idx].notes.push(pasted);
                         new_indices.push(self.midi_clips[mc_idx].notes.len() - 1);
                     }
-                    self.selected_midi_notes = new_indices;
+                    self.selected_midi_notes = self.midi_clips[mc_idx].resolve_note_overlaps(&new_indices);
                     self.sync_audio_clips();
                     self.mark_dirty();
                     return;

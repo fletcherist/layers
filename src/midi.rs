@@ -109,6 +109,72 @@ impl MidiClip {
     pub fn contains(&self, world_pos: [f32; 2]) -> bool {
         point_in_rect(world_pos, self.position, self.size)
     }
+
+    /// After moving/resizing notes, resolve overlaps on the same pitch.
+    /// For each active note, crops the tail of any other same-pitch note that
+    /// overlaps, and deletes notes that are fully covered.
+    /// Returns updated active indices (accounting for deletions).
+    pub fn resolve_note_overlaps(&mut self, active_indices: &[usize]) -> Vec<usize> {
+        use std::collections::HashSet;
+        let active_set: HashSet<usize> = active_indices.iter().copied().collect();
+        let mut to_delete: HashSet<usize> = HashSet::new();
+
+        for &ai in active_indices {
+            if ai >= self.notes.len() {
+                continue;
+            }
+            let a_pitch = self.notes[ai].pitch;
+            let a_start = self.notes[ai].start_px;
+            let a_end = a_start + self.notes[ai].duration_px;
+
+            for j in 0..self.notes.len() {
+                if j == ai || active_set.contains(&j) || to_delete.contains(&j) {
+                    continue;
+                }
+                let other = &self.notes[j];
+                if other.pitch != a_pitch {
+                    continue;
+                }
+                let o_start = other.start_px;
+                let o_end = o_start + other.duration_px;
+
+                if o_start >= a_start && o_end <= a_end {
+                    to_delete.insert(j);
+                    continue;
+                }
+
+                // Other note's tail extends past active note's start → crop tail
+                if o_start < a_start && o_end > a_start {
+                    self.notes[j].duration_px = a_start - o_start;
+                    if self.notes[j].duration_px < 10.0 {
+                        to_delete.insert(j);
+                    }
+                }
+
+                // Active note's tail extends into other note's head → delete
+                if o_start >= a_start && o_start < a_end && o_end > a_end {
+                    to_delete.insert(j);
+                }
+            }
+        }
+
+        let mut delete_sorted: Vec<usize> = to_delete.into_iter().collect();
+        delete_sorted.sort_unstable();
+
+        let new_active: Vec<usize> = active_indices
+            .iter()
+            .map(|&i| {
+                let shift = delete_sorted.iter().filter(|&&d| d < i).count();
+                i - shift
+            })
+            .collect();
+
+        for &i in delete_sorted.iter().rev() {
+            self.notes.remove(i);
+        }
+
+        new_active
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -294,6 +360,9 @@ pub fn build_midi_note_instances(
             color: note_color,
             border_radius: 2.0 / camera.zoom,
         });
+
+        let border_bw = 1.0 / camera.zoom;
+        push_border(&mut out, [nx, ny], [nw, nh], border_bw, [1.0, 1.0, 1.0, 0.35]);
 
         if selected_notes.contains(&i) {
             let sel_bw = 1.5 / camera.zoom;
