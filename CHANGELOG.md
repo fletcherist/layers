@@ -1,3 +1,7 @@
+- feat: velocity tooltip now has a rounded background pill and follows cursor (24.3k loc)
+- fix: send all-notes-off to VST3 instruments when stopping playback to prevent stuck MIDI notes (24.3k loc)
+- feat: Cmd+hover on MIDI note shows velocity label; Cmd+click+drag changes velocity directly from note body (24.3k loc)
+- fix: ad-hoc codesign + entitlements so .app works on other Macs; `make dist` creates shareable zip via ditto (24.3k loc)
 - fix: add drag threshold to midi note click so clicking a selected note reliably clears multi-selection (24.1k loc)
 - fix: undo now restores MIDI note selection (Cmd+D undo re-selects original notes) (24.1k loc)
 - feat: note overlap resolution also applies to Cmd+D duplicate and Cmd+V paste (24.1k loc)

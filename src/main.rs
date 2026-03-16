@@ -388,6 +388,7 @@ struct App {
     selected_midi_notes: Vec<usize>,
     pending_midi_note_click: Option<usize>,
     midi_note_select_rect: Option<[f32; 4]>,
+    cmd_velocity_hover_note: Option<(usize, usize)>,
     editing_component: Option<usize>,
     editing_effect_name: Option<(usize, String)>,
     editing_waveform_name: Option<(usize, String)>,
@@ -469,6 +470,7 @@ impl App {
             selected_midi_notes: Vec::new(),
             pending_midi_note_click: None,
             midi_note_select_rect: None,
+            cmd_velocity_hover_note: None,
             editing_component: None,
             editing_effect_name: None,
             editing_waveform_name: None,
@@ -986,6 +988,7 @@ impl App {
             selected_midi_notes: Vec::new(),
             pending_midi_note_click: None,
             midi_note_select_rect: None,
+            cmd_velocity_hover_note: None,
             editing_component: None,
             editing_effect_name: None,
             editing_waveform_name: None,
@@ -2211,7 +2214,9 @@ impl App {
                         }
                     }
                     DragState::None => {
-                        if self.sample_browser.visible && self.sample_browser.resize_hovered {
+                        if self.cmd_velocity_hover_note.is_some() {
+                            CursorIcon::NsResize
+                        } else if self.sample_browser.visible && self.sample_browser.resize_hovered {
                             CursorIcon::EwResize
                         } else if self.waveform_edge_hover != WaveformEdgeHover::None {
                             CursorIcon::EwResize
@@ -2329,6 +2334,24 @@ impl App {
             }
         } else {
             false
+        };
+        self.cmd_velocity_hover_note = if self.modifiers.super_key() {
+            if let Some(mc_idx) = self.editing_midi_clip {
+                if mc_idx < self.midi_clips.len() {
+                    match midi::hit_test_midi_note_editing(&self.midi_clips[mc_idx], world, &self.camera, true) {
+                        Some((note_idx, midi::MidiNoteHitZone::Body | midi::MidiNoteHitZone::LeftEdge | midi::MidiNoteHitZone::RightEdge)) => {
+                            Some((mc_idx, note_idx))
+                        }
+                        _ => None,
+                    }
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        } else {
+            None
         };
         self.fade_handle_hovered = if self.waveform_edge_hover == WaveformEdgeHover::None {
             hit_test_fade_handle(&self.waveforms, world, &self.camera)

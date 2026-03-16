@@ -1,2 +1,6 @@
 target/
+build/
 tmo.md
+.DS_Store
+*.zip
+*.icns

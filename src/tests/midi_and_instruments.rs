@@ -5,6 +5,7 @@ use crate::settings::{GridMode, Settings};
 use crate::App;
 use crate::DragState;
 use crate::HitTarget;
+use winit::keyboard::ModifiersState;
 
 // ---------------------------------------------------------------------------
 // MIDI Clip CRUD
@@ -1235,4 +1236,86 @@ fn test_click_selected_note_clears_multi_selection() {
 
     // Only note 1 should be selected
     assert_eq!(app.selected_midi_notes, vec![1]);
+}
+
+#[test]
+fn test_cmd_velocity_hover_and_drag() {
+    let mut app = App::new_headless();
+    app.add_midi_clip();
+    let mc_idx = 0;
+
+    app.midi_clips[mc_idx].notes.push(midi::MidiNote {
+        pitch: 60,
+        start_px: 10.0,
+        duration_px: 30.0,
+        velocity: 80,
+    });
+    app.midi_clips[mc_idx].notes.push(midi::MidiNote {
+        pitch: 64,
+        start_px: 50.0,
+        duration_px: 30.0,
+        velocity: 100,
+    });
+
+    app.editing_midi_clip = Some(mc_idx);
+
+    // Without Command key held, cmd_velocity_hover_note should be None
+    app.modifiers = ModifiersState::empty();
+    app.update_hover();
+    assert!(app.cmd_velocity_hover_note.is_none());
+
+    // Position mouse over note 0's body in world coords
+    let mc_pos = app.midi_clips[mc_idx].position;
+    let note0 = &app.midi_clips[mc_idx].notes[0];
+    let nx = mc_pos[0] + note0.start_px + note0.duration_px * 0.5;
+    let ny = app.midi_clips[mc_idx].pitch_to_y_editing(note0.pitch, true)
+        + app.midi_clips[mc_idx].note_height_editing(true) * 0.5;
+    app.mouse_pos = [
+        (nx - app.camera.position[0]) * app.camera.zoom,
+        (ny - app.camera.position[1]) * app.camera.zoom,
+    ];
+
+    // With Command key, should detect the hovered note
+    app.modifiers = ModifiersState::SUPER;
+    app.update_hover();
+    assert_eq!(app.cmd_velocity_hover_note, Some((mc_idx, 0)));
+
+    // Simulate Cmd+click+drag to change velocity: start DraggingVelocity
+    app.selected_midi_notes = vec![0, 1];
+    app.push_undo();
+    let indices = app.selected_midi_notes.clone();
+    let original_velocities: Vec<u8> = indices
+        .iter()
+        .map(|&ni| app.midi_clips[mc_idx].notes[ni].velocity)
+        .collect();
+    let start_world_y = ny;
+    app.drag = DragState::DraggingVelocity {
+        clip_idx: mc_idx,
+        note_indices: indices.clone(),
+        original_velocities: original_velocities.clone(),
+        start_world_y,
+    };
+
+    // Simulate dragging upward (decrease world y = increase velocity)
+    let lane_height = app.midi_clips[mc_idx].velocity_lane_height;
+    let drag_delta_y = lane_height * 0.2; // drag up by 20% of lane height
+    let delta_y = drag_delta_y; // start_y - current_y, positive when moving up
+    let vel_delta = (delta_y / lane_height * 127.0) as i16;
+    for (j, &ni) in indices.iter().enumerate() {
+        let new_vel = (original_velocities[j] as i16 + vel_delta).clamp(0, 127) as u8;
+        app.midi_clips[mc_idx].notes[ni].velocity = new_vel;
+    }
+
+    assert!(app.midi_clips[mc_idx].notes[0].velocity > 80);
+    assert!(app.midi_clips[mc_idx].notes[1].velocity > 100);
+    // Both should have increased by the same amount
+    let diff0 = app.midi_clips[mc_idx].notes[0].velocity as i16 - 80;
+    let diff1 = app.midi_clips[mc_idx].notes[1].velocity as i16 - 100;
+    assert_eq!(diff0, diff1);
+
+    // Release command: hover note should clear
+    app.drag = DragState::None;
+    app.modifiers = ModifiersState::empty();
+    app.update_hover();
+    assert!(app.cmd_velocity_hover_note.is_none());
 }

@@ -180,12 +180,29 @@ impl AudioEngine {
         let mut fx_out_r = vec![0.0f32; EFFECT_BLOCK_SIZE];
         let mut inst_out_l = vec![0.0f32; EFFECT_BLOCK_SIZE];
         let mut inst_out_r = vec![0.0f32; EFFECT_BLOCK_SIZE];
+        let mut was_playing = false;
 
         let stream = device
             .build_output_stream(
                 &config,
                 move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
                     let is_playing = p.load(Ordering::Relaxed);
+
+                    // Send all-notes-off to every instrument on play→stop transition
+                    if was_playing && !is_playing {
+                        if let Ok(inst_guard) = inst_r.try_lock() {
+                            for region in inst_guard.iter() {
+                                if let Ok(gui_guard) = region.gui.try_lock() {
+                                    if let Some(ref gui) = *gui_guard {
+                                        for note in 0..128u8 {
+                                            gui.send_midi_note_off(note, 0, 0, 0);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    was_playing = is_playing;
 
                     // Even when stopped, process instruments for GUI keyboard preview
                     let has_instruments = inst_r.try_lock()

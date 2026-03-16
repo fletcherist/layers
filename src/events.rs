@@ -1833,6 +1833,28 @@ impl ApplicationHandler for App {
                                     // Check if clicking on existing note (editing-aware)
                                     let hit_note = midi::hit_test_midi_note_editing(&self.midi_clips[mc_idx], world, &self.camera, true);
                                     if let Some((note_idx, zone)) = hit_note {
+                                        if self.modifiers.super_key() && !matches!(zone, midi::MidiNoteHitZone::VelocityBar) {
+                                            let indices = if self.selected_midi_notes.contains(&note_idx) {
+                                                self.selected_midi_notes.clone()
+                                            } else {
+                                                self.selected_midi_notes.clear();
+                                                self.selected_midi_notes.push(note_idx);
+                                                vec![note_idx]
+                                            };
+                                            self.push_undo();
+                                            let velocities: Vec<u8> = indices.iter().map(|&ni| {
+                                                self.midi_clips[mc_idx].notes[ni].velocity
+                                            }).collect();
+                                            self.drag = DragState::DraggingVelocity {
+                                                clip_idx: mc_idx,
+                                                note_indices: indices,
+                                                original_velocities: velocities,
+                                                start_world_y: world[1],
+                                            };
+                                            self.mark_dirty();
+                                            self.request_redraw();
+                                            return;
+                                        }
                                         match zone {
                                             midi::MidiNoteHitZone::RightEdge => {
                                                 self.push_undo();
@@ -2276,6 +2298,9 @@ impl ApplicationHandler for App {
 
             WindowEvent::ModifiersChanged(mods) => {
                 self.modifiers = mods.state();
+                self.update_hover();
+                self.update_cursor();
+                self.request_redraw();
             }
 
             WindowEvent::KeyboardInput { event, .. } => {
@@ -3279,6 +3304,12 @@ impl ApplicationHandler for App {
                         },
                         self.editing_midi_clip,
                         self.camera.screen_to_world(self.mouse_pos),
+                        match &self.drag {
+                            DragState::DraggingVelocity { clip_idx, note_indices, .. } => {
+                                note_indices.first().map(|&ni| (*clip_idx, ni))
+                            }
+                            _ => self.cmd_velocity_hover_note,
+                        },
                     );
                 }
                 if self.toast_manager.has_active() {

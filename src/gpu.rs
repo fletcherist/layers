@@ -655,6 +655,7 @@ impl Gpu {
         hovered_midi_clip: Option<usize>,
         editing_midi_clip: Option<usize>,
         mouse_world: [f32; 2],
+        cmd_velocity_hover_note: Option<(usize, usize)>,
     ) {
         let w = self.config.width as f32;
         let h = self.config.height as f32;
@@ -735,6 +736,31 @@ impl Gpu {
 
 
         overlay_instances.extend(toast_manager.build_instances(w, h, self.scale_factor));
+
+        // Velocity tooltip background pill
+        if let Some((mc_idx, note_idx)) = cmd_velocity_hover_note {
+            if mc_idx < midi_clips.len() && note_idx < midi_clips[mc_idx].notes.len() {
+                let s = self.scale_factor;
+                let vel_text = format!("{}", midi_clips[mc_idx].notes[note_idx].velocity);
+                let vel_font = 11.0 * s;
+                let vel_line = 14.0 * s;
+                let text_w = vel_font * vel_text.len() as f32 * 0.6;
+                let pad_x = 5.0 * s;
+                let pad_y = 3.0 * s;
+                let pill_w = text_w + vel_font + pad_x * 2.0;
+                let pill_h = vel_line + pad_y * 2.0;
+                let mouse_sx = (mouse_world[0] - camera.position[0]) * camera.zoom;
+                let mouse_sy = (mouse_world[1] - camera.position[1]) * camera.zoom;
+                let pill_x = mouse_sx + 12.0 * s - pad_x;
+                let pill_y = mouse_sy - vel_line - 4.0 * s - pad_y;
+                overlay_instances.push(InstanceRaw {
+                    position: [pill_x, pill_y],
+                    size: [pill_w, pill_h],
+                    color: [0.15, 0.15, 0.20, 0.92],
+                    border_radius: 4.0 * s,
+                });
+            }
+        }
 
         let overlay_count = overlay_instances.len().min(MAX_INSTANCES - world_count);
         if overlay_count > 0 {
@@ -2148,6 +2174,42 @@ impl Gpu {
             }
         }
         self.cached_midi_per_note_bufs = new_pn_cache;
+
+        // Velocity label on Cmd+hovered note
+        if let Some((mc_idx, note_idx)) = cmd_velocity_hover_note {
+            if mc_idx < midi_clips.len() && note_idx < midi_clips[mc_idx].notes.len() {
+                let note = &midi_clips[mc_idx].notes[note_idx];
+
+                let vel_font = 11.0 * scale;
+                let vel_line = 14.0 * scale;
+                let vel_text = format!("{}", note.velocity);
+
+                let mouse_sx = (mouse_world[0] - camera.position[0]) * camera.zoom;
+                let mouse_sy = (mouse_world[1] - camera.position[1]) * camera.zoom;
+                let text_w = vel_font * vel_text.len() as f32 * 0.6;
+                let sx = mouse_sx + 12.0 * scale;
+                let sy = mouse_sy - vel_line - 4.0 * scale;
+
+                let mut buf = TextBuffer::new(
+                    &mut self.font_system,
+                    Metrics::new(vel_font, vel_line),
+                );
+                buf.set_size(&mut self.font_system, Some(text_w + vel_font), Some(vel_line));
+                let attrs = Attrs::new()
+                    .family(Family::Name(".AppleSystemUIFont"))
+                    .weight(glyphon::Weight(700));
+                buf.set_text(&mut self.font_system, &vel_text, attrs, Shaping::Advanced);
+                buf.shape_until_scroll(&mut self.font_system, false);
+
+                text_buffers.push(buf);
+                text_meta.push((
+                    sx,
+                    sy,
+                    TextColor::rgba(255, 255, 255, 255),
+                    full_bounds,
+                ));
+            }
+        }
 
         // Transport panel time text
         {
