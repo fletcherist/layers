@@ -1,3 +1,7 @@
+- 2026-03-17: fix: WASM rendering — fix shader fwidth non-uniform control flow, embed Inter font for WASM, canvas sizing & GPU resize (27.2k loc)
+- 2026-03-17: add `make web` target — runs `trunk serve --open` to build WASM and open in browser (27.1k loc)
+- 2026-03-17: fix: gate all native-only code in events.rs behind #[cfg(feature = "native")] for WASM compilation (27.1k loc)
+- 2026-03-17: feat: compile for browser via WASM — feature-gate native deps, add web entry point, index.html, Trunk.toml (27.1k loc)
 - 2026-03-17: Refactor storage layer into src/storage/ module (models, conversions, local, remote, helpers) (26.7k loc)
 - 2026-03-17: Move EphemeralMessage from ephemeral.rs into user.rs, delete ephemeral module (26.7k loc)
 - 2026-03-17: Move hit_testing, rendering, settings_window UI modules into src/ui/ (26.7k loc)

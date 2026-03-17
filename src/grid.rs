@@ -1,10 +1,10 @@
-use crate::audio;
 use crate::settings::{GridMode, Settings};
 
 pub(crate) const DEFAULT_BPM: f32 = 120.0;
+pub const PIXELS_PER_SECOND: f32 = 120.0;
 
 pub(crate) fn pixels_per_beat(bpm: f32) -> f32 {
-    audio::PIXELS_PER_SECOND * 60.0 / bpm
+    PIXELS_PER_SECOND * 60.0 / bpm
 }
 
 /// Musical subdivision levels in beats: 32, 16, 8, 4, 2, 1, 1/2, 1/4, 1/8, 1/16, 1/32

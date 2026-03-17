@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
+use crate::effects::PluginGuiHandle;
 use crate::ui::hit_testing::point_in_rect;
 use crate::{push_border, Camera, InstanceRaw};
 
@@ -22,7 +23,7 @@ pub struct InstrumentRegion {
     pub plugin_id: String,
     pub plugin_name: String,
     pub plugin_path: PathBuf,
-    pub gui: Arc<Mutex<Option<vst3_gui::Vst3Gui>>>,
+    pub gui: Arc<Mutex<Option<PluginGuiHandle>>>,
     pub pending_state: Option<Vec<u8>>,
     pub pending_params: Option<Vec<f64>>,
 }

@@ -1,4 +1,6 @@
-use crate::settings::{Settings, available_driver_types, available_input_devices, available_output_devices};
+use crate::settings::Settings;
+#[cfg(feature = "native")]
+use crate::settings::{available_driver_types, available_input_devices, available_output_devices};
 use crate::InstanceRaw;
 
 // ---------------------------------------------------------------------------
@@ -96,9 +98,18 @@ impl SettingsWindow {
             hovered_category: None,
             dragging_slider: None,
             open_dropdown: None,
+            #[cfg(feature = "native")]
             cached_driver_types: available_driver_types(),
+            #[cfg(not(feature = "native"))]
+            cached_driver_types: vec!["Web Audio".to_string()],
+            #[cfg(feature = "native")]
             cached_input_devices: available_input_devices(),
+            #[cfg(not(feature = "native"))]
+            cached_input_devices: vec!["No Device".to_string()],
+            #[cfg(feature = "native")]
             cached_output_devices: available_output_devices(),
+            #[cfg(not(feature = "native"))]
+            cached_output_devices: vec!["No Device".to_string()],
         }
     }
 

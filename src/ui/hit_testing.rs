@@ -81,7 +81,7 @@ pub(crate) const WAVEFORM_MIN_WIDTH_PX: f32 = 10.0;
 
 pub(crate) fn full_audio_width_px(wf: &WaveformView) -> f32 {
     let total_samples = wf.audio.left_samples.len().max(wf.audio.right_samples.len());
-    total_samples as f32 / (wf.audio.sample_rate as f32 / crate::audio::PIXELS_PER_SECOND)
+    total_samples as f32 / (wf.audio.sample_rate as f32 / crate::grid::PIXELS_PER_SECOND)
 }
 
 pub(crate) fn canonical_rect(a: [f32; 2], b: [f32; 2]) -> ([f32; 2], [f32; 2]) {

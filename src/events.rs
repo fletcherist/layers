@@ -5,9 +5,10 @@ use winit::{
     event::{ElementState, MouseButton, MouseScrollDelta, WindowEvent},
     event_loop::ActiveEventLoop,
     keyboard::{Key, NamedKey},
-    platform::macos::WindowAttributesExtMacOS,
     window::{Window, WindowId},
 };
+#[cfg(target_os = "macos")]
+use winit::platform::macos::WindowAttributesExtMacOS;
 
 impl ApplicationHandler for App {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
@@ -17,32 +18,93 @@ impl ApplicationHandler for App {
 
         let attrs = Window::default_attributes()
             .with_title("Layers")
-            .with_inner_size(winit::dpi::LogicalSize::new(1280, 800))
+            .with_inner_size(winit::dpi::LogicalSize::new(1280, 800));
+
+        #[cfg(target_os = "macos")]
+        let attrs = attrs
             .with_titlebar_transparent(true)
             .with_fullsize_content_view(true)
             .with_title_hidden(true);
 
         let window = Arc::new(event_loop.create_window(attrs).unwrap());
+        self.window = Some(window.clone());
 
         if !self.has_saved_state {
             self.camera.zoom = window.scale_factor() as f32;
         }
 
-        self.gpu = Some(pollster::block_on(Gpu::new(window)));
+        // On web, attach canvas to DOM and init GPU asynchronously
+        #[cfg(target_arch = "wasm32")]
+        {
+            use winit::platform::web::WindowExtWebSys;
+            let canvas = window.canvas().expect("winit window should have a canvas on web");
+            let web_window = web_sys::window().unwrap();
+            let document = web_window.document().unwrap();
+            let container = document.get_element_by_id("canvas-container")
+                .unwrap_or_else(|| document.body().unwrap().into());
+            container.append_child(&canvas).ok();
 
-        if let Some(ms) = &mut self.menu_state {
-            if !ms.initialized {
-                ms.menu.init_for_nsapp();
-                ms.initialized = true;
-            }
+            // Set canvas physical size to fill viewport (CSS 100% on container
+            // doesn't set the canvas element's width/height attributes that wgpu reads)
+            let dpr = web_window.device_pixel_ratio();
+            let vw = web_window.inner_width().unwrap().as_f64().unwrap();
+            let vh = web_window.inner_height().unwrap().as_f64().unwrap();
+            canvas.set_width((vw * dpr) as u32);
+            canvas.set_height((vh * dpr) as u32);
+            canvas.style().set_property("width", &format!("{}px", vw)).ok();
+            canvas.style().set_property("height", &format!("{}px", vh)).ok();
+            let window_clone = window.clone();
+            let gpu_slot = self.pending_gpu.clone();
+            wasm_bindgen_futures::spawn_local(async move {
+                let gpu = Gpu::new(window_clone).await;
+                *gpu_slot.lock().unwrap() = Some(gpu);
+            });
         }
 
-        // Scan plugins and restore saved plugin/instrument state at startup
-        self.ensure_plugins_scanned();
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            self.gpu = Some(pollster::block_on(Gpu::new(window)));
+        }
+
+        #[cfg(feature = "native")]
+        {
+            if let Some(ms) = &mut self.menu_state {
+                if !ms.initialized {
+                    ms.menu.init_for_nsapp();
+                    ms.initialized = true;
+                }
+            }
+
+            // Scan plugins and restore saved plugin/instrument state at startup
+            self.ensure_plugins_scanned();
+        }
     }
 
     fn about_to_wait(&mut self, _event_loop: &ActiveEventLoop) {
+        // Pick up GPU from async init (WASM)
+        if self.gpu.is_none() {
+            let taken = self.pending_gpu.try_lock().ok().and_then(|mut slot| slot.take());
+            if let Some(gpu) = taken {
+                self.gpu = Some(gpu);
+                // Force resize to actual window dimensions (async init may have
+                // captured stale/zero size)
+                if let Some(window) = &self.window {
+                    if let Some(gpu) = &mut self.gpu {
+                        let size = window.inner_size();
+                        gpu.resize(size);
+                    }
+                }
+                self.mark_dirty();
+                self.request_redraw();
+            }
+            // Keep polling until GPU is ready
+            self.request_redraw();
+        }
+
+        #[cfg(feature = "native")]
         let is_playing = self.audio_engine.as_ref().map_or(false, |e| e.is_playing());
+        #[cfg(not(feature = "native"))]
+        let is_playing = false;
 
         if self.sample_browser.visible && self.sample_browser.tick_scroll() {
             self.request_redraw();
@@ -62,38 +124,38 @@ impl ApplicationHandler for App {
             self.request_redraw();
         }
 
-        if let Ok(event) = muda::MenuEvent::receiver().try_recv() {
-            self.handle_menu_event(event.id);
-        }
-
-        // GUI handles are kept alive (just hidden when user closes window).
-        // No teardown or state sync needed here.
-
-        // --- Check for pending Welcome response (non-blocking) ---
-        if let Some(rx) = &mut self.pending_welcome {
-            if let Ok(assigned_user) = rx.try_recv() {
-                log::info!("Connected as {} ({})", assigned_user.name, assigned_user.id);
-                self.local_user = assigned_user;
-                self.reconnect_attempt = 0;
-                self.last_reconnect_time = None;
-                self.pending_welcome = None;
+        #[cfg(feature = "native")]
+        {
+            if let Ok(event) = muda::MenuEvent::receiver().try_recv() {
+                self.handle_menu_event(event.id);
             }
-        }
 
-        // --- Auto-reconnect on disconnect ---
-        if self.network.mode() == crate::network::NetworkMode::Disconnected {
-            if let (Some(url), Some(pid)) = (self.connect_url.clone(), self.connect_project_id.clone()) {
-                let now = std::time::Instant::now();
-                let delay_secs = (1u64 << self.reconnect_attempt.min(5)).min(30);
-                let should_retry = match self.last_reconnect_time {
-                    Some(last) => now.duration_since(last).as_secs() >= delay_secs,
-                    None => true,
-                };
-                if should_retry {
-                    log::info!("Reconnecting (attempt {})...", self.reconnect_attempt + 1);
-                    self.last_reconnect_time = Some(now);
-                    self.reconnect_attempt += 1;
-                    self.connect_to_server(&url, &pid);
+            // --- Check for pending Welcome response (non-blocking) ---
+            if let Some(rx) = &mut self.pending_welcome {
+                if let Ok(assigned_user) = rx.try_recv() {
+                    log::info!("Connected as {} ({})", assigned_user.name, assigned_user.id);
+                    self.local_user = assigned_user;
+                    self.reconnect_attempt = 0;
+                    self.last_reconnect_time = None;
+                    self.pending_welcome = None;
+                }
+            }
+
+            // --- Auto-reconnect on disconnect ---
+            if self.network.mode() == crate::network::NetworkMode::Disconnected {
+                if let (Some(url), Some(pid)) = (self.connect_url.clone(), self.connect_project_id.clone()) {
+                    let now = TimeInstant::now();
+                    let delay_secs = (1u64 << self.reconnect_attempt.min(5)).min(30);
+                    let should_retry = match self.last_reconnect_time {
+                        Some(last) => now.duration_since(last).as_secs() >= delay_secs,
+                        None => true,
+                    };
+                    if should_retry {
+                        log::info!("Reconnecting (attempt {})...", self.reconnect_attempt + 1);
+                        self.last_reconnect_time = Some(now);
+                        self.reconnect_attempt += 1;
+                        self.connect_to_server(&url, &pid);
+                    }
                 }
             }
         }
@@ -163,51 +225,58 @@ impl ApplicationHandler for App {
     ) {
         match event {
             WindowEvent::CloseRequested => {
-                if !self.project_dirty {
-                    self.shutdown_plugins();
-                    event_loop.exit();
-                    return;
-                }
-
-                let is_temp = self
-                    .storage
-                    .as_ref()
-                    .map(|s| s.is_temp_project())
-                    .unwrap_or(false);
-
-                let result = rfd::MessageDialog::new()
-                    .set_title("Save Changes?")
-                    .set_description(
-                        "Your project has unsaved changes. Would you like to save before closing?",
-                    )
-                    .set_buttons(rfd::MessageButtons::YesNoCancel)
-                    .show();
-
-                match result {
-                    rfd::MessageDialogResult::Yes => {
-                        if is_temp {
-                            self.save_project();
-                        } else {
-                            self.save_project_state();
-                        }
+                #[cfg(feature = "native")]
+                {
+                    if !self.project_dirty {
                         self.shutdown_plugins();
                         event_loop.exit();
+                        return;
                     }
-                    rfd::MessageDialogResult::No => {
-                        if is_temp && !self.waveforms.is_empty() {
-                            if let Some(storage) = &mut self.storage {
-                                if let Some(path) = storage
-                                    .current_project_path()
-                                    .map(|p| p.to_string_lossy().to_string())
-                                {
-                                    storage.delete_project(&path);
+
+                    let is_temp = self
+                        .storage
+                        .as_ref()
+                        .map(|s| s.is_temp_project())
+                        .unwrap_or(false);
+
+                    let result = rfd::MessageDialog::new()
+                        .set_title("Save Changes?")
+                        .set_description(
+                            "Your project has unsaved changes. Would you like to save before closing?",
+                        )
+                        .set_buttons(rfd::MessageButtons::YesNoCancel)
+                        .show();
+
+                    match result {
+                        rfd::MessageDialogResult::Yes => {
+                            if is_temp {
+                                self.save_project();
+                            } else {
+                                self.save_project_state();
+                            }
+                            self.shutdown_plugins();
+                            event_loop.exit();
+                        }
+                        rfd::MessageDialogResult::No => {
+                            if is_temp && !self.waveforms.is_empty() {
+                                if let Some(storage) = &mut self.storage {
+                                    if let Some(path) = storage
+                                        .current_project_path()
+                                        .map(|p| p.to_string_lossy().to_string())
+                                    {
+                                        storage.delete_project(&path);
+                                    }
                                 }
                             }
+                            self.shutdown_plugins();
+                            event_loop.exit();
                         }
-                        self.shutdown_plugins();
-                        event_loop.exit();
+                        _ => {}
                     }
-                    _ => {}
+                }
+                #[cfg(not(feature = "native"))]
+                {
+                    event_loop.exit();
                 }
             }
 
@@ -272,12 +341,15 @@ impl ApplicationHandler for App {
                         let mx = self.mouse_pos[0];
                         if let Some(pe) = &mut self.plugin_editor {
                             let idx = pe.dragging_slider.unwrap();
-                            let new_val = pe.slider_drag(idx, mx, scr_w, scr_h, scale);
-                            let pb_idx = pe.region_id; // now repurposed as plugin_block index
-                            if let Some(pb) = self.plugin_blocks.get(&pb_idx) {
-                                if let Ok(guard) = pb.gui.lock() {
-                                    if let Some(gui) = guard.as_ref() {
-                                        gui.set_parameter(idx, new_val as f64);
+                            let _new_val = pe.slider_drag(idx, mx, scr_w, scr_h, scale);
+                            #[cfg(feature = "native")]
+                            {
+                                let pb_idx = pe.region_id; // now repurposed as plugin_block index
+                                if let Some(pb) = self.plugin_blocks.get(&pb_idx) {
+                                    if let Ok(guard) = pb.gui.lock() {
+                                        if let Some(gui) = guard.as_ref() {
+                                            gui.set_parameter(idx, _new_val as f64);
+                                        }
                                     }
                                 }
                             }
@@ -288,6 +360,7 @@ impl ApplicationHandler for App {
                 }
 
                 // Settings window: slider drag + hover
+                #[cfg(feature = "native")]
                 {
                     let is_dragging_settings = self
                         .settings_window
@@ -353,6 +426,7 @@ impl ApplicationHandler for App {
                                 _ => {
                                     let mx = self.mouse_pos[0];
                                     p.fader_drag(mx, sw, sh, scale);
+                                    #[cfg(feature = "native")]
                                     if let Some(engine) = &self.audio_engine {
                                         engine.set_master_volume(p.fader_value);
                                     }
@@ -1125,18 +1199,21 @@ impl ApplicationHandler for App {
                                 if let Some(idx) = slider_hit {
                                     if let Some(pe) = &mut self.plugin_editor {
                                         pe.dragging_slider = Some(idx);
-                                        let new_val = pe.slider_drag(
+                                        let _new_val = pe.slider_drag(
                                             idx,
                                             self.mouse_pos[0],
                                             scr_w,
                                             scr_h,
                                             scale,
                                         );
-                                        let pb_idx = pe.region_id; // repurposed as plugin_block index
-                                        if let Some(pb) = self.plugin_blocks.get(&pb_idx) {
-                                            if let Ok(guard) = pb.gui.lock() {
-                                                if let Some(gui) = guard.as_ref() {
-                                                    gui.set_parameter(idx, new_val as f64);
+                                        #[cfg(feature = "native")]
+                                        {
+                                            let pb_idx = pe.region_id; // repurposed as plugin_block index
+                                            if let Some(pb) = self.plugin_blocks.get(&pb_idx) {
+                                                if let Ok(guard) = pb.gui.lock() {
+                                                    if let Some(gui) = guard.as_ref() {
+                                                        gui.set_parameter(idx, _new_val as f64);
+                                                    }
                                                 }
                                             }
                                         }
@@ -1150,6 +1227,7 @@ impl ApplicationHandler for App {
                         }
 
                         // Settings window click
+                        #[cfg(feature = "native")]
                         if self.settings_window.is_some() {
                             let (scr_w, scr_h, scale) = self.screen_info();
                             let inside = self.settings_window.as_ref().map_or(false, |sw| {
@@ -1354,13 +1432,15 @@ impl ApplicationHandler for App {
                                     let e = p.plugin_entries.get(entry_idx)?;
                                     Some((e.unique_id.clone(), e.name.clone()))
                                 });
-                                if let Some((plugin_id, plugin_name)) = plugin_info {
+                                if let Some((_plugin_id, _plugin_name)) = plugin_info {
                                     self.command_palette = None;
+                                    #[cfg(feature = "native")]
                                     if mode == PaletteMode::InstrumentPicker {
-                                        self.add_instrument(&plugin_id, &plugin_name);
+                                        self.add_instrument(&_plugin_id, &_plugin_name);
                                     } else {
-                                        self.add_plugin_to_selected_effect_region(&plugin_id, &plugin_name);
+                                        self.add_plugin_to_selected_effect_region(&_plugin_id, &_plugin_name);
                                     }
+                                    let _ = mode;
                                 } else if !inside {
                                     self.command_palette = None;
                                 }
@@ -1408,11 +1488,15 @@ impl ApplicationHandler for App {
                                     }
                                     Some(ClickResult::InlinePlugin { unique_id, name, is_instrument }) => {
                                         self.command_palette = None;
-                                        if is_instrument {
-                                            self.add_instrument(&unique_id, &name);
-                                        } else {
-                                            self.add_plugin_to_selected_effect_region(&unique_id, &name);
+                                        #[cfg(feature = "native")]
+                                        {
+                                            if is_instrument {
+                                                self.add_instrument(&unique_id, &name);
+                                            } else {
+                                                self.add_plugin_to_selected_effect_region(&unique_id, &name);
+                                            }
                                         }
+                                        let _ = (&unique_id, &name, is_instrument);
                                     }
                                     None => {
                                         if !inside {
@@ -1436,6 +1520,7 @@ impl ApplicationHandler for App {
                                     return;
                                 } else if self.sample_browser.hit_add_button(self.mouse_pos, scale)
                                 {
+                                    #[cfg(feature = "native")]
                                     self.open_add_folder_dialog();
                                 } else if let Some(idx) =
                                     self.sample_browser.item_at(self.mouse_pos, sh, scale)
@@ -1479,7 +1564,7 @@ impl ApplicationHandler for App {
                                 {
                                     self.toggle_recording();
                                 } else if TransportPanel::hit_bpm(self.mouse_pos, sw, sh, scale) {
-                                    let now = std::time::Instant::now();
+                                    let now = TimeInstant::now();
                                     let elapsed = now.duration_since(self.last_click_time);
                                     let is_dbl = elapsed.as_millis() < 400;
                                     self.last_click_time = now;
@@ -1490,8 +1575,11 @@ impl ApplicationHandler for App {
                                         self.dragging_bpm = Some((self.bpm, self.mouse_pos[1]));
                                         self.editing_bpm = None;
                                     }
-                                } else if let Some(engine) = &self.audio_engine {
-                                    engine.toggle_playback();
+                                } else {
+                                    #[cfg(feature = "native")]
+                                    if let Some(engine) = &self.audio_engine {
+                                        engine.toggle_playback();
+                                    }
                                 }
                                 self.request_redraw();
                                 return;
@@ -1601,6 +1689,7 @@ impl ApplicationHandler for App {
                             let pill_x = er.position[0] + 4.0 / self.camera.zoom;
                             let pill_y = er.position[1] + 4.0 / self.camera.zoom;
                             if point_in_rect(world, [pill_x, pill_y], [pill_w, pill_h]) {
+                                #[cfg(feature = "native")]
                                 self.trigger_export_render();
                                 self.request_redraw();
                                 return;
@@ -1792,7 +1881,7 @@ impl ApplicationHandler for App {
                         );
 
                         // Double-click detection: enter component edit mode
-                        let now = std::time::Instant::now();
+                        let now = TimeInstant::now();
                         let elapsed = now.duration_since(self.last_click_time);
                         let dist = ((world[0] - self.last_click_world[0]).powi(2)
                             + (world[1] - self.last_click_world[1]).powi(2))
@@ -1813,8 +1902,9 @@ impl ApplicationHandler for App {
                                 self.request_redraw();
                                 return;
                             }
-                            if let Some(HitTarget::PluginBlock(idx)) = hit {
-                                self.open_plugin_block_gui(idx);
+                            if let Some(HitTarget::PluginBlock(_idx)) = hit {
+                                #[cfg(feature = "native")]
+                                self.open_plugin_block_gui(_idx);
                                 self.request_redraw();
                                 return;
                             }
@@ -1853,6 +1943,7 @@ impl ApplicationHandler for App {
                             }
                             if let Some(HitTarget::InstrumentRegion(idx)) = hit {
                                 if self.instrument_regions[&idx].has_plugin() {
+                                    #[cfg(feature = "native")]
                                     self.open_instrument_region_gui(idx);
                                 }
                                 self.request_redraw();
@@ -1884,10 +1975,13 @@ impl ApplicationHandler for App {
                                     self.selected.clear();
 
                                     // Seek playback to clicked position
-                                    let snapped_x = snap_to_grid(world[0], &self.settings, self.camera.zoom, self.bpm);
-                                    if let Some(engine) = &self.audio_engine {
-                                        let secs = snapped_x as f64 / PIXELS_PER_SECOND as f64;
-                                        engine.seek_to_seconds(secs);
+                                    #[cfg(feature = "native")]
+                                    {
+                                        let snapped_x = snap_to_grid(world[0], &self.settings, self.camera.zoom, self.bpm);
+                                        if let Some(engine) = &self.audio_engine {
+                                            let secs = snapped_x as f64 / PIXELS_PER_SECOND as f64;
+                                            engine.seek_to_seconds(secs);
+                                        }
                                     }
 
                                     // TODO: refactor velocity lane rendering before re-enabling
@@ -2131,6 +2225,7 @@ impl ApplicationHandler for App {
                         }
 
                         // Finish settings slider drag
+                        #[cfg(feature = "native")]
                         if let Some(sw) = &mut self.settings_window {
                             if sw.dragging_slider.is_some() {
                                 sw.dragging_slider = None;
@@ -2555,6 +2650,7 @@ impl ApplicationHandler for App {
                             if rs[0] < min_sz && rs[1] < min_sz {
                                 self.selected.clear();
                                 let snapped_x = snap_to_grid(current[0], &self.settings, self.camera.zoom, self.bpm);
+                                #[cfg(feature = "native")]
                                 if let Some(engine) = &self.audio_engine {
                                     let secs = snapped_x as f64 / PIXELS_PER_SECOND as f64;
                                     engine.seek_to_seconds(secs);
@@ -3025,18 +3121,19 @@ impl ApplicationHandler for App {
                                     return;
                                 }
                                 Key::Named(NamedKey::Enter) => {
-                                    let is_instrument = matches!(fader_mode, Some(PaletteMode::InstrumentPicker));
+                                    let _is_instrument = matches!(fader_mode, Some(PaletteMode::InstrumentPicker));
                                     let plugin_info = self
                                         .command_palette
                                         .as_ref()
                                         .and_then(|p| p.selected_plugin())
                                         .map(|e| (e.unique_id.clone(), e.name.clone()));
                                     self.command_palette = None;
-                                    if let Some((plugin_id, plugin_name)) = plugin_info {
-                                        if is_instrument {
-                                            self.add_instrument(&plugin_id, &plugin_name);
+                                    if let Some((_plugin_id, _plugin_name)) = plugin_info {
+                                        #[cfg(feature = "native")]
+                                        if _is_instrument {
+                                            self.add_instrument(&_plugin_id, &_plugin_name);
                                         } else {
-                                            self.add_plugin_to_selected_effect_region(&plugin_id, &plugin_name);
+                                            self.add_plugin_to_selected_effect_region(&_plugin_id, &_plugin_name);
                                         }
                                     }
                                     self.request_redraw();
@@ -3100,12 +3197,15 @@ impl ApplicationHandler for App {
                                     .as_ref()
                                     .and_then(|p| p.selected_inline_plugin())
                                     .map(|e| (e.unique_id.clone(), e.name.clone(), e.is_instrument));
-                                if let Some((plugin_id, plugin_name, is_instrument)) = inline_plugin {
+                                if let Some((_plugin_id, _plugin_name, _is_instrument)) = inline_plugin {
                                     self.command_palette = None;
-                                    if is_instrument {
-                                        self.add_instrument(&plugin_id, &plugin_name);
-                                    } else {
-                                        self.add_plugin_to_selected_effect_region(&plugin_id, &plugin_name);
+                                    #[cfg(feature = "native")]
+                                    {
+                                        if _is_instrument {
+                                            self.add_instrument(&_plugin_id, &_plugin_name);
+                                        } else {
+                                            self.add_plugin_to_selected_effect_region(&_plugin_id, &_plugin_name);
+                                        }
                                     }
                                     self.request_redraw();
                                     return;
@@ -3157,6 +3257,7 @@ impl ApplicationHandler for App {
                     }
 
                     // --- Enter on selected effect region: show overlapping plugin info ---
+                    #[cfg(feature = "native")]
                     if matches!(event.logical_key, Key::Named(NamedKey::Enter)) {
                         if let Some(HitTarget::EffectRegion(idx)) = self.selected.first().copied() {
                             if let Some(er) = self.effect_regions.get(&idx) {
@@ -3202,15 +3303,18 @@ impl ApplicationHandler for App {
                             if self.is_recording() {
                                 self.toggle_recording();
                                 self.request_redraw();
-                            } else if let Some(engine) = &self.audio_engine {
-                                if !engine.is_playing() {
-                                    if let Some(sa) = &self.select_area {
-                                        let secs = sa.position[0] as f64 / PIXELS_PER_SECOND as f64;
-                                        engine.seek_to_seconds(secs);
+                            } else {
+                                #[cfg(feature = "native")]
+                                if let Some(engine) = &self.audio_engine {
+                                    if !engine.is_playing() {
+                                        if let Some(sa) = &self.select_area {
+                                            let secs = sa.position[0] as f64 / PIXELS_PER_SECOND as f64;
+                                            engine.seek_to_seconds(secs);
+                                        }
                                     }
+                                    engine.toggle_playback();
+                                    self.request_redraw();
                                 }
-                                engine.toggle_playback();
-                                self.request_redraw();
                             }
                         }
                         Key::Named(NamedKey::Backspace) | Key::Named(NamedKey::Delete) => {
@@ -3271,14 +3375,17 @@ impl ApplicationHandler for App {
                         },
                         Key::Character(ch) if self.modifiers.super_key() => match ch.as_ref() {
                             "," => {
-                                self.command_palette = None;
-                                self.context_menu = None;
-                                self.settings_window = if self.settings_window.is_some() {
-                                    None
-                                } else {
-                                    Some(SettingsWindow::new())
-                                };
-                                self.request_redraw();
+                                #[cfg(feature = "native")]
+                                {
+                                    self.command_palette = None;
+                                    self.context_menu = None;
+                                    self.settings_window = if self.settings_window.is_some() {
+                                        None
+                                    } else {
+                                        Some(SettingsWindow::new())
+                                    };
+                                    self.request_redraw();
+                                }
                             }
                             "k" => {
                                 self.context_menu = None;
@@ -3286,8 +3393,10 @@ impl ApplicationHandler for App {
                                 self.command_palette = if self.command_palette.is_some() {
                                     None
                                 } else {
+                                    #[allow(unused_mut)]
                                     let mut p = CommandPalette::new(self.settings.dev_mode);
-                                    p.plugin_entries = self.build_palette_plugin_entries();
+                                    #[cfg(feature = "native")]
+                                    { p.plugin_entries = self.build_palette_plugin_entries(); }
                                     Some(p)
                                 };
                                 self.request_redraw();
@@ -3298,20 +3407,24 @@ impl ApplicationHandler for App {
                                 self.command_palette = if self.command_palette.is_some() {
                                     None
                                 } else {
+                                    #[allow(unused_mut)]
                                     let mut p = CommandPalette::new(self.settings.dev_mode);
-                                    p.plugin_entries = self.build_palette_plugin_entries();
+                                    #[cfg(feature = "native")]
+                                    { p.plugin_entries = self.build_palette_plugin_entries(); }
                                     Some(p)
                                 };
                                 self.request_redraw();
                             }
                             "b" => {
                                 self.sample_browser.visible = !self.sample_browser.visible;
+                                #[cfg(feature = "native")]
                                 if self.sample_browser.visible {
                                     self.ensure_plugins_scanned();
                                 }
                                 self.request_redraw();
                             }
                             "a" if self.modifiers.shift_key() => {
+                                #[cfg(feature = "native")]
                                 self.open_add_folder_dialog();
                             }
                             "r" => {
@@ -3478,10 +3591,13 @@ impl ApplicationHandler for App {
                         None
                     };
 
+                    #[cfg(feature = "native")]
                     let playhead_world_x = self
                         .audio_engine
                         .as_ref()
                         .map(|e| (e.position_seconds() * PIXELS_PER_SECOND as f64) as f32);
+                    #[cfg(not(feature = "native"))]
+                    let playhead_world_x: Option<f32> = None;
 
                     let camera_moved = self.camera.position != self.last_rendered_camera_pos
                         || self.camera.zoom != self.last_rendered_camera_zoom;
@@ -3570,16 +3686,28 @@ impl ApplicationHandler for App {
 
                     if let Some(p) = &mut self.command_palette {
                         if p.mode == PaletteMode::VolumeFader {
-                            p.fader_rms = self.audio_engine.as_ref().map_or(0.0, |e| e.rms_peak());
+                            #[cfg(feature = "native")]
+                            { p.fader_rms = self.audio_engine.as_ref().map_or(0.0, |e| e.rms_peak()); }
                         }
                     }
 
+                    #[cfg(feature = "native")]
                     let is_playing = self.audio_engine.as_ref().map_or(false, |e| e.is_playing());
+                    #[cfg(not(feature = "native"))]
+                    let is_playing = false;
+
+                    #[cfg(feature = "native")]
                     let playback_pos = self
                         .audio_engine
                         .as_ref()
                         .map_or(0.0, |e| e.position_seconds());
+                    #[cfg(not(feature = "native"))]
+                    let playback_pos = 0.0;
+
+                    #[cfg(feature = "native")]
                     let is_recording = self.recorder.as_ref().map_or(false, |r| r.is_recording());
+                    #[cfg(not(feature = "native"))]
+                    let is_recording = false;
 
                     gpu.render(
                         &self.camera,
@@ -3603,7 +3731,12 @@ impl ApplicationHandler for App {
                             .as_ref()
                             .map(|(idx, s)| (*idx, s.as_str())),
                         self.plugin_editor.as_ref(),
-                        self.settings_window.as_ref(),
+                        {
+                            #[cfg(feature = "native")]
+                            { self.settings_window.as_ref() }
+                            #[cfg(not(feature = "native"))]
+                            { Option::<&ui::settings_window::SettingsWindow>::None }
+                        },
                         &self.settings,
                         &self.toast_manager,
                         self.bpm,

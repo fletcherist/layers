@@ -1,13 +1,21 @@
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
+#[cfg(feature = "native")]
 use rack::plugin_info::{PluginInfo, PluginType};
+#[cfg(feature = "native")]
 use rack::traits::{PluginInstance, PluginScanner};
+#[cfg(feature = "native")]
 use rack::vst3::Vst3Scanner;
 use serde::{Deserialize, Serialize};
 
 use crate::{point_in_rect, push_border, rects_overlap, Camera, InstanceRaw};
 
+// ---------------------------------------------------------------------------
+// Plugin cache (native only)
+// ---------------------------------------------------------------------------
+
+#[cfg(feature = "native")]
 #[derive(Serialize, Deserialize)]
 struct CachedPluginInfo {
     name: String,
@@ -18,12 +26,14 @@ struct CachedPluginInfo {
     unique_id: String,
 }
 
+#[cfg(feature = "native")]
 #[derive(Serialize, Deserialize)]
 struct PluginCache {
     version: u32,
     plugins: Vec<CachedPluginInfo>,
 }
 
+#[cfg(feature = "native")]
 fn plugin_type_to_str(pt: &PluginType) -> &'static str {
     match pt {
         PluginType::Effect => "Effect",
@@ -36,6 +46,7 @@ fn plugin_type_to_str(pt: &PluginType) -> &'static str {
     }
 }
 
+#[cfg(feature = "native")]
 fn str_to_plugin_type(s: &str) -> PluginType {
     match s {
         "Effect" => PluginType::Effect,
@@ -48,6 +59,7 @@ fn str_to_plugin_type(s: &str) -> PluginType {
     }
 }
 
+#[cfg(feature = "native")]
 fn cache_path() -> PathBuf {
     dirs::home_dir()
         .unwrap_or_else(|| PathBuf::from("."))
@@ -55,6 +67,7 @@ fn cache_path() -> PathBuf {
         .join("vst_plugin_cache.json")
 }
 
+#[cfg(feature = "native")]
 fn load_cache() -> Option<Vec<PluginInfo>> {
     let data = std::fs::read_to_string(cache_path()).ok()?;
     let cache: PluginCache = serde_json::from_str(&data).ok()?;
@@ -77,6 +90,7 @@ fn load_cache() -> Option<Vec<PluginInfo>> {
     )
 }
 
+#[cfg(feature = "native")]
 fn save_cache(plugins: &[PluginInfo]) {
     let cache = PluginCache {
         version: 1,
@@ -179,6 +193,12 @@ pub const PLUGIN_BLOCK_DEFAULT_SIZE: [f32; 2] = [120.0, 40.0];
 pub const PLUGIN_BLOCK_DEFAULT_COLOR: [f32; 4] = [0.25, 0.50, 0.90, 0.70];
 pub const PLUGIN_BLOCK_BORDER_RADIUS: f32 = 6.0;
 
+/// Native GUI handle type — vst3_gui::Vst3Gui on native, () on web.
+#[cfg(feature = "native")]
+pub type PluginGuiHandle = vst3_gui::Vst3Gui;
+#[cfg(not(feature = "native"))]
+pub type PluginGuiHandle = ();
+
 #[derive(Clone)]
 pub struct PluginBlock {
     pub position: [f32; 2],
@@ -188,7 +208,7 @@ pub struct PluginBlock {
     pub plugin_name: String,
     pub plugin_path: PathBuf,
     pub bypass: bool,
-    pub gui: Arc<Mutex<Option<vst3_gui::Vst3Gui>>>,
+    pub gui: Arc<Mutex<Option<PluginGuiHandle>>>,
     pub pending_state: Option<Vec<u8>>,
     pub pending_params: Option<Vec<f64>>,
 }
@@ -365,13 +385,15 @@ pub fn build_effect_region_instances(
 }
 
 // ---------------------------------------------------------------------------
-// PluginRegistry (unchanged)
+// PluginRegistry (native only)
 // ---------------------------------------------------------------------------
 
+#[cfg(feature = "native")]
 pub struct PluginRegistryEntry {
     pub info: PluginInfo,
 }
 
+#[cfg(feature = "native")]
 pub struct PluginRegistry {
     pub plugins: Vec<PluginRegistryEntry>,
     pub instruments: Vec<PluginRegistryEntry>,
@@ -379,6 +401,12 @@ pub struct PluginRegistry {
     scanned: bool,
 }
 
+#[cfg(not(feature = "native"))]
+pub struct PluginRegistry {
+    scanned: bool,
+}
+
+#[cfg(feature = "native")]
 impl PluginRegistry {
     pub fn new() -> Self {
         Self {
@@ -533,5 +561,16 @@ impl PluginRegistry {
                 None
             }
         }
+    }
+}
+
+#[cfg(not(feature = "native"))]
+impl PluginRegistry {
+    pub fn new() -> Self {
+        Self { scanned: false }
+    }
+
+    pub fn is_scanned(&self) -> bool {
+        self.scanned
     }
 }

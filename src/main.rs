@@ -1,3 +1,4 @@
+#[cfg(feature = "native")]
 mod audio;
 mod automation;
 mod component;
@@ -11,7 +12,9 @@ mod instruments;
 mod midi;
 mod network;
 mod operations;
+#[cfg(feature = "native")]
 mod surreal_client;
+#[cfg(feature = "native")]
 mod plugins;
 mod regions;
 mod settings;
@@ -21,6 +24,12 @@ mod user;
 
 #[cfg(test)]
 mod tests;
+
+// Time compatibility: use web-time on WASM, std::time on native
+#[cfg(target_arch = "wasm32")]
+use web_time::Instant as TimeInstant;
+#[cfg(not(target_arch = "wasm32"))]
+use std::time::Instant as TimeInstant;
 
 pub(crate) use gpu::{push_border, Camera, Gpu, InstanceRaw};
 pub(crate) use ui::transport::{TransportPanel, TRANSPORT_WIDTH};
@@ -48,7 +57,10 @@ use std::sync::mpsc;
 use indexmap::IndexMap;
 use entity_id::{EntityId, new_id};
 
-use audio::{load_audio_file, AudioClipData, AudioEngine, AudioRecorder, PIXELS_PER_SECOND};
+#[cfg(feature = "native")]
+use audio::{load_audio_file, AudioEngine, AudioRecorder};
+use grid::PIXELS_PER_SECOND;
+use ui::waveform::AudioClipData;
 use settings::GridMode;
 use ui::context_menu::{ContextMenu, MenuContext};
 use ui::palette::{
@@ -58,17 +70,67 @@ use ui::palette::{
 pub(crate) use ui::waveform::WaveformView;
 use ui::waveform::{AudioData, WaveformPeaks, WaveformVertex};
 
-use surrealdb::types::SurrealValue;
-
+#[cfg(feature = "native")]
 use muda::{MenuId, Submenu as MudaSubmenu};
 use settings::Settings;
+#[cfg(feature = "native")]
 use ui::settings_window::{SettingsWindow, CATEGORIES};
+#[cfg(feature = "native")]
 use storage::{default_base_path, ProjectState, Storage};
 use winit::{
     event_loop::EventLoop,
     keyboard::ModifiersState,
     window::CursorIcon,
 };
+
+// ---------------------------------------------------------------------------
+// Platform-conditional type aliases for App struct fields
+// ---------------------------------------------------------------------------
+
+#[cfg(feature = "native")]
+type NativeAudioEngine = audio::AudioEngine;
+#[cfg(not(feature = "native"))]
+type NativeAudioEngine = ();
+
+#[cfg(feature = "native")]
+type NativeAudioRecorder = audio::AudioRecorder;
+#[cfg(not(feature = "native"))]
+type NativeAudioRecorder = ();
+
+#[cfg(feature = "native")]
+type NativeStorage = storage::Storage;
+#[cfg(not(feature = "native"))]
+type NativeStorage = ();
+
+#[cfg(feature = "native")]
+type NativeSettingsWindow = ui::settings_window::SettingsWindow;
+#[cfg(not(feature = "native"))]
+type NativeSettingsWindow = ();
+
+#[cfg(feature = "native")]
+type NativeMenuState = MenuState;
+#[cfg(not(feature = "native"))]
+type NativeMenuState = ();
+
+#[cfg(feature = "native")]
+type NativePendingRemoteAudioFetch = PendingRemoteAudioFetch;
+#[cfg(not(feature = "native"))]
+type NativePendingRemoteAudioFetch = ();
+
+#[cfg(feature = "native")]
+type NativeRemoteStorage = storage::RemoteStorage;
+#[cfg(not(feature = "native"))]
+type NativeRemoteStorage = ();
+
+#[cfg(feature = "native")]
+type NativeTokioRuntime = tokio::runtime::Runtime;
+#[cfg(not(feature = "native"))]
+type NativeTokioRuntime = ();
+
+#[cfg(feature = "native")]
+type NativeWelcomeReceiver = tokio::sync::oneshot::Receiver<user::User>;
+#[cfg(not(feature = "native"))]
+type NativeWelcomeReceiver = ();
 
 // ---------------------------------------------------------------------------
 // Canvas objects
@@ -359,6 +421,7 @@ pub(crate) fn format_playback_time(secs: f64) -> String {
 // Application
 // ---------------------------------------------------------------------------
 
+#[cfg(feature = "native")]
 struct MenuState {
     menu: muda::Menu,
     new_project: MenuId,
@@ -376,6 +439,7 @@ struct MenuState {
 }
 
 /// Result of fetching audio from remote storage on a background thread.
+#[cfg(feature = "native")]
 struct PendingRemoteAudioFetch {
     wf_id: EntityId,
     audio: Arc<AudioData>,
@@ -404,12 +468,16 @@ enum PendingAudioLoad {
 
 struct App {
     gpu: Option<Gpu>,
+    /// Shared slot for async GPU init on WASM — `spawn_local` writes here, `about_to_wait` reads.
+    pending_gpu: Arc<std::sync::Mutex<Option<Gpu>>>,
+    /// Window ref kept separately so we can request_redraw before GPU is ready.
+    window: Option<Arc<winit::window::Window>>,
     camera: Camera,
     objects: IndexMap<EntityId, CanvasObject>,
     waveforms: IndexMap<EntityId, WaveformView>,
     audio_clips: IndexMap<EntityId, AudioClipData>,
-    audio_engine: Option<AudioEngine>,
-    recorder: Option<AudioRecorder>,
+    audio_engine: Option<NativeAudioEngine>,
+    recorder: Option<NativeAudioRecorder>,
     recording_waveform_id: Option<EntityId>,
     last_canvas_click_world: [f32; 2],
     selected: Vec<HitTarget>,
@@ -428,7 +496,7 @@ struct App {
     context_menu: Option<ContextMenu>,
     browser_context_path: Option<std::path::PathBuf>,
     sample_browser: ui::browser::SampleBrowser,
-    storage: Option<Storage>,
+    storage: Option<NativeStorage>,
     has_saved_state: bool,
     project_dirty: bool,
     op_undo_stack: Vec<operations::CommittedOp>,
@@ -461,35 +529,35 @@ struct App {
     bpm: f32,
     editing_bpm: Option<String>,
     dragging_bpm: Option<(f32, f32)>,
-    last_click_time: std::time::Instant,
+    last_click_time: TimeInstant,
     last_click_world: [f32; 2],
-    last_cursor_send: std::time::Instant,
+    last_cursor_send: TimeInstant,
     clipboard: Clipboard,
     settings: Settings,
-    settings_window: Option<SettingsWindow>,
+    settings_window: Option<NativeSettingsWindow>,
     plugin_editor: Option<ui::plugin_editor::PluginEditorWindow>,
-    menu_state: Option<MenuState>,
+    menu_state: Option<NativeMenuState>,
     toast_manager: ui::toast::ToastManager,
     automation_mode: bool,
     active_automation_param: AutomationParam,
     // Background audio loading
     pending_audio_tx: mpsc::Sender<PendingAudioLoad>,
     pending_audio_rx: mpsc::Receiver<PendingAudioLoad>,
-    pending_remote_audio_tx: mpsc::Sender<PendingRemoteAudioFetch>,
-    pending_remote_audio_rx: mpsc::Receiver<PendingRemoteAudioFetch>,
+    pending_remote_audio_tx: mpsc::Sender<NativePendingRemoteAudioFetch>,
+    pending_remote_audio_rx: mpsc::Receiver<NativePendingRemoteAudioFetch>,
     pending_audio_loads_count: usize,
     // Collaboration
-    remote_storage: Option<Arc<storage::RemoteStorage>>,
+    remote_storage: Option<Arc<NativeRemoteStorage>>,
     local_user: user::User,
     remote_users: std::collections::HashMap<user::UserId, user::RemoteUserState>,
     applied_remote_seqs: std::collections::HashSet<(user::UserId, u64)>,
     network: network::NetworkManager,
-    ws_runtime: Option<tokio::runtime::Runtime>,
+    ws_runtime: Option<NativeTokioRuntime>,
     connect_url: Option<String>,
     connect_project_id: Option<String>,
-    pending_welcome: Option<tokio::sync::oneshot::Receiver<user::User>>,
+    pending_welcome: Option<NativeWelcomeReceiver>,
     reconnect_attempt: u32,
-    last_reconnect_time: Option<std::time::Instant>,
+    last_reconnect_time: Option<TimeInstant>,
     cached_instances: Vec<InstanceRaw>,
     cached_wf_verts: Vec<WaveformVertex>,
     render_generation: u64,
@@ -501,12 +569,14 @@ struct App {
 }
 
 impl App {
-    #[cfg(test)]
-    pub(crate) fn new_headless() -> Self {
+    /// Minimal constructor for headless/web use — no storage, audio, or native GUI.
+    fn new_minimal(project_name: &str) -> Self {
         let (pending_audio_tx, pending_audio_rx) = mpsc::channel();
         let (pending_remote_audio_tx, pending_remote_audio_rx) = mpsc::channel();
         Self {
             gpu: None,
+            pending_gpu: Arc::new(std::sync::Mutex::new(None)),
+            window: None,
             camera: Camera::new(),
             objects: IndexMap::new(),
             waveforms: IndexMap::new(),
@@ -536,7 +606,7 @@ impl App {
             project_dirty: false,
             op_undo_stack: Vec::new(),
             op_redo_stack: Vec::new(),
-            current_project_name: "test".into(),
+            current_project_name: project_name.into(),
             effect_regions: IndexMap::new(),
             plugin_blocks: IndexMap::new(),
             components: IndexMap::new(),
@@ -564,9 +634,9 @@ impl App {
             bpm: 120.0,
             editing_bpm: None,
             dragging_bpm: None,
-            last_click_time: std::time::Instant::now(),
+            last_click_time: TimeInstant::now(),
             last_click_world: [0.0; 2],
-            last_cursor_send: std::time::Instant::now(),
+            last_cursor_send: TimeInstant::now(),
             clipboard: Clipboard::new(),
             settings: Settings::default(),
             settings_window: None,
@@ -606,6 +676,17 @@ impl App {
         }
     }
 
+    #[cfg(test)]
+    pub(crate) fn new_headless() -> Self {
+        Self::new_minimal("test")
+    }
+
+    /// Constructor for the web build.
+    #[cfg(not(feature = "native"))]
+    pub fn new_web() -> Self {
+        Self::new_minimal("Untitled")
+    }
+
     fn mark_dirty(&mut self) {
         self.render_generation = self.render_generation.wrapping_add(1);
         self.project_dirty = true;
@@ -613,6 +694,7 @@ impl App {
 
     /// Tear down plugin GUIs and instances in the correct order before exit.
     /// GUIs must be destroyed before plugin instances they reference.
+    #[cfg(feature = "native")]
     fn shutdown_plugins(&mut self) {
         // Stop audio engine first so the audio thread releases plugin locks
         self.audio_engine = None;
@@ -632,6 +714,7 @@ impl App {
         }
     }
 
+    #[cfg(feature = "native")]
     fn new(skip_load: bool) -> Self {
         let base_path = default_base_path();
         println!("  Storage: {}", base_path.display());
@@ -1056,6 +1139,8 @@ impl App {
 
         Self {
             gpu: None,
+            pending_gpu: Arc::new(std::sync::Mutex::new(None)),
+            window: None,
             camera,
             objects,
             waveforms,
@@ -1113,9 +1198,9 @@ impl App {
             bpm: loaded_bpm,
             editing_bpm: None,
             dragging_bpm: None,
-            last_click_time: std::time::Instant::now(),
+            last_click_time: TimeInstant::now(),
             last_click_world: [0.0; 2],
-            last_cursor_send: std::time::Instant::now(),
+            last_cursor_send: TimeInstant::now(),
             clipboard: Clipboard::new(),
             settings,
             settings_window: None,
@@ -1169,8 +1254,11 @@ impl App {
     /// Call this after any event that changes the world-space cursor position:
     /// mouse movement, camera panning, zooming, etc.
     fn broadcast_cursor_if_connected(&mut self) {
+        #[cfg(not(feature = "native"))]
+        return;
+        #[cfg(feature = "native")]
         if self.network.is_connected() {
-            let now = std::time::Instant::now();
+            let now = TimeInstant::now();
             if now.duration_since(self.last_cursor_send).as_millis() >= 25 {
                 let world_pos = self.camera.screen_to_world(self.mouse_pos);
                 self.network.send_ephemeral(crate::user::EphemeralMessage::CursorMove {
@@ -1182,6 +1270,7 @@ impl App {
         }
     }
 
+    #[cfg(feature = "native")]
     fn connect_to_server(&mut self, url: &str, project_id: &str) {
         // Reuse existing runtime or create one
         if self.ws_runtime.is_none() {
@@ -1219,6 +1308,7 @@ impl App {
         log::info!("Connecting to SurrealDB at {}", url);
     }
 
+    #[cfg(feature = "native")]
     fn save_project_state(&mut self) {
         if let Some(storage) = &self.storage {
             let stored_regions: Vec<storage::StoredEffectRegion> = self
@@ -1413,6 +1503,7 @@ impl App {
         }
     }
 
+    #[cfg(feature = "native")]
     fn save_project(&mut self) {
         self.save_project_state();
         if let Some(storage) = &self.storage {
@@ -1422,6 +1513,7 @@ impl App {
         }
     }
 
+    #[cfg(feature = "native")]
     fn save_project_as(&mut self) {
         println!("Showing Save Project dialog...");
         let dest = rfd::FileDialog::new()
@@ -1442,6 +1534,7 @@ impl App {
         }
     }
 
+    #[cfg(feature = "native")]
     fn handle_menu_event(&mut self, id: MenuId) {
         let menu = match &self.menu_state {
             Some(m) => m,
@@ -1499,6 +1592,7 @@ impl App {
         }
     }
 
+    #[cfg(feature = "native")]
     fn new_project(&mut self) {
         self.save_project_state();
 
@@ -1542,6 +1636,7 @@ impl App {
         println!("New project created");
     }
 
+    #[cfg(feature = "native")]
     fn load_project(&mut self, project_path: &str) {
         // Check if same project
         if let Some(s) = &self.storage {
@@ -1842,6 +1937,7 @@ impl App {
         println!("Project '{}' loaded", self.current_project_name);
     }
 
+    #[cfg(feature = "native")]
     fn refresh_open_project_menu(&mut self) {
         let menu = match &mut self.menu_state {
             Some(m) => m,
@@ -1888,6 +1984,7 @@ impl App {
         }
     }
 
+    #[cfg(feature = "native")]
     fn sync_audio_clips(&self) {
         if let Some(engine) = &self.audio_engine {
             let mut positions: Vec<[f32; 2]> = Vec::new();
@@ -2100,6 +2197,7 @@ impl App {
         self.request_redraw();
     }
 
+    #[cfg(feature = "native")]
     fn sync_instrument_regions(&self) {
         if let Some(engine) = &self.audio_engine {
             let mut instrument_regions = Vec::new();
@@ -2146,6 +2244,7 @@ impl App {
         }
     }
 
+    #[cfg(feature = "native")]
     fn sync_loop_region(&self) {
         if let Some(engine) = &self.audio_engine {
             let regions: Vec<(f64, f64)> = self
@@ -2167,6 +2266,7 @@ impl App {
         }
     }
 
+    #[cfg(feature = "native")]
     fn toggle_recording(&mut self) {
         if self.recorder.is_none() {
             return;
@@ -2258,6 +2358,7 @@ impl App {
         }
     }
 
+    #[cfg(feature = "native")]
     fn update_recording_waveform(&mut self) {
         let wf_id = match self.recording_waveform_id {
             Some(id) => id,
@@ -2281,13 +2382,67 @@ impl App {
         }
     }
 
+    #[cfg(feature = "native")]
     fn is_recording(&self) -> bool {
         self.recorder
             .as_ref()
             .map(|r| r.is_recording())
             .unwrap_or(false)
     }
+    #[cfg(not(feature = "native"))]
+    fn is_recording(&self) -> bool {
+        false
+    }
 
+    // No-op stubs for web builds — these methods are native-only but called from many places
+    #[cfg(not(feature = "native"))]
+    fn sync_audio_clips(&self) {}
+    #[cfg(not(feature = "native"))]
+    fn sync_loop_region(&self) {}
+    #[cfg(not(feature = "native"))]
+    fn sync_instrument_regions(&self) {}
+    #[cfg(not(feature = "native"))]
+    fn save_project_state(&mut self) {}
+    #[cfg(not(feature = "native"))]
+    fn save_project(&mut self) {}
+    #[cfg(not(feature = "native"))]
+    fn toggle_recording(&mut self) {}
+    #[cfg(not(feature = "native"))]
+    fn update_recording_waveform(&mut self) {}
+    #[cfg(not(feature = "native"))]
+    fn drop_audio_from_browser(&mut self, _path: &std::path::Path) {}
+    #[cfg(not(feature = "native"))]
+    fn poll_pending_audio_loads(&mut self) {}
+    #[cfg(not(feature = "native"))]
+    fn ensure_plugins_scanned(&mut self) {}
+    #[cfg(not(feature = "native"))]
+    fn open_add_folder_dialog(&mut self) {}
+    #[cfg(not(feature = "native"))]
+    fn save_browser_folders_to_settings(&self) {}
+    #[cfg(not(feature = "native"))]
+    fn add_plugin_to_selected_effect_region(&mut self, _plugin_id: &str, _plugin_name: &str) {}
+    #[cfg(not(feature = "native"))]
+    fn add_instrument(&mut self, _plugin_id: &str, _plugin_name: &str) {}
+    #[cfg(not(feature = "native"))]
+    fn add_plugin_block(&mut self, _position: [f32; 2], _plugin_id: &str, _plugin_name: &str) {}
+    #[cfg(not(feature = "native"))]
+    fn build_palette_plugin_entries(&self) -> Vec<PluginPickerEntry> { Vec::new() }
+    #[cfg(not(feature = "native"))]
+    fn open_plugin_block_gui(&mut self, _id: EntityId) {}
+    #[cfg(not(feature = "native"))]
+    fn open_instrument_region_gui(&mut self, _id: EntityId) {}
+    #[cfg(not(feature = "native"))]
+    fn shutdown_plugins(&mut self) {}
+    #[cfg(not(feature = "native"))]
+    fn new_project(&mut self) {}
+    #[cfg(not(feature = "native"))]
+    fn load_project(&mut self, _project_path: &str) {}
+    #[cfg(not(feature = "native"))]
+    fn refresh_open_project_menu(&mut self) {}
+    #[cfg(not(feature = "native"))]
+    fn trigger_export_render(&mut self) {}
+
+    #[cfg(feature = "native")]
     fn trigger_export_render(&mut self) {
         let er = match self.export_regions.values().next() {
             Some(er) => er,
@@ -2373,6 +2528,8 @@ impl App {
     fn request_redraw(&self) {
         if let Some(gpu) = &self.gpu {
             gpu.window.request_redraw();
+        } else if let Some(window) = &self.window {
+            window.request_redraw();
         }
     }
 
@@ -3056,14 +3213,17 @@ impl App {
             }
             CommandAction::ToggleBrowser => {
                 self.sample_browser.visible = !self.sample_browser.visible;
+                #[cfg(feature = "native")]
                 if self.sample_browser.visible {
                     self.ensure_plugins_scanned();
                 }
             }
             CommandAction::AddFolderToBrowser => {
+                #[cfg(feature = "native")]
                 self.open_add_folder_dialog();
             }
             CommandAction::SetMasterVolume => {
+                #[cfg(feature = "native")]
                 if let Some(p) = &mut self.command_palette {
                     p.mode = PaletteMode::VolumeFader;
                     p.fader_value = self
@@ -3106,11 +3266,14 @@ impl App {
                 self.go_to_component_of_selected_instance();
             }
             CommandAction::OpenSettings => {
-                self.settings_window = if self.settings_window.is_some() {
-                    None
-                } else {
-                    Some(SettingsWindow::new())
-                };
+                #[cfg(feature = "native")]
+                {
+                    self.settings_window = if self.settings_window.is_some() {
+                        None
+                    } else {
+                        Some(SettingsWindow::new())
+                    };
+                }
             }
             CommandAction::RenameEffectRegion => {
                 let selected_er = self.selected.iter().find_map(|t| {
@@ -3308,6 +3471,7 @@ impl App {
 
                         let after = self.waveforms[&wf_id].clone();
                         self.push_op(operations::Operation::UpdateWaveform { id: wf_id, before, after });
+                        #[cfg(feature = "native")]
                         self.sync_audio_clips();
                     }
                 }
@@ -3325,46 +3489,52 @@ impl App {
                 self.add_midi_clip();
             }
             CommandAction::AddInstrument => {
-                self.ensure_plugins_scanned();
-                let entries: Vec<PluginPickerEntry> = self
-                    .plugin_registry
-                    .instruments
-                    .iter()
-                    .map(|e| PluginPickerEntry {
-                        name: e.info.name.clone(),
-                        manufacturer: e.info.manufacturer.clone(),
-                        unique_id: e.info.unique_id.clone(),
-                        is_instrument: true,
-                    })
-                    .collect();
-                if let Some(p) = &mut self.command_palette {
-                    p.mode = PaletteMode::InstrumentPicker;
-                    p.search_text.clear();
-                    p.set_plugin_entries(entries);
+                #[cfg(feature = "native")]
+                {
+                    self.ensure_plugins_scanned();
+                    let entries: Vec<PluginPickerEntry> = self
+                        .plugin_registry
+                        .instruments
+                        .iter()
+                        .map(|e| PluginPickerEntry {
+                            name: e.info.name.clone(),
+                            manufacturer: e.info.manufacturer.clone(),
+                            unique_id: e.info.unique_id.clone(),
+                            is_instrument: true,
+                        })
+                        .collect();
+                    if let Some(p) = &mut self.command_palette {
+                        p.mode = PaletteMode::InstrumentPicker;
+                        p.search_text.clear();
+                        p.set_plugin_entries(entries);
+                    }
+                    self.request_redraw();
+                    return;
                 }
-                self.request_redraw();
-                return;
             }
             CommandAction::AddPlugin => {
-                self.ensure_plugins_scanned();
-                let entries: Vec<PluginPickerEntry> = self
-                    .plugin_registry
-                    .plugins
-                    .iter()
-                    .map(|e| PluginPickerEntry {
-                        name: e.info.name.clone(),
-                        manufacturer: e.info.manufacturer.clone(),
-                        unique_id: e.info.unique_id.clone(),
-                        is_instrument: false,
-                    })
-                    .collect();
-                if let Some(p) = &mut self.command_palette {
-                    p.mode = PaletteMode::PluginPicker;
-                    p.search_text.clear();
-                    p.set_plugin_entries(entries);
+                #[cfg(feature = "native")]
+                {
+                    self.ensure_plugins_scanned();
+                    let entries: Vec<PluginPickerEntry> = self
+                        .plugin_registry
+                        .plugins
+                        .iter()
+                        .map(|e| PluginPickerEntry {
+                            name: e.info.name.clone(),
+                            manufacturer: e.info.manufacturer.clone(),
+                            unique_id: e.info.unique_id.clone(),
+                            is_instrument: false,
+                        })
+                        .collect();
+                    if let Some(p) = &mut self.command_palette {
+                        p.mode = PaletteMode::PluginPicker;
+                        p.search_text.clear();
+                        p.set_plugin_entries(entries);
+                    }
+                    self.request_redraw();
+                    return;
                 }
-                self.request_redraw();
-                return;
             }
             CommandAction::AddRenderArea => {
                 self.add_render_area();
@@ -3943,9 +4113,14 @@ impl App {
                 let clip_x = self.midi_clips.get(&mc_id).map(|mc| mc.position[0]);
                 if let Some(clip_x) = clip_x {
                     let before_notes = self.midi_clips[&mc_id].notes.clone();
-                    let paste_x = self.audio_engine.as_ref()
-                        .map(|e| (e.position_seconds() * PIXELS_PER_SECOND as f64) as f32)
-                        .unwrap_or_else(|| self.camera.screen_to_world(self.mouse_pos)[0]);
+                    let paste_x = {
+                        #[cfg(feature = "native")]
+                        { self.audio_engine.as_ref()
+                            .map(|e| (e.position_seconds() * PIXELS_PER_SECOND as f64) as f32)
+                            .unwrap_or_else(|| self.camera.screen_to_world(self.mouse_pos)[0]) }
+                        #[cfg(not(feature = "native"))]
+                        { self.camera.screen_to_world(self.mouse_pos)[0] }
+                    };
                     let offset = (paste_x - clip_x).max(0.0);
                     let new_indices = if let Some(mc) = self.midi_clips.get_mut(&mc_id) {
                         let mut indices: Vec<usize> = Vec::new();
@@ -4177,8 +4352,11 @@ impl App {
         }
 
         self.selected.clear();
-        self.sync_audio_clips();
-        self.sync_loop_region();
+        #[cfg(feature = "native")]
+        {
+            self.sync_audio_clips();
+            self.sync_loop_region();
+        }
         println!("Deleted selected items");
     }
 
@@ -4186,6 +4364,7 @@ impl App {
     /// (empty audio) is placed on the canvas immediately so the user sees
     /// feedback. When decoding finishes the placeholder is filled in by
     /// `poll_pending_audio_loads`.
+    #[cfg(feature = "native")]
     fn drop_audio_from_browser(&mut self, path: &std::path::Path) {
         let ext = path
             .extension()
@@ -4328,6 +4507,7 @@ impl App {
 
     /// Called each frame to finalize any background audio loads.
     /// Replaces placeholder waveforms with the fully-decoded version.
+    #[cfg(feature = "native")]
     fn poll_pending_audio_loads(&mut self) {
         let mut any = false;
         while let Ok(load) = self.pending_audio_rx.try_recv() {
@@ -4387,6 +4567,7 @@ impl App {
 // Native macOS menu bar
 // ---------------------------------------------------------------------------
 
+#[cfg(feature = "native")]
 fn build_app_menu(storage: Option<&Storage>) -> MenuState {
     use muda::{
         accelerator::{Accelerator, Code, Modifiers},
@@ -4514,6 +4695,7 @@ fn build_app_menu(storage: Option<&Storage>) -> MenuState {
 // Entry point
 // ---------------------------------------------------------------------------
 
+#[cfg(feature = "native")]
 fn main() {
     env_logger::init();
 
@@ -4576,4 +4758,24 @@ fn main() {
     }
 
     event_loop.run_app(&mut app).unwrap();
+}
+
+#[cfg(not(feature = "native"))]
+fn main() {
+    #[cfg(target_arch = "wasm32")]
+    {
+        console_error_panic_hook::set_once();
+        console_log::init_with_level(log::Level::Info).ok();
+        log::info!("Layers WASM starting...");
+
+        let event_loop = EventLoop::new().unwrap();
+        let app = App::new_web();
+
+        use winit::platform::web::EventLoopExtWebSys;
+        event_loop.spawn_app(app);
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        println!("This binary requires the 'native' feature. For web, build with --target wasm32-unknown-unknown.");
+    }
 }

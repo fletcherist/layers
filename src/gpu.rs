@@ -8,7 +8,7 @@ use glyphon::{
 use wgpu::util::DeviceExt;
 use winit::window::Window;
 
-use crate::audio::PIXELS_PER_SECOND;
+use crate::grid::PIXELS_PER_SECOND;
 use crate::ui::browser;
 use crate::effects;
 use crate::midi;
@@ -76,13 +76,13 @@ fn rounded_box_sdf(p: vec2<f32>, b: vec2<f32>, r: f32) -> f32 {
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let r = min(in.border_radius, min(in.rect_size.x, in.rect_size.y) * 0.5);
-    if (r < 0.01) {
-        return in.color;
-    }
     let center = in.rect_size * 0.5;
     let p = in.local_pos - center;
     let d = rounded_box_sdf(p, center, r);
     let fw = fwidth(d);
+    if (r < 0.01) {
+        return in.color;
+    }
     let alpha = 1.0 - smoothstep(0.0, fw, d);
     return vec4<f32>(in.color.rgb, in.color.a * alpha);
 }
@@ -571,6 +571,14 @@ impl Gpu {
         });
 
         // --- glyphon text rendering ---
+        #[cfg(target_arch = "wasm32")]
+        let font_system = {
+            let font_data = include_bytes!("../assets/Inter-Regular.ttf");
+            FontSystem::new_with_fonts(std::iter::once(glyphon::fontdb::Source::Binary(
+                std::sync::Arc::new(font_data.as_slice()),
+            )))
+        };
+        #[cfg(not(target_arch = "wasm32"))]
         let font_system = FontSystem::new();
         let swash_cache = SwashCache::new();
         let cache = glyphon::Cache::new(&device);
@@ -2473,7 +2481,7 @@ impl Gpu {
                 return;
             }
             Err(e) => {
-                log::error!("Surface error: {e:?}");
+                log::error!("[render] Surface error: {e:?}");
                 return;
             }
         };

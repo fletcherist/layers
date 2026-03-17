@@ -2,11 +2,24 @@ use std::sync::Arc;
 
 use bytemuck::{Pod, Zeroable};
 
-use crate::audio::PIXELS_PER_SECOND;
+use crate::grid::PIXELS_PER_SECOND;
 use crate::automation::{AutomationData, AutomationParam};
 use crate::{push_border, Camera, InstanceRaw};
 
 const PEAK_BLOCK_SIZE: usize = 256;
+
+// AudioClipData — shared type for audio clip metadata
+fn default_empty_samples() -> Arc<Vec<f32>> {
+    Arc::new(Vec::new())
+}
+
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct AudioClipData {
+    #[serde(skip, default = "default_empty_samples")]
+    pub samples: Arc<Vec<f32>>,
+    pub sample_rate: u32,
+    pub duration_secs: f32,
+}
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct WaveformPeaks {

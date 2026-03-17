@@ -1,4 +1,4 @@
-.PHONY: run build test test-vst3 release dist icon clean
+.PHONY: run build test test-vst3 release dist icon clean web
 
 APP_NAME    := Layers
 VERSION     := $(shell grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/' | cut -d. -f1,2)
@@ -55,5 +55,8 @@ icon:
 	fi
 	bash macos/create_icns.sh macos/AppIcon.png macos/AppIcon.icns
 
+web:
+	trunk serve --open --port 9090
+
 clean:
-	rm -rf build
+	rm -rf build dist

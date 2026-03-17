@@ -1,4 +1,4 @@
-use crate::audio::AudioClipData;
+use crate::ui::waveform::AudioClipData;
 use crate::component::{ComponentDef, ComponentInstance};
 use crate::effects::{EffectRegion, PluginBlock, PluginBlockSnapshot};
 use crate::entity_id::EntityId;
@@ -496,6 +496,7 @@ impl App {
         committed.op.apply(self);
 
         // After applying, load audio from remote storage for any new waveforms
+        #[cfg(feature = "native")]
         if self.remote_storage.is_some() {
             let wf_ids = collect_create_waveform_ids(&committed.op);
             for wf_id in wf_ids {
@@ -508,6 +509,7 @@ impl App {
         self.request_redraw();
     }
 
+    #[cfg(feature = "native")]
     fn load_waveform_audio_from_remote(&mut self, wf_id: EntityId) {
         let wf = match self.waveforms.get(&wf_id) {
             Some(wf) => wf,
@@ -550,7 +552,7 @@ impl App {
                     filename,
                 });
 
-                let ac = crate::audio::AudioClipData {
+                let ac = crate::ui::waveform::AudioClipData {
                     samples: loaded.samples,
                     sample_rate: loaded.sample_rate,
                     duration_secs: loaded.duration_secs,
@@ -566,6 +568,7 @@ impl App {
     }
 }
 
+#[cfg(feature = "native")]
 fn collect_create_waveform_ids(op: &Operation) -> Vec<EntityId> {
     let mut ids = Vec::new();
     match op {

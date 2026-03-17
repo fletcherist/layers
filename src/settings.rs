@@ -1,3 +1,4 @@
+#[cfg(feature = "native")]
 use cpal::traits::{DeviceTrait, HostTrait};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -174,14 +175,21 @@ pub struct Settings {
     pub sample_library_folders: Vec<String>,
 }
 
+#[cfg(feature = "native")]
 fn default_driver_type() -> String {
     cpal::default_host().id().name().to_string()
+}
+
+#[cfg(not(feature = "native"))]
+fn default_driver_type() -> String {
+    "Web Audio".to_string()
 }
 
 fn default_no_device() -> String {
     "No Device".to_string()
 }
 
+#[cfg(feature = "native")]
 fn default_output_device() -> String {
     cpal::default_host()
         .default_output_device()
@@ -189,11 +197,22 @@ fn default_output_device() -> String {
         .unwrap_or_else(default_no_device)
 }
 
+#[cfg(not(feature = "native"))]
+fn default_output_device() -> String {
+    default_no_device()
+}
+
+#[cfg(feature = "native")]
 fn default_input_device() -> String {
     cpal::default_host()
         .default_input_device()
         .and_then(|d| d.name().ok())
         .unwrap_or_else(default_no_device)
+}
+
+#[cfg(not(feature = "native"))]
+fn default_input_device() -> String {
+    default_no_device()
 }
 
 impl Default for Settings {
@@ -215,6 +234,7 @@ impl Default for Settings {
     }
 }
 
+#[cfg(feature = "native")]
 fn settings_path() -> PathBuf {
     dirs::home_dir()
         .unwrap_or_else(|| PathBuf::from("."))
@@ -224,28 +244,39 @@ fn settings_path() -> PathBuf {
 
 impl Settings {
     pub fn load() -> Self {
-        let path = settings_path();
-        match std::fs::read_to_string(&path) {
-            Ok(json) => serde_json::from_str(&json).unwrap_or_default(),
-            Err(_) => Self::default(),
+        #[cfg(feature = "native")]
+        {
+            let path = settings_path();
+            match std::fs::read_to_string(&path) {
+                Ok(json) => serde_json::from_str(&json).unwrap_or_default(),
+                Err(_) => Self::default(),
+            }
+        }
+        #[cfg(not(feature = "native"))]
+        {
+            Self::default()
         }
     }
 
     pub fn save(&self) {
-        let path = settings_path();
-        if let Some(parent) = path.parent() {
-            let _ = std::fs::create_dir_all(parent);
-        }
-        if let Ok(json) = serde_json::to_string_pretty(self) {
-            let _ = std::fs::write(&path, json);
+        #[cfg(feature = "native")]
+        {
+            let path = settings_path();
+            if let Some(parent) = path.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+            if let Ok(json) = serde_json::to_string_pretty(self) {
+                let _ = std::fs::write(&path, json);
+            }
         }
     }
 }
 
 // ---------------------------------------------------------------------------
-// Audio device enumeration
+// Audio device enumeration (native only)
 // ---------------------------------------------------------------------------
 
+#[cfg(feature = "native")]
 pub fn available_driver_types() -> Vec<String> {
     cpal::available_hosts()
         .into_iter()
@@ -253,6 +284,7 @@ pub fn available_driver_types() -> Vec<String> {
         .collect()
 }
 
+#[cfg(feature = "native")]
 pub fn available_input_devices() -> Vec<String> {
     let mut names = vec!["No Device".to_string()];
     let host = cpal::default_host();
@@ -288,6 +320,7 @@ pub fn available_input_devices() -> Vec<String> {
     names
 }
 
+#[cfg(feature = "native")]
 pub fn available_output_devices() -> Vec<String> {
     let mut names = vec!["No Device".to_string()];
     let host = cpal::default_host();
@@ -322,4 +355,3 @@ pub fn available_output_devices() -> Vec<String> {
     }
     names
 }
-
