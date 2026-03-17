@@ -1,3 +1,5 @@
+- fix: BPM drag overlap snapshots now rescale with BPM so overlapping clips keep correct height (28.4k loc)
+- fix: audio clip height and Y positions now scale with BPM changes so clips always span 2 grid beats (28.4k loc)
 - feat: audio overlap resolution on BPM change — live during drag, on text input, and on undo/redo (28.3k loc)
 - tweak: default audio clip height changed from 150px to 120px (2 beats) to align with grid (28.1k loc)
 - feat: live waveform overlap resolution during drag — background clips crop/hide in real-time and restore when moved away (28.0k loc)

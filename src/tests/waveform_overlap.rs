@@ -368,3 +368,62 @@ fn test_bpm_live_drag_overlap_snapshots() {
     assert!((a.size[0] - 100.0).abs() < 0.01, "A should be restored to 100, got {}", a.size[0]);
     assert!(snaps.is_empty(), "snapshots should be empty after restoring");
 }
+
+#[test]
+fn test_clip_height_adapts_to_bpm_change() {
+    use crate::grid;
+
+    let mut app = App::new_headless();
+    app.bpm = 120.0;
+
+    let id = new_id();
+    let initial_height = grid::pixels_per_beat(120.0) * 2.0;
+    let initial_y = 100.0;
+
+    app.waveforms.insert(id, make_waveform(50.0, initial_y, 200.0));
+    app.waveforms.get_mut(&id).unwrap().size[1] = initial_height;
+    app.audio_clips.insert(id, make_audio_clip());
+
+    // Change BPM from 120 to 60 (scale = 2.0, grid rows double)
+    let scale = 120.0_f32 / 60.0;
+    app.rescale_clip_positions(scale);
+    app.bpm = 60.0;
+
+    let wf = app.waveforms.get(&id).unwrap();
+    let expected_height = grid::pixels_per_beat(60.0) * 2.0;
+    assert!(
+        (wf.size[1] - expected_height).abs() < 0.01,
+        "height should be {} at 60 BPM, got {}",
+        expected_height, wf.size[1]
+    );
+    assert!(
+        (wf.position[1] - initial_y * scale).abs() < 0.01,
+        "Y position should scale to {}, got {}",
+        initial_y * scale, wf.position[1]
+    );
+
+    // Change BPM from 60 to 240 (scale = 0.25, grid rows shrink)
+    let scale2 = 60.0_f32 / 240.0;
+    app.rescale_clip_positions(scale2);
+    app.bpm = 240.0;
+
+    let wf = app.waveforms.get(&id).unwrap();
+    let expected_height2 = grid::pixels_per_beat(240.0) * 2.0;
+    assert!(
+        (wf.size[1] - expected_height2).abs() < 0.01,
+        "height should be {} at 240 BPM, got {}",
+        expected_height2, wf.size[1]
+    );
+
+    // Round-trip: go back to 120 BPM and verify original height is restored
+    let scale3 = 240.0_f32 / 120.0;
+    app.rescale_clip_positions(scale3);
+    app.bpm = 120.0;
+
+    let wf = app.waveforms.get(&id).unwrap();
+    assert!(
+        (wf.size[1] - initial_height).abs() < 0.01,
+        "height should be restored to {} after round-trip, got {}",
+        initial_height, wf.size[1]
+    );
+}
