@@ -1,6 +1,9 @@
 pub(crate) mod browser;
 pub(crate) mod context_menu;
+pub(crate) mod hit_testing;
 pub(crate) mod palette;
+pub(crate) mod rendering;
+pub(crate) mod settings_window;
 pub(crate) mod plugin_editor;
 pub(crate) mod toast;
 pub(crate) mod transport;

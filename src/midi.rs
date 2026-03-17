@@ -1,4 +1,4 @@
-use crate::hit_testing::point_in_rect;
+use crate::ui::hit_testing::point_in_rect;
 use crate::settings::{GridMode, Settings};
 use crate::{push_border, Camera, InstanceRaw};
 

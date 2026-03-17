@@ -1,5 +1,5 @@
 use crate::entity_id::EntityId;
-use crate::hit_testing::point_in_rect;
+use crate::ui::hit_testing::point_in_rect;
 use crate::Camera;
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]

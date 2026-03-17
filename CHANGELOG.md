@@ -1,3 +1,5 @@
+- 2026-03-17: Move hit_testing, rendering, settings_window UI modules into src/ui/ (26.7k loc)
+- 2026-03-17: Remove dead p2p.rs module — superseded by RemoteStorage/SurrealDB for audio sync (26.7k loc)
 - 2026-03-16: Replace relay server with SurrealDB live queries — clients connect directly to SurrealDB for real-time sync via LIVE SELECT on ops/presence/ephemeral tables, eliminating ws_client, protocol, and relay_server (26.8k loc)
 - 2026-03-16: Real-time drag previews for remote users — send DragUpdate ephemeral messages during MovingSelection, MovingMidiClip, MovingMidiNote drags so remote clients see ghost outlines while dragging (26.2k loc)
 - 2026-03-16: Fix MIDI clip move sync — unguarded std::mem::replace in DraggingAutomationPoint handler was clobbering all drag states, preventing push_op from firing. Added matches!() guards to all unguarded handlers (26.2k loc)

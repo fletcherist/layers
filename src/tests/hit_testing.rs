@@ -5,7 +5,7 @@ use indexmap::IndexMap;
 use crate::automation::AutomationData;
 use crate::component;
 use crate::entity_id::{EntityId, new_id};
-use crate::hit_testing::{canonical_rect, hit_test, point_in_rect, rects_overlap, targets_in_rect};
+use crate::ui::hit_testing::{canonical_rect, hit_test, point_in_rect, rects_overlap, targets_in_rect};
 use crate::ui::waveform::{AudioData, WaveformPeaks, WaveformView};
 use crate::{Camera, CanvasObject, HitTarget};
 

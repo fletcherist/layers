@@ -6,7 +6,7 @@ use crate::component;
 use crate::effects;
 use crate::entity_id::EntityId;
 use crate::grid::{grid_spacing_for_settings, pixels_per_beat};
-use crate::hit_testing::canonical_rect;
+use crate::ui::hit_testing::canonical_rect;
 use crate::instruments;
 use crate::midi;
 use crate::regions::{

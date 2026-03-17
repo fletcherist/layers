@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-use crate::hit_testing::point_in_rect;
+use crate::ui::hit_testing::point_in_rect;
 use crate::{push_border, Camera, InstanceRaw};
 
 // ---------------------------------------------------------------------------

@@ -12,7 +12,8 @@ use crate::audio::PIXELS_PER_SECOND;
 use crate::ui::browser;
 use crate::effects;
 use crate::midi;
-use crate::settings::{Settings, SettingsWindow};
+use crate::settings::Settings;
+use crate::ui::settings_window::SettingsWindow;
 use crate::ui::context_menu::{
     ContextMenu, ContextMenuEntry, CTX_MENU_INLINE_HEIGHT, CTX_MENU_ITEM_HEIGHT, CTX_MENU_PADDING,
     CTX_MENU_SECTION_HEIGHT, CTX_MENU_SEPARATOR_HEIGHT, CTX_MENU_SWATCH_HEIGHT, CTX_MENU_WIDTH,

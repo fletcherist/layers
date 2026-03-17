@@ -1,5 +1,5 @@
 use crate::InstanceRaw;
-use crate::hit_testing::point_in_rect;
+use crate::ui::hit_testing::point_in_rect;
 
 // ---------------------------------------------------------------------------
 // Transport Panel (bottom-center playback status)

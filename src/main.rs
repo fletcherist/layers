@@ -8,17 +8,14 @@ mod events;
 mod gpu;
 mod grid;
 mod history;
-mod hit_testing;
 mod instruments;
 mod midi;
 mod network;
 mod operations;
-mod p2p;
 mod surreal_client;
 mod plugins;
 mod regions;
 mod remote_storage;
-mod rendering;
 mod settings;
 mod storage;
 mod ui;
@@ -31,7 +28,7 @@ pub(crate) use gpu::{push_border, Camera, Gpu, InstanceRaw};
 pub(crate) use ui::transport::{TransportPanel, TRANSPORT_WIDTH};
 
 use grid::{grid_spacing_for_settings, snap_to_clip_grid, snap_to_grid, DEFAULT_BPM};
-use hit_testing::{
+use ui::hit_testing::{
     canonical_rect, compute_resize, full_audio_width_px, hit_test, hit_test_corner_resize,
     hit_test_fade_curve_dot, hit_test_fade_handle, hit_test_waveform_edge,
     hit_test_automation_point, hit_test_automation_line,
@@ -43,7 +40,7 @@ use regions::{
     EXPORT_RENDER_PILL_H, EXPORT_RENDER_PILL_W,
     LOOP_REGION_DEFAULT_HEIGHT, LOOP_REGION_DEFAULT_WIDTH,
 };
-use rendering::{build_instances, build_waveform_vertices, default_objects, RenderContext};
+use ui::rendering::{build_instances, build_waveform_vertices, default_objects, RenderContext};
 
 use std::collections::HashSet;
 use std::path::PathBuf;
@@ -66,7 +63,8 @@ use ui::waveform::{AudioData, WaveformPeaks, WaveformVertex};
 use surrealdb::types::SurrealValue;
 
 use muda::{MenuId, Submenu as MudaSubmenu};
-use settings::{Settings, SettingsWindow, CATEGORIES};
+use settings::Settings;
+use ui::settings_window::{SettingsWindow, CATEGORIES};
 use storage::{default_base_path, ProjectState, Storage};
 use winit::{
     event_loop::EventLoop,

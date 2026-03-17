@@ -206,7 +206,7 @@ fn test_instrument_region_auto_extends_on_clip_resize() {
     let cs = app.midi_clips.get(&mc_id).unwrap().size;
     let padding = instruments::INSTRUMENT_REGION_PADDING;
     for (_, ir) in &mut app.instrument_regions {
-        if crate::hit_testing::rects_overlap(ir.position, ir.size, cp, cs) {
+        if crate::ui::hit_testing::rects_overlap(ir.position, ir.size, cp, cs) {
             instruments::ensure_region_contains_clip(ir, cp, cs, padding);
         }
     }
