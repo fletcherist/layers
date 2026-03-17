@@ -1,3 +1,8 @@
+- feat: audio overlap resolution on BPM change — live during drag, on text input, and on undo/redo (28.3k loc)
+- tweak: default audio clip height changed from 150px to 120px (2 beats) to align with grid (28.1k loc)
+- feat: live waveform overlap resolution during drag — background clips crop/hide in real-time and restore when moved away (28.0k loc)
+- fix: vertical grid snapping now uses the same musical grid spacing as horizontal snap (28.1k loc)
+- feat: audio waveform overlap resolution — overlapping waveforms on the same track get cropped/deleted like MIDI notes (27.7k loc)
 - fix: BPM change (drag + text entry) now rescales all clip/region positions to stay locked to the same bar/beat (27.3k loc)
 - 2026-03-17: feat: undo BPM change — push_op(SetBpm) on drag release and text input (27.2k loc)
 - 2026-03-17: feat: universal binary release — `make release` now builds for both Apple Silicon and Intel Macs via lipo (27.2k loc)

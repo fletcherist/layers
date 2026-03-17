@@ -413,6 +413,7 @@ impl Operation {
             Operation::SetBpm { before, after } => {
                 app.rescale_clip_positions(before / after);
                 app.bpm = *after;
+                app.resolve_all_waveform_overlaps();
             }
 
             // --- Batch ---

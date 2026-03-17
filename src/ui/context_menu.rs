@@ -85,6 +85,12 @@ fn grid_entries(settings: &Settings) -> Vec<ContextMenuEntry> {
         action: CommandAction::ToggleSnapToGrid,
         checked: settings.snap_to_grid,
     }));
+    entries.push(ContextMenuEntry::Item(ContextMenuItem {
+        label: "Snap to Vertical Grid",
+        shortcut: "",
+        action: CommandAction::ToggleVerticalSnap,
+        checked: settings.snap_to_vertical_grid,
+    }));
     entries.push(ContextMenuEntry::Separator);
 
     entries.push(ContextMenuEntry::SectionHeader("Fixed Grid:"));

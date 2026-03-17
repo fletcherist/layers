@@ -57,6 +57,15 @@ pub(crate) fn snap_to_grid(world_x: f32, settings: &Settings, zoom: f32, bpm: f3
     (world_x / spacing).round() * spacing
 }
 
+/// Snap a world-Y coordinate to the same musical grid used horizontally.
+pub(crate) fn snap_to_vertical_grid(world_y: f32, settings: &Settings, zoom: f32, bpm: f32) -> f32 {
+    if !settings.snap_to_vertical_grid {
+        return world_y;
+    }
+    let spacing = grid_spacing_for_settings(settings, zoom, bpm);
+    (world_y / spacing).round() * spacing
+}
+
 /// Grid spacing using a clip's own grid_mode / triplet_grid.
 pub(crate) fn clip_grid_spacing(grid_mode: GridMode, triplet: bool, zoom: f32, bpm: f32) -> f32 {
     match grid_mode {

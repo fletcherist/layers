@@ -34,6 +34,7 @@ pub enum CommandAction {
     RenameEffectRegion,
     RenameSample,
     ToggleSnapToGrid,
+    ToggleVerticalSnap,
     ToggleGrid,
     SetGridAdaptive(AdaptiveGridSize),
     SetGridFixed(FixedGrid),

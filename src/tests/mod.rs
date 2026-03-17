@@ -8,3 +8,5 @@ mod palette;
 mod plugins;
 mod state_mutations;
 mod storage_roundtrip;
+mod vertical_snap;
+mod waveform_overlap;
