@@ -746,6 +746,17 @@ impl App {
         }
     }
 
+    /// Adjust camera position so the screen center stays anchored to the same
+    /// world content after all object positions have been scaled by `scale`.
+    pub(crate) fn rescale_camera_for_bpm(&mut self, scale: f32) {
+        let (sw, sh, _) = self.screen_info();
+        let cx = sw / 2.0;
+        let cy = sh / 2.0;
+        let world_center = self.camera.screen_to_world([cx, cy]);
+        self.camera.position[0] = world_center[0] * scale - cx / self.camera.zoom;
+        self.camera.position[1] = world_center[1] * scale - cy / self.camera.zoom;
+    }
+
     /// Tear down plugin GUIs and instances in the correct order before exit.
     /// GUIs must be destroyed before plugin instances they reference.
     #[cfg(feature = "native")]

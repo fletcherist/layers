@@ -411,7 +411,9 @@ impl Operation {
 
             // --- Global state ---
             Operation::SetBpm { before, after } => {
-                app.rescale_clip_positions(before / after);
+                let scale = before / after;
+                app.rescale_clip_positions(scale);
+                app.rescale_camera_for_bpm(scale);
                 app.bpm = *after;
                 app.resolve_all_waveform_overlaps();
             }

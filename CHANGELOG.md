@@ -1,3 +1,4 @@
+- fix: camera no longer drifts (false zoom) when changing BPM via drag, text entry, or undo/redo (28.5k loc)
 - fix: BPM drag overlap snapshots now rescale with BPM so overlapping clips keep correct height (28.4k loc)
 - fix: audio clip height and Y positions now scale with BPM changes so clips always span 2 grid beats (28.4k loc)
 - feat: audio overlap resolution on BPM change — live during drag, on text input, and on undo/redo (28.3k loc)

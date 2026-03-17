@@ -311,3 +311,41 @@ fn test_paste_component_creates_independent_copy() {
         );
     }
 }
+
+#[test]
+fn rescale_camera_for_bpm_keeps_screen_center_stable() {
+    let mut app = App::new_headless();
+    app.camera.position = [100.0, 50.0];
+    app.camera.zoom = 1.0;
+
+    // screen_info() returns (1280, 800, 1.0) in headless mode
+    let cx = 1280.0 / 2.0;
+    let cy = 800.0 / 2.0;
+    let world_center_before = app.camera.screen_to_world([cx, cy]);
+
+    let old_bpm = 120.0_f32;
+    let new_bpm = 180.0_f32;
+    let scale = old_bpm / new_bpm;
+
+    app.rescale_clip_positions(scale);
+    app.rescale_camera_for_bpm(scale);
+    app.bpm = new_bpm;
+
+    let world_center_after = app.camera.screen_to_world([cx, cy]);
+
+    // The screen center should now point to the rescaled version of the
+    // original world center (i.e. world_center_before * scale).
+    let expected = [world_center_before[0] * scale, world_center_before[1] * scale];
+    assert!(
+        (world_center_after[0] - expected[0]).abs() < 0.01,
+        "x: got {} expected {}",
+        world_center_after[0],
+        expected[0]
+    );
+    assert!(
+        (world_center_after[1] - expected[1]).abs() < 0.01,
+        "y: got {} expected {}",
+        world_center_after[1],
+        expected[1]
+    );
+}

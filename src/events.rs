@@ -416,7 +416,9 @@ impl ApplicationHandler for App {
                     let dy = initial_y - self.mouse_pos[1];
                     let new_bpm = (initial_bpm + dy * 0.5).clamp(20.0, 999.0);
                     if (self.bpm - new_bpm).abs() > f32::EPSILON {
-                        self.rescale_clip_positions(self.bpm / new_bpm);
+                        let scale = self.bpm / new_bpm;
+                        self.rescale_clip_positions(scale);
+                        self.rescale_camera_for_bpm(scale);
                     }
                     self.bpm = new_bpm;
                     let mut snaps = std::mem::take(&mut self.bpm_drag_overlap_snapshots);
@@ -2312,7 +2314,9 @@ impl ApplicationHandler for App {
                             self.bpm = self.bpm.round();
                             let after = self.bpm;
                             if (pre_round - after).abs() > f32::EPSILON {
-                                self.rescale_clip_positions(pre_round / after);
+                                let scale = pre_round / after;
+                                self.rescale_clip_positions(scale);
+                                self.rescale_camera_for_bpm(scale);
                             }
                             // Re-resolve after rounding correction, then commit snapshots
                             let mut snaps = std::mem::take(&mut self.bpm_drag_overlap_snapshots);
@@ -3041,7 +3045,9 @@ impl ApplicationHandler for App {
                                         let before = self.bpm;
                                         let after = val.clamp(20.0, 999.0);
                                         if (before - after).abs() > f32::EPSILON {
-                                            self.rescale_clip_positions(before / after);
+                                            let scale = before / after;
+                                            self.rescale_clip_positions(scale);
+                                            self.rescale_camera_for_bpm(scale);
                                             self.bpm = after;
                                             let overlap_ops = self.resolve_all_waveform_overlaps();
                                             let mut ops = vec![crate::operations::Operation::SetBpm { before, after }];
