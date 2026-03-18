@@ -952,22 +952,28 @@ impl Gpu {
             text_buffers.push(buf);
             text_meta.push((pp[0], fader_pos[1] + fader_size[1] + 4.0 * scale, TextColor::rgba(200, 200, 210, vol_alpha), full_bounds));
 
-            // PAN label
+            // PAN label — centered at the knob center
             let mut buf = TextBuffer::new(&mut self.font_system, Metrics::new(label_font, label_line));
             buf.set_size(&mut self.font_system, Some(rw_w), Some(label_line));
-            buf.set_text(&mut self.font_system, "PAN", Attrs::new().family(Family::SansSerif), Shaping::Advanced);
+            buf.set_text(&mut self.font_system, "Pan", Attrs::new().family(Family::SansSerif), Shaping::Advanced);
+            for line in buf.lines.iter_mut() {
+                line.set_align(Some(glyphon::cosmic_text::Align::Center));
+            }
             buf.shape_until_scroll(&mut self.font_system, false);
             text_buffers.push(buf);
-            text_meta.push((pc[0] - rw_w * 0.5, pc[1] - knob_r - 18.0 * scale, TextColor::rgba(140, 140, 150, 180), full_bounds));
+            text_meta.push((pp[0], pc[1] - knob_r - 18.0 * scale, TextColor::rgba(140, 140, 150, 180), full_bounds));
 
-            // PAN value
+            // PAN value — below the knob
             let pan_text = rw.pan_text();
             let mut buf = TextBuffer::new(&mut self.font_system, Metrics::new(val_font, val_line));
             buf.set_size(&mut self.font_system, Some(rw_w), Some(val_line));
             buf.set_text(&mut self.font_system, &pan_text, Attrs::new().family(Family::SansSerif), Shaping::Advanced);
+            for line in buf.lines.iter_mut() {
+                line.set_align(Some(glyphon::cosmic_text::Align::Center));
+            }
             buf.shape_until_scroll(&mut self.font_system, false);
             text_buffers.push(buf);
-            text_meta.push((pc[0] - rw_w * 0.5, pc[1] + knob_r + 4.0 * scale, TextColor::rgba(200, 200, 210, 220), full_bounds));
+            text_meta.push((pp[0], pc[1] + knob_r + 4.0 * scale, TextColor::rgba(200, 200, 210, 220), full_bounds));
 
             // WARP label
             let (btn_pos, btn_size) = right_window::RightWindow::warp_mode_button_rect_pub(w, h, scale);

@@ -18,6 +18,7 @@ mod surreal_client;
 mod plugins;
 mod regions;
 mod settings;
+pub mod theme;
 mod storage;
 mod ui;
 mod user;
@@ -370,24 +371,7 @@ impl Clipboard {
 // Constants
 // ---------------------------------------------------------------------------
 
-pub(crate) const WAVEFORM_COLORS: &[[f32; 4]] = &[
-    [1.00, 0.24, 0.19, 1.0], // red
-    [1.00, 0.42, 0.24, 1.0], // orange-red
-    [1.00, 0.58, 0.00, 1.0], // orange
-    [1.00, 0.72, 0.00, 1.0], // amber
-    [1.00, 0.84, 0.00, 1.0], // yellow
-    [0.78, 0.90, 0.19, 1.0], // lime
-    [0.30, 0.85, 0.39, 1.0], // green
-    [0.19, 0.84, 0.55, 1.0], // mint
-    [0.19, 0.78, 0.71, 1.0], // teal
-    [0.19, 0.78, 0.90, 1.0], // cyan
-    [0.35, 0.78, 0.98, 1.0], // sky blue
-    [0.00, 0.48, 1.00, 1.0], // blue
-    [0.35, 0.34, 0.84, 1.0], // indigo
-    [0.69, 0.32, 0.87, 1.0], // violet
-    [0.88, 0.25, 0.63, 1.0], // magenta
-    [1.00, 0.18, 0.33, 1.0], // rose
-];
+pub(crate) use crate::theme::WAVEFORM_COLORS;
 
 // Audio formats supported via symphonia: wav, mp3, ogg, flac, aac
 const AUDIO_EXTENSIONS: &[&str] = &["wav", "mp3", "ogg", "flac", "aac", "m4a", "mp4"];
@@ -534,6 +518,8 @@ struct App {
     bpm_drag_overlap_snapshots: IndexMap<EntityId, WaveformView>,
     last_click_time: TimeInstant,
     last_vol_text_click_time: TimeInstant,
+    last_vol_knob_click_time: TimeInstant,
+    last_pan_knob_click_time: TimeInstant,
     last_sample_bpm_text_click_time: TimeInstant,
     last_pitch_text_click_time: TimeInstant,
     last_click_world: [f32; 2],
@@ -644,6 +630,8 @@ impl App {
             bpm_drag_overlap_snapshots: IndexMap::new(),
             last_click_time: TimeInstant::now(),
             last_vol_text_click_time: TimeInstant::now(),
+            last_vol_knob_click_time: TimeInstant::now(),
+            last_pan_knob_click_time: TimeInstant::now(),
             last_sample_bpm_text_click_time: TimeInstant::now(),
             last_pitch_text_click_time: TimeInstant::now(),
             last_click_world: [0.0; 2],
@@ -1304,6 +1292,8 @@ impl App {
             bpm_drag_overlap_snapshots: IndexMap::new(),
             last_click_time: TimeInstant::now(),
             last_vol_text_click_time: TimeInstant::now(),
+            last_vol_knob_click_time: TimeInstant::now(),
+            last_pan_knob_click_time: TimeInstant::now(),
             last_sample_bpm_text_click_time: TimeInstant::now(),
             last_pitch_text_click_time: TimeInstant::now(),
             last_click_world: [0.0; 2],

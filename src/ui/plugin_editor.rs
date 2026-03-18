@@ -1,5 +1,6 @@
 use crate::entity_id::EntityId;
 use crate::InstanceRaw;
+use crate::theme::ACCENT_MUTED;
 
 const WIN_W: f32 = 360.0;
 const HEADER_H: f32 = 36.0;
@@ -219,7 +220,7 @@ impl PluginEditorWindow {
             out.push(InstanceRaw {
                 position: tp,
                 size: [ts[0] * val, ts[1]],
-                color: [0.25, 0.50, 0.90, 0.60],
+                color: ACCENT_MUTED,
                 border_radius: ts[1] * 0.5,
             });
 

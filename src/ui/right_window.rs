@@ -19,9 +19,7 @@ const FADER_TOP_OFFSET: f32 = 32.0;
 const PAN_KNOB_Y_OFFSET: f32 = 264.0;
 const PITCH_KNOB_Y_OFFSET: f32 = 348.0;
 
-const BG_COLOR: [f32; 4] = [0.11, 0.11, 0.14, 1.0];
-const HEADER_BG: [f32; 4] = [0.13, 0.13, 0.17, 1.0];
-const BLUE: [f32; 4] = [0.25, 0.55, 1.0, 1.0];
+use crate::theme::{BG_BASE as BG_COLOR, BG_SURFACE as HEADER_BG, ACCENT as BLUE};
 const DOT_INACTIVE: [f32; 4] = [0.25, 0.25, 0.30, 1.0];
 
 pub struct RightWindow {
@@ -173,8 +171,8 @@ impl RightWindow {
 
 
     fn value_to_angle(v: f32) -> f32 {
-        // 225° (7-o'clock) to 315° (5-o'clock), 270° sweep
-        let deg = 225.0 + v.clamp(0.0, 1.0) * 270.0;
+        // 135° (10-o'clock) to 45° (2-o'clock), 270° sweep, center (0.5) = 12 o'clock
+        let deg = 135.0 + v.clamp(0.0, 1.0) * 270.0;
         deg.to_radians()
     }
 
@@ -198,7 +196,13 @@ impl RightWindow {
             let arc_r = (KNOB_R - 6.0) * scale;
             let dx = angle.cos() * arc_r;
             let dy = angle.sin() * arc_r;
-            let color = if t < value { BLUE } else { DOT_INACTIVE };
+            let color = if (t - 0.5) * (value - 0.5) > 0.0
+                && (t - 0.5).abs() <= (value - 0.5).abs()
+            {
+                BLUE
+            } else {
+                DOT_INACTIVE
+            };
             out.push(InstanceRaw {
                 position: [cx + dx - dot_r, cy + dy - dot_r],
                 size: [dot_r * 2.0, dot_r * 2.0],

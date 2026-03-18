@@ -62,9 +62,7 @@ pub(crate) enum ExportHover {
 
 pub(crate) const EXPORT_REGION_DEFAULT_WIDTH: f32 = 800.0;
 pub(crate) const EXPORT_REGION_DEFAULT_HEIGHT: f32 = 300.0;
-pub(crate) const EXPORT_FILL_COLOR: [f32; 4] = [0.15, 0.70, 0.55, 0.10];
-pub(crate) const EXPORT_BORDER_COLOR: [f32; 4] = [0.20, 0.80, 0.60, 0.50];
-pub(crate) const EXPORT_RENDER_PILL_COLOR: [f32; 4] = [0.15, 0.65, 0.50, 0.85];
+pub(crate) use crate::theme::{EXPORT_FILL_COLOR, EXPORT_BORDER_COLOR, EXPORT_RENDER_PILL_COLOR};
 pub(crate) const EXPORT_RENDER_PILL_W: f32 = 110.0;
 pub(crate) const EXPORT_RENDER_PILL_H: f32 = 22.0;
 
@@ -128,8 +126,6 @@ pub(crate) enum LoopHover {
 
 pub(crate) const LOOP_REGION_DEFAULT_WIDTH: f32 = 800.0;
 pub(crate) const LOOP_REGION_DEFAULT_HEIGHT: f32 = 250.0;
-pub(crate) const LOOP_FILL_COLOR: [f32; 4] = [0.25, 0.55, 0.95, 0.08];
-pub(crate) const LOOP_BORDER_COLOR: [f32; 4] = [0.30, 0.60, 1.0, 0.50];
-pub(crate) const LOOP_BADGE_COLOR: [f32; 4] = [0.20, 0.50, 0.95, 0.85];
+pub(crate) use crate::theme::{LOOP_FILL_COLOR, LOOP_BORDER_COLOR, LOOP_BADGE_COLOR};
 pub(crate) const LOOP_BADGE_W: f32 = 70.0;
 pub(crate) const LOOP_BADGE_H: f32 = 22.0;

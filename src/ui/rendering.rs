@@ -19,7 +19,7 @@ use crate::ui;
 use crate::ui::waveform::WaveformVertex;
 use crate::{push_border, Camera, CanvasObject, HitTarget, InstanceRaw, WaveformView};
 
-pub(crate) const SEL_COLOR: [f32; 4] = [0.35, 0.65, 1.0, 0.8];
+pub(crate) use crate::theme::SELECTION as SEL_COLOR;
 
 pub(crate) struct RenderContext<'a> {
     pub(crate) camera: &'a Camera,

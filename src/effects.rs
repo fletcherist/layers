@@ -121,8 +121,7 @@ fn save_cache(plugins: &[PluginInfo]) {
 
 pub const EFFECT_REGION_DEFAULT_WIDTH: f32 = 600.0;
 pub const EFFECT_REGION_DEFAULT_HEIGHT: f32 = 250.0;
-const EFFECT_BORDER_COLOR: [f32; 4] = [0.25, 0.50, 0.90, 0.50];
-const EFFECT_ACTIVE_BORDER: [f32; 4] = [0.35, 0.60, 1.00, 0.70];
+use crate::theme::{EFFECT_BORDER_COLOR, EFFECT_ACTIVE_BORDER};
 
 // ---------------------------------------------------------------------------
 // EffectRegion — spatial zone that controls when plugins sound
@@ -190,7 +189,7 @@ impl EffectRegion {
 // ---------------------------------------------------------------------------
 
 pub const PLUGIN_BLOCK_DEFAULT_SIZE: [f32; 2] = [120.0, 40.0];
-pub const PLUGIN_BLOCK_DEFAULT_COLOR: [f32; 4] = [0.25, 0.50, 0.90, 0.70];
+pub use crate::theme::PLUGIN_BLOCK_DEFAULT_COLOR;
 pub const PLUGIN_BLOCK_BORDER_RADIUS: f32 = 6.0;
 
 /// Native GUI handle type — vst3_gui::Vst3Gui on native, () on web.

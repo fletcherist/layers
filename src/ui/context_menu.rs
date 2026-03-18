@@ -1,7 +1,7 @@
 use crate::settings::{AdaptiveGridSize, FixedGrid, GridMode, Settings};
 use crate::ui::palette::CommandAction;
 use crate::InstanceRaw;
-use crate::WAVEFORM_COLORS;
+use crate::theme::{WAVEFORM_COLORS, BG_MENU, SCROLLBAR_BG};
 
 pub const CTX_MENU_WIDTH: f32 = 210.0;
 pub const CTX_MENU_ITEM_HEIGHT: f32 = 26.0;
@@ -625,7 +625,7 @@ impl ContextMenu {
         out.push(InstanceRaw {
             position: pos,
             size,
-            color: [0.16, 0.16, 0.19, 1.0],
+            color: BG_MENU,
             border_radius: CTX_MENU_BORDER_RADIUS * scale,
         });
 
@@ -661,7 +661,7 @@ impl ContextMenu {
                     out.push(InstanceRaw {
                         position: [pos[0] + pad + 4.0 * scale, sep_y],
                         size: [size[0] - (pad + 4.0 * scale) * 2.0, 1.0 * scale],
-                        color: [1.0, 1.0, 1.0, 0.08],
+                        color: SCROLLBAR_BG,
                         border_radius: 0.0,
                     });
                 }

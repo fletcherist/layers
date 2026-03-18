@@ -1,5 +1,6 @@
 use crate::InstanceRaw;
 use crate::ui::hit_testing::point_in_rect;
+use crate::theme::{RECORD_ACTIVE, RECORD_DIM};
 
 // ---------------------------------------------------------------------------
 // Transport Panel (bottom-center playback status)
@@ -98,14 +99,14 @@ impl TransportPanel {
             out.push(InstanceRaw {
                 position: [sq_x, sq_y],
                 size: [sq, sq],
-                color: [0.95, 0.2, 0.2, 1.0],
+                color: RECORD_ACTIVE,
                 border_radius: 2.0 * scale,
             });
         } else {
             out.push(InstanceRaw {
                 position: [dot_x, dot_y],
                 size: [dot_diameter, dot_diameter],
-                color: [0.85, 0.25, 0.25, 0.9],
+                color: RECORD_DIM,
                 border_radius: dot_diameter * 0.5,
             });
         }

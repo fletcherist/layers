@@ -13,18 +13,13 @@ const INDENT_PX: f32 = 16.0;
 const SCROLLBAR_WIDTH: f32 = 6.0;
 const ADD_BUTTON_SIZE: f32 = 20.0;
 
-const BG_COLOR: [f32; 4] = [0.11, 0.11, 0.14, 1.0];
-const HEADER_BG: [f32; 4] = [0.13, 0.13, 0.17, 1.0];
-const HOVER_COLOR: [f32; 4] = [1.0, 1.0, 1.0, 0.06];
-const SCROLLBAR_BG: [f32; 4] = [1.0, 1.0, 1.0, 0.08];
-const SCROLLBAR_THUMB: [f32; 4] = [1.0, 1.0, 1.0, 0.20];
-const CHEVRON_COLOR: [f32; 4] = [1.0, 1.0, 1.0, 0.40];
-const ADD_BTN_COLOR: [f32; 4] = [1.0, 1.0, 1.0, 0.50];
-const ADD_BTN_HOVER: [f32; 4] = [1.0, 1.0, 1.0, 0.80];
-
-const PLUGIN_SECTION_BG: [f32; 4] = [0.10, 0.12, 0.16, 1.0];
-const PLUGIN_SECTION_HEADER_BG: [f32; 4] = [0.11, 0.14, 0.20, 1.0];
-const PLUGIN_FX_BADGE: [f32; 4] = [0.25, 0.50, 0.90, 0.60];
+use crate::theme::{
+    BG_BASE as BG_COLOR, BG_SURFACE as HEADER_BG, HOVER as HOVER_COLOR,
+    SCROLLBAR_BG, SCROLLBAR_THUMB,
+    CHEVRON as CHEVRON_COLOR, ADD_BTN_NORMAL as ADD_BTN_COLOR, ADD_BTN_HOVER,
+    BG_PLUGIN as PLUGIN_SECTION_BG, BG_PLUGIN_HEADER as PLUGIN_SECTION_HEADER_BG,
+    ACCENT_MUTED as PLUGIN_FX_BADGE,
+};
 
 #[derive(Clone)]
 pub enum EntryKind {

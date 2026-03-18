@@ -29,7 +29,7 @@ pub struct MidiClip {
 pub const MIDI_CLIP_DEFAULT_HEIGHT: f32 = 540.0;
 pub const MIDI_CLIP_DEFAULT_BARS: u32 = 4;
 pub const MIDI_CLIP_DEFAULT_SIZE: [f32; 2] = [480.0, 540.0];
-pub const MIDI_CLIP_DEFAULT_COLOR: [f32; 4] = [0.60, 0.30, 0.90, 0.70];
+pub use crate::theme::MIDI_CLIP_DEFAULT_COLOR;
 pub const MIDI_CLIP_DEFAULT_PITCH_RANGE: (u8, u8) = (12, 109); // C0-C8
 pub const DEFAULT_NOTE_DURATION_PX: f32 = 30.0;
 pub const VELOCITY_LANE_HEIGHT: f32 = 40.0;

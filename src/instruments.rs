@@ -12,8 +12,7 @@ use crate::{push_border, Camera, InstanceRaw};
 pub const INSTRUMENT_REGION_DEFAULT_WIDTH: f32 = 600.0;
 pub const INSTRUMENT_REGION_DEFAULT_HEIGHT: f32 = 250.0;
 pub const INSTRUMENT_REGION_PADDING: f32 = 40.0;
-const INSTRUMENT_BORDER_COLOR: [f32; 4] = [0.60, 0.30, 0.90, 0.50];
-const INSTRUMENT_ACTIVE_BORDER: [f32; 4] = [0.70, 0.40, 1.00, 0.70];
+use crate::theme::{INSTRUMENT_BORDER_COLOR, INSTRUMENT_ACTIVE_BORDER};
 
 #[derive(Clone)]
 pub struct InstrumentRegion {

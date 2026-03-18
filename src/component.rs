@@ -4,12 +4,10 @@ use indexmap::IndexMap;
 
 pub type ComponentId = EntityId;
 
-const COMPONENT_BORDER_COLOR: [f32; 4] = [0.85, 0.55, 0.20, 0.50];
-const COMPONENT_FILL_COLOR: [f32; 4] = [0.85, 0.55, 0.20, 0.06];
-const COMPONENT_BADGE_COLOR: [f32; 4] = [0.85, 0.55, 0.20, 0.70];
-const INSTANCE_FILL_COLOR: [f32; 4] = [0.85, 0.55, 0.20, 0.04];
-const INSTANCE_BORDER_COLOR: [f32; 4] = [0.85, 0.55, 0.20, 0.30];
-const LOCK_ICON_COLOR: [f32; 4] = [0.85, 0.55, 0.20, 0.60];
+use crate::theme::{
+    COMPONENT_BORDER_COLOR, COMPONENT_FILL_COLOR, COMPONENT_BADGE_COLOR,
+    INSTANCE_FILL_COLOR, INSTANCE_BORDER_COLOR, LOCK_ICON_COLOR,
+};
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct ComponentDef {

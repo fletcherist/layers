@@ -1615,6 +1615,23 @@ impl ApplicationHandler for App {
                                     self.request_redraw();
                                     return;
                                 } else if hit_vol {
+                                    let now = TimeInstant::now();
+                                    let is_dbl = now.duration_since(self.last_vol_knob_click_time).as_millis() < 400;
+                                    self.last_vol_knob_click_time = now;
+                                    if is_dbl {
+                                        // Double-click resets volume to 0 dB
+                                        let before = self.waveforms[&wf_id].clone();
+                                        self.waveforms.get_mut(&wf_id).unwrap().volume = 1.0;
+                                        if let Some(rw) = &mut self.right_window {
+                                            rw.volume = 1.0;
+                                            rw.vol_dragging = false;
+                                        }
+                                        let after = self.waveforms[&wf_id].clone();
+                                        self.push_op(crate::operations::Operation::UpdateWaveform { id: wf_id, before, after });
+                                        self.sync_audio_clips();
+                                        self.request_redraw();
+                                        return;
+                                    }
                                     let start_value = ui::palette::gain_to_vol_fader_pos(rw.volume);
                                     if let Some(rw) = &mut self.right_window {
                                         rw.vol_dragging = true;
@@ -1625,6 +1642,23 @@ impl ApplicationHandler for App {
                                     self.request_redraw();
                                     return;
                                 } else if hit_pan {
+                                    let now = TimeInstant::now();
+                                    let is_dbl = now.duration_since(self.last_pan_knob_click_time).as_millis() < 400;
+                                    self.last_pan_knob_click_time = now;
+                                    if is_dbl {
+                                        // Double-click resets pan to center (0.5)
+                                        let before = self.waveforms[&wf_id].clone();
+                                        self.waveforms.get_mut(&wf_id).unwrap().pan = 0.5;
+                                        if let Some(rw) = &mut self.right_window {
+                                            rw.pan = 0.5;
+                                            rw.pan_dragging = false;
+                                        }
+                                        let after = self.waveforms[&wf_id].clone();
+                                        self.push_op(crate::operations::Operation::UpdateWaveform { id: wf_id, before, after });
+                                        self.sync_audio_clips();
+                                        self.request_redraw();
+                                        return;
+                                    }
                                     let start_value = rw.pan;
                                     if let Some(rw) = &mut self.right_window {
                                         rw.pan_dragging = true;

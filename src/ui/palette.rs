@@ -1,4 +1,5 @@
 use crate::InstanceRaw;
+use crate::theme::{BG_OVERLAY, SCROLLBAR_BG, SCROLLBAR_THUMB, RMS_LOW, RMS_MID, RMS_HIGH};
 
 pub const PALETTE_WIDTH: f32 = 520.0;
 pub const PALETTE_INPUT_HEIGHT: f32 = 52.0;
@@ -887,7 +888,7 @@ impl CommandPalette {
         out.push(InstanceRaw {
             position: pos,
             size,
-            color: [0.14, 0.14, 0.17, 0.98],
+            color: BG_OVERLAY,
             border_radius: PALETTE_BORDER_RADIUS * scale,
         });
 
@@ -993,7 +994,7 @@ impl CommandPalette {
                     out.push(InstanceRaw {
                         position: [sb_x, track_top],
                         size: [sb_w, track_h],
-                        color: [1.0, 1.0, 1.0, 0.08],
+                        color: SCROLLBAR_BG,
                         border_radius: 3.0 * scale,
                     });
 
@@ -1010,7 +1011,7 @@ impl CommandPalette {
                     out.push(InstanceRaw {
                         position: [sb_x, thumb_y],
                         size: [sb_w, thumb_h],
-                        color: [1.0, 1.0, 1.0, 0.20],
+                        color: SCROLLBAR_THUMB,
                         border_radius: 3.0 * scale,
                     });
                 }
@@ -1057,11 +1058,11 @@ impl CommandPalette {
                 let rms_w = (self.fader_rms.clamp(0.0, 1.0) * ts[0]).max(0.0);
                 if rms_w > 0.5 {
                     let rms_color = if self.fader_rms > 0.8 {
-                        [1.0, 0.35, 0.30, 1.0]
+                        RMS_HIGH
                     } else if self.fader_rms > 0.5 {
-                        [1.0, 0.85, 0.32, 1.0]
+                        RMS_MID
                     } else {
-                        [0.45, 0.92, 0.55, 1.0]
+                        RMS_LOW
                     };
                     out.push(InstanceRaw {
                         position: [tp[0], rms_y],
@@ -1107,7 +1108,7 @@ impl CommandPalette {
                     out.push(InstanceRaw {
                         position: [sb_x, track_top],
                         size: [sb_w, track_h],
-                        color: [1.0, 1.0, 1.0, 0.08],
+                        color: SCROLLBAR_BG,
                         border_radius: 3.0 * scale,
                     });
 
@@ -1125,7 +1126,7 @@ impl CommandPalette {
                     out.push(InstanceRaw {
                         position: [sb_x, thumb_y],
                         size: [sb_w, thumb_h],
-                        color: [1.0, 1.0, 1.0, 0.20],
+                        color: SCROLLBAR_THUMB,
                         border_radius: 3.0 * scale,
                     });
                 }
