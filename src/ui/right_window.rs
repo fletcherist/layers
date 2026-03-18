@@ -1,6 +1,7 @@
 use crate::entity_id::EntityId;
 use crate::InstanceRaw;
 use crate::ui::palette::{gain_to_db, gain_to_fader_pos, fader_pos_to_gain};
+use crate::ui::value_entry::ValueEntry;
 
 pub const RIGHT_WINDOW_WIDTH: f32 = 200.0;
 const HEADER_HEIGHT: f32 = 36.0;
@@ -8,6 +9,11 @@ const KNOB_R: f32 = 22.0;
 const KNOB_DOT_R: f32 = 2.5;
 const KNOB_INDICATOR_R: f32 = 3.5;
 const ARC_DOTS: usize = 30;
+
+const FADER_TRACK_W: f32 = 6.0;
+const FADER_TRACK_HEIGHT: f32 = 120.0;
+const FADER_THUMB_R: f32 = 9.0;
+const FADER_TOP_OFFSET: f32 = 32.0;
 
 const BG_COLOR: [f32; 4] = [0.11, 0.11, 0.14, 1.0];
 const HEADER_BG: [f32; 4] = [0.13, 0.13, 0.17, 1.0];
@@ -22,6 +28,7 @@ pub struct RightWindow {
     pub pan_dragging: bool,
     pub drag_start_y: f32,
     pub drag_start_value: f32,
+    pub vol_entry: ValueEntry,
 }
 
 impl RightWindow {
@@ -31,21 +38,34 @@ impl RightWindow {
         ([screen_w - w, 0.0], [w, h])
     }
 
-    fn vol_knob_center(screen_w: f32, screen_h: f32, scale: f32) -> [f32; 2] {
+    fn vol_fader_rects(screen_w: f32, screen_h: f32, scale: f32) -> ([f32; 2], [f32; 2]) {
         let (pp, ps) = Self::panel_rect(screen_w, screen_h, scale);
-        [pp[0] + ps[0] * 0.5, pp[1] + HEADER_HEIGHT * scale + 70.0 * scale]
+        let panel_cx = pp[0] + ps[0] * 0.5;
+        let track_pos = [
+            panel_cx - FADER_TRACK_W * 0.5 * scale,
+            pp[1] + (HEADER_HEIGHT + FADER_TOP_OFFSET) * scale,
+        ];
+        let track_size = [FADER_TRACK_W * scale, FADER_TRACK_HEIGHT * scale];
+        (track_pos, track_size)
+    }
+
+    fn vol_fader_thumb_y(fader_pos: f32, track_pos: [f32; 2], track_h: f32) -> f32 {
+        track_pos[1] + (1.0 - fader_pos) * track_h
     }
 
     fn pan_knob_center(screen_w: f32, screen_h: f32, scale: f32) -> [f32; 2] {
         let (pp, ps) = Self::panel_rect(screen_w, screen_h, scale);
-        [pp[0] + ps[0] * 0.5, pp[1] + HEADER_HEIGHT * scale + 190.0 * scale]
+        [pp[0] + ps[0] * 0.5, pp[1] + HEADER_HEIGHT * scale + 220.0 * scale]
     }
 
     pub fn hit_test_vol_knob(&self, pos: [f32; 2], screen_w: f32, screen_h: f32, scale: f32) -> bool {
-        let c = Self::vol_knob_center(screen_w, screen_h, scale);
-        let r = (KNOB_R + 8.0) * scale;
-        let dx = pos[0] - c[0];
-        let dy = pos[1] - c[1];
+        let (track_pos, track_size) = Self::vol_fader_rects(screen_w, screen_h, scale);
+        let fader_pos = gain_to_fader_pos(self.volume);
+        let thumb_y = Self::vol_fader_thumb_y(fader_pos, track_pos, track_size[1]);
+        let panel_cx = track_pos[0] + track_size[0] * 0.5;
+        let r = (FADER_THUMB_R + 8.0) * scale;
+        let dx = pos[0] - panel_cx;
+        let dy = pos[1] - thumb_y;
         dx * dx + dy * dy <= r * r
     }
 
@@ -55,6 +75,20 @@ impl RightWindow {
         let dx = pos[0] - c[0];
         let dy = pos[1] - c[1];
         dx * dx + dy * dy <= r * r
+    }
+
+    fn vol_db_text_rect(screen_w: f32, screen_h: f32, scale: f32) -> ([f32; 2], [f32; 2]) {
+        let (pp, _ps) = Self::panel_rect(screen_w, screen_h, scale);
+        let (fader_pos, fader_size) = Self::vol_fader_rects(screen_w, screen_h, scale);
+        let rw_w = RIGHT_WINDOW_WIDTH * scale;
+        let text_y = fader_pos[1] + fader_size[1] + 4.0 * scale;
+        ([pp[0], text_y], [rw_w, 20.0 * scale])
+    }
+
+    pub fn hit_test_vol_text(&self, pos: [f32; 2], screen_w: f32, screen_h: f32, scale: f32) -> bool {
+        let (rp, rs) = Self::vol_db_text_rect(screen_w, screen_h, scale);
+        pos[0] >= rp[0] && pos[0] <= rp[0] + rs[0]
+            && pos[1] >= rp[1] && pos[1] <= rp[1] + rs[1]
     }
 
     fn value_to_angle(v: f32) -> f32 {
@@ -141,10 +175,39 @@ impl RightWindow {
             border_radius: 0.0,
         });
 
-        // Volume knob
+        // Volume fader
         let vol_pos = gain_to_fader_pos(self.volume);
-        let vc = Self::vol_knob_center(screen_w, screen_h, scale);
-        Self::push_knob(&mut out, vc[0], vc[1], vol_pos, scale);
+        let (track_pos, track_size) = Self::vol_fader_rects(screen_w, screen_h, scale);
+        let thumb_y = Self::vol_fader_thumb_y(vol_pos, track_pos, track_size[1]);
+        let thumb_r = FADER_THUMB_R * scale;
+        let panel_cx = track_pos[0] + track_size[0] * 0.5;
+
+        // Track background
+        out.push(InstanceRaw {
+            position: track_pos,
+            size: track_size,
+            color: [0.2, 0.2, 0.25, 1.0],
+            border_radius: FADER_TRACK_W * 0.5 * scale,
+        });
+
+        // Fill from thumb to bottom
+        let fill_h = track_pos[1] + track_size[1] - thumb_y;
+        if fill_h > 0.0 {
+            out.push(InstanceRaw {
+                position: [track_pos[0], thumb_y],
+                size: [track_size[0], fill_h],
+                color: BLUE,
+                border_radius: FADER_TRACK_W * 0.5 * scale,
+            });
+        }
+
+        // Thumb circle
+        out.push(InstanceRaw {
+            position: [panel_cx - thumb_r, thumb_y - thumb_r],
+            size: [thumb_r * 2.0, thumb_r * 2.0],
+            color: [1.0, 1.0, 1.0, 0.95],
+            border_radius: thumb_r,
+        });
 
         // Pan knob
         let pc = Self::pan_knob_center(screen_w, screen_h, scale);
@@ -181,8 +244,8 @@ impl RightWindow {
         }
     }
 
-    pub fn vol_knob_center_pub(screen_w: f32, screen_h: f32, scale: f32) -> [f32; 2] {
-        Self::vol_knob_center(screen_w, screen_h, scale)
+    pub fn vol_fader_rect_pub(screen_w: f32, screen_h: f32, scale: f32) -> ([f32; 2], [f32; 2]) {
+        Self::vol_fader_rects(screen_w, screen_h, scale)
     }
 
     pub fn pan_knob_center_pub(screen_w: f32, screen_h: f32, scale: f32) -> [f32; 2] {

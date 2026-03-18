@@ -1279,10 +1279,25 @@ impl ApplicationHandler for App {
 
                 MouseButton::Left => match state {
                     ElementState::Pressed => {
-                        if self.editing_bpm.is_some() {
+                        if self.editing_bpm.is_editing() {
                             let (sw, sh, scale) = self.screen_info();
                             if !TransportPanel::hit_bpm(self.mouse_pos, sw, sh, scale) {
-                                self.editing_bpm = None;
+                                self.editing_bpm.cancel();
+                                self.request_redraw();
+                            }
+                        }
+
+                        // Cancel vol_entry editing on click outside the text
+                        {
+                            let (sw, sh, scale) = self.screen_info();
+                            let should_cancel = self.right_window.as_ref().map_or(false, |rw| {
+                                rw.vol_entry.is_editing()
+                                    && !rw.hit_test_vol_text(self.mouse_pos, sw, sh, scale)
+                            });
+                            if should_cancel {
+                                if let Some(rw) = &mut self.right_window {
+                                    rw.vol_entry.cancel();
+                                }
                                 self.request_redraw();
                             }
                         }
@@ -1472,9 +1487,18 @@ impl ApplicationHandler for App {
                             let in_panel = self.mouse_pos[0] >= pp[0] && self.mouse_pos[0] <= pp[0] + ps[0];
                             if in_panel {
                                 let wf_id = rw.waveform_id;
+                                let hit_vol_text = rw.hit_test_vol_text(self.mouse_pos, sw, sh, scale);
                                 let hit_vol = rw.hit_test_vol_knob(self.mouse_pos, sw, sh, scale);
                                 let hit_pan = rw.hit_test_pan_knob(self.mouse_pos, sw, sh, scale);
-                                if hit_vol {
+                                if hit_vol_text {
+                                    if let Some(rw) = &mut self.right_window {
+                                        rw.vol_entry.enter();
+                                        rw.vol_dragging = false;
+                                    }
+                                    let _ = wf_id;
+                                    self.request_redraw();
+                                    return;
+                                } else if hit_vol {
                                     let start_value = ui::palette::gain_to_fader_pos(rw.volume);
                                     if let Some(rw) = &mut self.right_window {
                                         rw.vol_dragging = true;
@@ -1706,11 +1730,11 @@ impl ApplicationHandler for App {
                                     let is_dbl = elapsed.as_millis() < 400;
                                     self.last_click_time = now;
                                     if is_dbl {
-                                        self.editing_bpm = Some(String::new());
+                                        self.editing_bpm.enter();
                                         self.dragging_bpm = None;
                                     } else {
                                         self.dragging_bpm = Some((self.bpm, self.mouse_pos[1]));
-                                        self.editing_bpm = None;
+                                        self.editing_bpm.cancel();
                                     }
                                 } else {
                                     #[cfg(feature = "native")]
@@ -3134,15 +3158,15 @@ impl ApplicationHandler for App {
                     }
 
                     // --- BPM editing input ---
-                    if self.editing_bpm.is_some() {
+                    if self.editing_bpm.is_editing() {
                         match &event.logical_key {
                             Key::Named(NamedKey::Escape) => {
-                                self.editing_bpm = None;
+                                self.editing_bpm.cancel();
                                 self.request_redraw();
                                 return;
                             }
                             Key::Named(NamedKey::Enter) => {
-                                if let Some(text) = self.editing_bpm.take() {
+                                if let Some(text) = self.editing_bpm.commit() {
                                     if let Ok(val) = text.parse::<f32>() {
                                         let before = self.bpm;
                                         let after = val.clamp(20.0, 999.0);
@@ -3164,17 +3188,79 @@ impl ApplicationHandler for App {
                                 return;
                             }
                             Key::Named(NamedKey::Backspace) => {
-                                if let Some(ref mut text) = self.editing_bpm {
-                                    text.pop();
-                                }
+                                self.editing_bpm.pop_char();
                                 self.request_redraw();
                                 return;
                             }
                             Key::Character(ch) if !self.modifiers.super_key() => {
                                 let s = ch.as_ref();
                                 if s.chars().all(|c| c.is_ascii_digit() || c == '.') {
-                                    if let Some(ref mut text) = self.editing_bpm {
-                                        text.push_str(s);
+                                    self.editing_bpm.push_char(s);
+                                }
+                                self.request_redraw();
+                                return;
+                            }
+                            _ => {}
+                        }
+                    }
+
+                    // --- vol dB editing input ---
+                    let vol_editing = self.right_window.as_ref().map_or(false, |rw| rw.vol_entry.is_editing());
+                    if vol_editing {
+                        match &event.logical_key {
+                            Key::Named(NamedKey::Escape) => {
+                                if let Some(rw) = &mut self.right_window {
+                                    rw.vol_entry.cancel();
+                                }
+                                self.request_redraw();
+                                return;
+                            }
+                            Key::Named(NamedKey::Enter) => {
+                                let commit = self.right_window.as_mut().and_then(|rw| rw.vol_entry.commit());
+                                if let Some(text) = commit {
+                                    if let Ok(db) = text.parse::<f32>() {
+                                        let new_gain = if db <= -60.0 {
+                                            0.0
+                                        } else {
+                                            ui::palette::db_to_gain(db.clamp(-60.0, 12.0))
+                                        };
+                                        let wf_id = self.right_window.as_ref().map(|rw| rw.waveform_id);
+                                        if let Some(wf_id) = wf_id {
+                                            if let Some(before) = self.waveforms.get(&wf_id).cloned() {
+                                                if let Some(wf) = self.waveforms.get_mut(&wf_id) {
+                                                    wf.volume = new_gain;
+                                                }
+                                                if let Some(rw) = &mut self.right_window {
+                                                    rw.volume = new_gain;
+                                                }
+                                                if let Some(after) = self.waveforms.get(&wf_id).cloned() {
+                                                    self.push_op(crate::operations::Operation::UpdateWaveform {
+                                                        id: wf_id,
+                                                        before,
+                                                        after,
+                                                    });
+                                                }
+                                                self.sync_audio_clips();
+                                                self.mark_dirty();
+                                            }
+                                        }
+                                    }
+                                }
+                                self.request_redraw();
+                                return;
+                            }
+                            Key::Named(NamedKey::Backspace) => {
+                                if let Some(rw) = &mut self.right_window {
+                                    rw.vol_entry.pop_char();
+                                }
+                                self.request_redraw();
+                                return;
+                            }
+                            Key::Character(ch) if !self.modifiers.super_key() => {
+                                let s = ch.as_ref();
+                                if s.chars().all(|c| c.is_ascii_digit() || c == '.' || c == '-') {
+                                    if let Some(rw) = &mut self.right_window {
+                                        rw.vol_entry.push_char(s);
                                     }
                                 }
                                 self.request_redraw();
@@ -3969,7 +4055,7 @@ impl ApplicationHandler for App {
                         &self.settings,
                         &self.toast_manager,
                         self.bpm,
-                        self.editing_bpm.as_deref(),
+                        self.editing_bpm.input.as_deref(),
                         self.automation_mode,
                         self.active_automation_param,
                         &self.midi_clips,

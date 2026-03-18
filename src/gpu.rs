@@ -855,7 +855,7 @@ impl Gpu {
         // Right window text
         if let Some(rw) = right_window {
             let (pp, _) = right_window::RightWindow::panel_rect(w, h, scale);
-            let vc = right_window::RightWindow::vol_knob_center_pub(w, h, scale);
+            let (fader_pos, fader_size) = right_window::RightWindow::vol_fader_rect_pub(w, h, scale);
             let pc = right_window::RightWindow::pan_knob_center_pub(w, h, scale);
             let header_font = 10.0 * scale;
             let header_line = 14.0 * scale;
@@ -875,22 +875,24 @@ impl Gpu {
 
             let knob_r = 22.0 * scale;
 
-            // VOL label
+            // VOL label (above fader top)
             let mut buf = TextBuffer::new(&mut self.font_system, Metrics::new(label_font, label_line));
             buf.set_size(&mut self.font_system, Some(rw_w), Some(label_line));
             buf.set_text(&mut self.font_system, "VOL", Attrs::new().family(Family::SansSerif), Shaping::Advanced);
             buf.shape_until_scroll(&mut self.font_system, false);
             text_buffers.push(buf);
-            text_meta.push((vc[0] - rw_w * 0.5, vc[1] - knob_r - 18.0 * scale, TextColor::rgba(140, 140, 150, 180), full_bounds));
+            text_meta.push((pp[0], fader_pos[1] - 18.0 * scale, TextColor::rgba(140, 140, 150, 180), full_bounds));
 
-            // VOL value
-            let vol_text = rw.vol_text();
+            // VOL value (below fader bottom)
+            let vol_idle = rw.vol_text();
+            let vol_display = rw.vol_entry.display(&vol_idle);
+            let vol_alpha: u8 = if rw.vol_entry.is_editing() { 255 } else { 220 };
             let mut buf = TextBuffer::new(&mut self.font_system, Metrics::new(val_font, val_line));
             buf.set_size(&mut self.font_system, Some(rw_w), Some(val_line));
-            buf.set_text(&mut self.font_system, &vol_text, Attrs::new().family(Family::SansSerif), Shaping::Advanced);
+            buf.set_text(&mut self.font_system, &vol_display, Attrs::new().family(Family::SansSerif), Shaping::Advanced);
             buf.shape_until_scroll(&mut self.font_system, false);
             text_buffers.push(buf);
-            text_meta.push((vc[0] - rw_w * 0.5, vc[1] + knob_r + 4.0 * scale, TextColor::rgba(200, 200, 210, 220), full_bounds));
+            text_meta.push((pp[0], fader_pos[1] + fader_size[1] + 4.0 * scale, TextColor::rgba(200, 200, 210, vol_alpha), full_bounds));
 
             // PAN label
             let mut buf = TextBuffer::new(&mut self.font_system, Metrics::new(label_font, label_line));

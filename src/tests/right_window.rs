@@ -4,6 +4,7 @@ use crate::audio::AudioClipData;
 use crate::automation::AutomationData;
 use crate::entity_id::new_id;
 use crate::operations::Operation;
+use crate::ui::palette::db_to_gain;
 use crate::ui::right_window::RightWindow;
 use crate::ui::waveform::{AudioData, WaveformPeaks, WaveformView};
 use crate::{App, HitTarget};
@@ -107,4 +108,45 @@ fn test_right_window_panel_rect() {
     assert_eq!(size[0], 200.0); // RIGHT_WINDOW_WIDTH
     assert_eq!(size[1], 800.0); // full height
     assert!((pos[0] - 1000.0).abs() < 0.01, "panel should be right-aligned");
+}
+
+#[test]
+fn test_vol_entry_commit_updates_waveform_volume() {
+    let mut app = App::new_headless();
+    let id = new_id();
+    let mut wf = make_waveform();
+    wf.volume = 1.0; // 0 dB
+    app.waveforms.insert(id, wf.clone());
+    app.audio_clips.insert(id, AudioClipData {
+        samples: Arc::new(Vec::new()),
+        sample_rate: 48000,
+        duration_secs: 1.0,
+    });
+
+    app.selected.push(HitTarget::Waveform(id));
+    app.update_right_window();
+
+    let rw = app.right_window.as_mut().unwrap();
+    rw.vol_entry.enter();
+    rw.vol_entry.push_char("3");
+    rw.vol_entry.push_char(".");
+    rw.vol_entry.push_char("5");
+
+    // Commit the entry
+    let text = rw.vol_entry.commit().unwrap();
+    let db: f32 = text.parse().unwrap();
+    let new_gain = db_to_gain(db.clamp(-60.0, 12.0));
+
+    let before = app.waveforms[&id].clone();
+    app.waveforms.get_mut(&id).unwrap().volume = new_gain;
+    app.right_window.as_mut().unwrap().volume = new_gain;
+    let after = app.waveforms[&id].clone();
+    app.push_op(Operation::UpdateWaveform { id, before, after });
+
+    let expected = db_to_gain(3.5);
+    assert!((app.waveforms[&id].volume - expected).abs() < 1e-4, "volume should be +3.5 dB gain");
+
+    // Undo should restore original volume
+    app.undo_op();
+    assert!((app.waveforms[&id].volume - 1.0).abs() < 1e-4, "undo should restore volume to 1.0");
 }

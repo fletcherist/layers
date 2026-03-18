@@ -9,3 +9,4 @@ pub(crate) mod toast;
 pub(crate) mod transport;
 pub(crate) mod right_window;
 pub(crate) mod waveform;
+pub(crate) mod value_entry;

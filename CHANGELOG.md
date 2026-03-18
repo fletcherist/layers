@@ -1,3 +1,6 @@
+- 2026-03-18: refactor: BPM text editing now uses ValueEntry (same as vol dB entry) — editing_bpm: Option<String> replaced with ValueEntry (29.3k loc)
+- 2026-03-18: feat: click-to-edit dB value in right window inspector — single-click enters text input, Enter commits with undo, Escape cancels; reusable ValueEntry struct (29.3k loc)
+- 2026-03-18: feat: volume control in inspector replaced with vertical fader (track+fill+thumb) replacing circular knob; pan knob moved down (29.1k loc)
 - 2026-03-18: feat: right panel clip inspector with volume + pan rotary knobs; removes SetSampleVolume palette command (29.1k loc)
 - 2026-03-18: feat: auto clip fades — new clips get 10px fades on creation by default; toggle in Settings → Audio → Auto Clip Fades (28.8k loc)
 - 2026-03-18: fix: fade handles now take priority over edge resize at clip corners, so top-left/right creates fades instead of resizing (28.6k loc)

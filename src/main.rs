@@ -529,7 +529,7 @@ struct App {
     editing_effect_name: Option<(EntityId, String)>,
     editing_waveform_name: Option<(EntityId, String)>,
     bpm: f32,
-    editing_bpm: Option<String>,
+    editing_bpm: ui::value_entry::ValueEntry,
     dragging_bpm: Option<(f32, f32)>,
     bpm_drag_overlap_snapshots: IndexMap<EntityId, WaveformView>,
     last_click_time: TimeInstant,
@@ -636,7 +636,7 @@ impl App {
             editing_effect_name: None,
             editing_waveform_name: None,
             bpm: 120.0,
-            editing_bpm: None,
+            editing_bpm: ui::value_entry::ValueEntry::new(),
             dragging_bpm: None,
             bpm_drag_overlap_snapshots: IndexMap::new(),
             last_click_time: TimeInstant::now(),
@@ -1269,7 +1269,7 @@ impl App {
             editing_effect_name: None,
             editing_waveform_name: None,
             bpm: loaded_bpm,
-            editing_bpm: None,
+            editing_bpm: ui::value_entry::ValueEntry::new(),
             dragging_bpm: None,
             bpm_drag_overlap_snapshots: IndexMap::new(),
             last_click_time: TimeInstant::now(),
@@ -1698,7 +1698,7 @@ impl App {
         self.editing_component = None;
         self.editing_effect_name = None;
         self.editing_waveform_name = None;
-        self.editing_bpm = None;
+        self.editing_bpm.cancel();
         self.dragging_bpm = None;
         self.bpm_drag_overlap_snapshots.clear();
         self.command_palette = None;
@@ -1975,7 +1975,7 @@ impl App {
         self.editing_component = None;
         self.editing_effect_name = None;
         self.editing_waveform_name = None;
-        self.editing_bpm = None;
+        self.editing_bpm.cancel();
         self.dragging_bpm = None;
         self.bpm_drag_overlap_snapshots.clear();
         self.command_palette = None;
@@ -2434,6 +2434,7 @@ impl App {
                     pan_dragging: false,
                     drag_start_y: 0.0,
                     drag_start_value: 0.0,
+                    vol_entry: ui::value_entry::ValueEntry::new(),
                 });
                 return;
             }
