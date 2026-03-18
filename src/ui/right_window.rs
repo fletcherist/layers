@@ -1,6 +1,7 @@
 use crate::entity_id::EntityId;
 use crate::InstanceRaw;
-use crate::ui::palette::{gain_to_db, gain_to_fader_pos, fader_pos_to_gain};
+use crate::ui::palette::{gain_to_db, gain_to_vol_fader_pos, vol_fader_pos_to_gain,
+    VOL_FADER_DB_MAX, VOL_FADER_DB_BOTTOM, VOL_FADER_P_ZERO, VOL_FADER_P_BOTTOM};
 use crate::ui::value_entry::ValueEntry;
 
 pub const RIGHT_WINDOW_WIDTH: f32 = 200.0;
@@ -10,13 +11,12 @@ const KNOB_DOT_R: f32 = 2.5;
 const KNOB_INDICATOR_R: f32 = 3.5;
 const ARC_DOTS: usize = 30;
 
-const FADER_TRACK_W: f32 = 6.0;
-const FADER_TRACK_HEIGHT: f32 = 120.0;
-const FADER_THUMB_R: f32 = 9.0;
+const FADER_TRACK_W: f32 = 4.0;
+const FADER_TRACK_HEIGHT: f32 = 160.0;
 const FADER_TOP_OFFSET: f32 = 32.0;
 
-const PAN_KNOB_Y_OFFSET: f32 = 220.0;
-const PITCH_KNOB_Y_OFFSET: f32 = 304.0;
+const PAN_KNOB_Y_OFFSET: f32 = 264.0;
+const PITCH_KNOB_Y_OFFSET: f32 = 348.0;
 
 const BG_COLOR: [f32; 4] = [0.11, 0.11, 0.14, 1.0];
 const HEADER_BG: [f32; 4] = [0.13, 0.13, 0.17, 1.0];
@@ -71,13 +71,14 @@ impl RightWindow {
 
     pub fn hit_test_vol_knob(&self, pos: [f32; 2], screen_w: f32, screen_h: f32, scale: f32) -> bool {
         let (track_pos, track_size) = Self::vol_fader_rects(screen_w, screen_h, scale);
-        let fader_pos = gain_to_fader_pos(self.volume);
-        let thumb_y = Self::vol_fader_thumb_y(fader_pos, track_pos, track_size[1]);
-        let panel_cx = track_pos[0] + track_size[0] * 0.5;
-        let r = (FADER_THUMB_R + 8.0) * scale;
-        let dx = pos[0] - panel_cx;
-        let dy = pos[1] - thumb_y;
-        dx * dx + dy * dy <= r * r
+        let fader_pos_val = gain_to_vol_fader_pos(self.volume);
+        let thumb_y = Self::vol_fader_thumb_y(fader_pos_val, track_pos, track_size[1]);
+        // Rectangular hit zone: covers triangle + track, 20px tall around thumb
+        let hit_x = track_pos[0] - 18.0 * scale;
+        let hit_w = track_size[0] + 22.0 * scale;
+        let hit_h = 18.0 * scale;
+        pos[0] >= hit_x && pos[0] <= hit_x + hit_w
+            && pos[1] >= thumb_y - hit_h * 0.5 && pos[1] <= thumb_y + hit_h * 0.5
     }
 
     pub fn hit_test_pan_knob(&self, pos: [f32; 2], screen_w: f32, screen_h: f32, scale: f32) -> bool {
@@ -218,10 +219,9 @@ impl RightWindow {
         });
 
         // Volume fader
-        let vol_pos = gain_to_fader_pos(self.volume);
+        let vol_pos = gain_to_vol_fader_pos(self.volume);
         let (track_pos, track_size) = Self::vol_fader_rects(screen_w, screen_h, scale);
         let thumb_y = Self::vol_fader_thumb_y(vol_pos, track_pos, track_size[1]);
-        let thumb_r = FADER_THUMB_R * scale;
         let panel_cx = track_pos[0] + track_size[0] * 0.5;
 
         // Track background
@@ -243,13 +243,35 @@ impl RightWindow {
             });
         }
 
-        // Thumb circle
-        out.push(InstanceRaw {
-            position: [panel_cx - thumb_r, thumb_y - thumb_r],
-            size: [thumb_r * 2.0, thumb_r * 2.0],
-            color: [1.0, 1.0, 1.0, 0.95],
-            border_radius: thumb_r,
-        });
+        // Tick marks to the right of the track (standard mixer scale)
+        // Major ticks (6px) at: +24, 0, -70. Minor ticks (3px) every 6 dB in between.
+        let tick_db_values: &[(f32, bool)] = &[
+            (24.0, true), (18.0, false), (12.0, false), (6.0, false),
+            (0.0, true),
+            (-6.0, false), (-12.0, false), (-18.0, false), (-24.0, false),
+            (-30.0, false), (-36.0, false), (-42.0, false), (-48.0, false),
+            (-54.0, false), (-60.0, false),
+            (-70.0, true),
+        ];
+        for &(db, major) in tick_db_values {
+            let fpos = if db <= VOL_FADER_DB_BOTTOM {
+                VOL_FADER_P_BOTTOM
+            } else {
+                gain_to_vol_fader_pos(crate::ui::palette::db_to_gain(db))
+            };
+            let ty = Self::vol_fader_thumb_y(fpos, track_pos, track_size[1]);
+            let tick_w = if major { 6.0 } else { 3.0 };
+            // Ticks extend leftward from the track left edge
+            let tick_x = track_pos[0] - (tick_w + 3.0) * scale;
+            out.push(InstanceRaw {
+                position: [tick_x, ty - 0.5 * scale],
+                size: [tick_w * scale, 1.0 * scale],
+                color: [0.6, 0.6, 0.65, 0.7],
+                border_radius: 0.0,
+            });
+        }
+
+        // No thumb circle — triangle indicator is rendered as text in gpu.rs
 
         // Pan knob
         let pc = Self::pan_knob_center(screen_w, screen_h, scale);
@@ -266,7 +288,7 @@ impl RightWindow {
     /// Format volume value as dB string
     pub fn vol_text(&self) -> String {
         if self.volume < 0.00001 {
-            "Mute".to_string()
+            "-inf".to_string()
         } else {
             let db = gain_to_db(self.volume);
             if db >= 0.0 {
@@ -322,7 +344,7 @@ impl RightWindow {
     pub fn drag_vol_delta(drag_start_y: f32, mouse_y: f32, drag_start_value: f32, scale: f32) -> f32 {
         let delta = (drag_start_y - mouse_y) / (200.0 * scale);
         let new_pos = (drag_start_value + delta).clamp(0.0, 1.0);
-        fader_pos_to_gain(new_pos)
+        vol_fader_pos_to_gain(new_pos)
     }
 
     /// Compute new pan from drag delta (up = increase)

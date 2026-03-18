@@ -875,21 +875,79 @@ impl Gpu {
 
             let knob_r = 22.0 * scale;
 
-            // VOL label (above fader top)
+            // Fader geometry helpers
+            let track_right_x = fader_pos[0] + fader_size[0];
+            let vol_fader_pos_val = crate::ui::palette::gain_to_vol_fader_pos(rw.volume);
+            let thumb_y = fader_pos[1] + (1.0 - vol_fader_pos_val) * fader_size[1];
+
+            // "Gain" label (above fader top, centered)
             let mut buf = TextBuffer::new(&mut self.font_system, Metrics::new(label_font, label_line));
             buf.set_size(&mut self.font_system, Some(rw_w), Some(label_line));
-            buf.set_text(&mut self.font_system, "VOL", Attrs::new().family(Family::SansSerif), Shaping::Advanced);
+            buf.set_text(&mut self.font_system, "Gain", Attrs::new().family(Family::SansSerif), Shaping::Advanced);
+            for line in buf.lines.iter_mut() {
+                line.set_align(Some(glyphon::cosmic_text::Align::Center));
+            }
             buf.shape_until_scroll(&mut self.font_system, false);
             text_buffers.push(buf);
             text_meta.push((pp[0], fader_pos[1] - 18.0 * scale, TextColor::rgba(140, 140, 150, 180), full_bounds));
 
-            // VOL value (below fader bottom)
+            // Triangle indicator (▶) to the left of the track at thumb position
+            let tri_font = 10.0 * scale;
+            let tri_line = 12.0 * scale;
+            let mut buf = TextBuffer::new(&mut self.font_system, Metrics::new(tri_font, tri_line));
+            buf.set_size(&mut self.font_system, Some(16.0 * scale), Some(tri_line));
+            buf.set_text(&mut self.font_system, "▶", Attrs::new().family(Family::SansSerif), Shaping::Advanced);
+            buf.shape_until_scroll(&mut self.font_system, false);
+            text_buffers.push(buf);
+            text_meta.push((fader_pos[0] - 14.0 * scale, thumb_y - tri_line * 0.5, TextColor::rgba(220, 220, 230, 230), full_bounds));
+
+            // Scale labels to the right of tick marks
+            let scale_font = 9.0 * scale;
+            let scale_line = 11.0 * scale;
+            let label_x = track_right_x + 11.0 * scale;
+            let label_bounds = TextBounds {
+                left: label_x as i32,
+                top: 0,
+                right: (label_x + 30.0 * scale) as i32,
+                bottom: h as i32,
+            };
+
+            // "+24" at fader top
+            let mut buf = TextBuffer::new(&mut self.font_system, Metrics::new(scale_font, scale_line));
+            buf.set_size(&mut self.font_system, Some(30.0 * scale), Some(scale_line));
+            buf.set_text(&mut self.font_system, "24", Attrs::new().family(Family::SansSerif), Shaping::Advanced);
+            buf.shape_until_scroll(&mut self.font_system, false);
+            text_buffers.push(buf);
+            text_meta.push((label_x, fader_pos[1] - scale_line * 0.5, TextColor::rgba(140, 140, 150, 160), label_bounds));
+
+            // "0" at 0 dB position
+            let y_zero = fader_pos[1] + (1.0 - crate::ui::palette::VOL_FADER_P_ZERO) * fader_size[1];
+            let mut buf = TextBuffer::new(&mut self.font_system, Metrics::new(scale_font, scale_line));
+            buf.set_size(&mut self.font_system, Some(30.0 * scale), Some(scale_line));
+            buf.set_text(&mut self.font_system, "0", Attrs::new().family(Family::SansSerif), Shaping::Advanced);
+            buf.shape_until_scroll(&mut self.font_system, false);
+            text_buffers.push(buf);
+            text_meta.push((label_x, y_zero - scale_line * 0.5, TextColor::rgba(140, 140, 150, 160), label_bounds));
+
+            // "70" at -70 dB position (near bottom)
+            let y_70 = fader_pos[1] + (1.0 - crate::ui::palette::VOL_FADER_P_BOTTOM) * fader_size[1];
+            let mut buf = TextBuffer::new(&mut self.font_system, Metrics::new(scale_font, scale_line));
+            buf.set_size(&mut self.font_system, Some(30.0 * scale), Some(scale_line));
+            buf.set_text(&mut self.font_system, "70", Attrs::new().family(Family::SansSerif), Shaping::Advanced);
+            buf.shape_until_scroll(&mut self.font_system, false);
+            text_buffers.push(buf);
+            text_meta.push((label_x, y_70 - scale_line * 0.5, TextColor::rgba(140, 140, 150, 160), label_bounds));
+
+            // dB value below fader — centered on the fader track
             let vol_idle = rw.vol_text();
             let vol_display = rw.vol_entry.display(&vol_idle);
             let vol_alpha: u8 = if rw.vol_entry.is_editing() { 255 } else { 220 };
             let mut buf = TextBuffer::new(&mut self.font_system, Metrics::new(val_font, val_line));
             buf.set_size(&mut self.font_system, Some(rw_w), Some(val_line));
             buf.set_text(&mut self.font_system, &vol_display, Attrs::new().family(Family::SansSerif), Shaping::Advanced);
+            for line in buf.lines.iter_mut() {
+                line.set_align(Some(glyphon::cosmic_text::Align::Center));
+            }
             buf.shape_until_scroll(&mut self.font_system, false);
             text_buffers.push(buf);
             text_meta.push((pp[0], fader_pos[1] + fader_size[1] + 4.0 * scale, TextColor::rgba(200, 200, 210, vol_alpha), full_bounds));

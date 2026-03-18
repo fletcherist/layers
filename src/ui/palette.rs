@@ -115,6 +115,53 @@ pub fn gain_to_fader_pos(gain: f32) -> f32 {
     ((db - DB_MIN) / DB_RANGE).clamp(0.0, 1.0)
 }
 
+// --- Right-window gain fader (piecewise: +24 top, 0 at P_ZERO, −70 near-bottom, −∞ below) ---
+
+pub const VOL_FADER_DB_MAX: f32 = 24.0;
+pub const VOL_FADER_DB_BOTTOM: f32 = -70.0;
+/// Fader position (0–1) where 0 dB sits.
+pub const VOL_FADER_P_ZERO: f32 = 0.60;
+/// Fader position where −70 dB sits; below this it hyperbolically approaches −∞.
+pub const VOL_FADER_P_BOTTOM: f32 = 0.05;
+
+pub fn vol_fader_pos_to_gain(pos: f32) -> f32 {
+    let pos = pos.clamp(0.0, 1.0);
+    // Mute gate: bottom 1% of travel
+    if pos < 0.01 {
+        return 0.0;
+    }
+    let db = if pos >= VOL_FADER_P_ZERO {
+        // Upper segment: 0 → +24 dB
+        (pos - VOL_FADER_P_ZERO) / (1.0 - VOL_FADER_P_ZERO) * VOL_FADER_DB_MAX
+    } else if pos >= VOL_FADER_P_BOTTOM {
+        // Middle segment: linear −70 → 0 dB
+        VOL_FADER_DB_BOTTOM * (pos - VOL_FADER_P_ZERO) / (VOL_FADER_P_BOTTOM - VOL_FADER_P_ZERO)
+    } else {
+        // Lower segment: hyperbolic fast approach to −∞
+        VOL_FADER_DB_BOTTOM * VOL_FADER_P_BOTTOM / pos
+    };
+    db_to_gain(db)
+}
+
+pub fn gain_to_vol_fader_pos(gain: f32) -> f32 {
+    if gain < 0.00001 {
+        return 0.0;
+    }
+    let db = gain_to_db(gain);
+    if db >= 0.0 {
+        // Upper segment
+        (VOL_FADER_P_ZERO + db / VOL_FADER_DB_MAX * (1.0 - VOL_FADER_P_ZERO)).clamp(VOL_FADER_P_ZERO, 1.0)
+    } else if db >= VOL_FADER_DB_BOTTOM {
+        // Middle segment: pos = P_ZERO + db/DB_BOTTOM*(P_BOTTOM−P_ZERO)
+        let pos = VOL_FADER_P_ZERO + db / VOL_FADER_DB_BOTTOM * (VOL_FADER_P_BOTTOM - VOL_FADER_P_ZERO);
+        pos.clamp(VOL_FADER_P_BOTTOM, VOL_FADER_P_ZERO)
+    } else {
+        // Lower segment: pos = DB_BOTTOM*P_BOTTOM/db (hyperbolic inverse)
+        let pos = VOL_FADER_DB_BOTTOM * VOL_FADER_P_BOTTOM / db;
+        pos.clamp(0.0, VOL_FADER_P_BOTTOM)
+    }
+}
+
 pub struct CommandDef {
     pub name: &'static str,
     pub shortcut: &'static str,

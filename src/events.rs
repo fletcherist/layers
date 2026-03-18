@@ -1528,7 +1528,7 @@ impl ApplicationHandler for App {
                                     self.request_redraw();
                                     return;
                                 } else if hit_vol {
-                                    let start_value = ui::palette::gain_to_fader_pos(rw.volume);
+                                    let start_value = ui::palette::gain_to_vol_fader_pos(rw.volume);
                                     if let Some(rw) = &mut self.right_window {
                                         rw.vol_dragging = true;
                                         rw.drag_start_y = self.mouse_pos[1];
@@ -2434,7 +2434,7 @@ impl ApplicationHandler for App {
                                         let mut before = after.clone();
                                         if let Some(rw) = &self.right_window {
                                             if is_vol_drag {
-                                                before.volume = ui::palette::fader_pos_to_gain(rw.drag_start_value);
+                                                before.volume = ui::palette::vol_fader_pos_to_gain(rw.drag_start_value);
                                             } else if is_pan_drag {
                                                 before.pan = rw.drag_start_value;
                                             } else {
@@ -3260,10 +3260,10 @@ impl ApplicationHandler for App {
                                 let commit = self.right_window.as_mut().and_then(|rw| rw.vol_entry.commit());
                                 if let Some(text) = commit {
                                     if let Ok(db) = text.parse::<f32>() {
-                                        let new_gain = if db <= -60.0 {
+                                        let new_gain = if db <= ui::palette::VOL_FADER_DB_BOTTOM {
                                             0.0
                                         } else {
-                                            ui::palette::db_to_gain(db.clamp(-60.0, 12.0))
+                                            ui::palette::db_to_gain(db.clamp(ui::palette::VOL_FADER_DB_BOTTOM, ui::palette::VOL_FADER_DB_MAX))
                                         };
                                         let wf_id = self.right_window.as_ref().map(|rw| rw.waveform_id);
                                         if let Some(wf_id) = wf_id {

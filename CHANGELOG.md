@@ -1,3 +1,4 @@
+- 2026-03-18: feat: fader scale UI — +24/0/−70/−inf range, triangle indicator replaces circle thumb, tick marks, Gain label, −inf text (29.8k loc)
 - 2026-03-18: feat: pitch change control in right window inspector — rotary knob with -24 to +24 semitone range, sample rate-based repitching in playback and export (29.6k loc)
 - 2026-03-18: fix: vol dB text in inspector now enters edit mode on double-click only (matches BPM behavior); added last_vol_text_click_time tracking (29.6k loc)
 - 2026-03-18: fix: add missing pitch_semitones: 0.0 field to all WaveformView initializers in tests and main.rs (29.6k loc)
