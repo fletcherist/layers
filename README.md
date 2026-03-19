@@ -7,6 +7,8 @@
 
 A rusty DAW reimagined as an infinite canvas — Figma, but for audio. No tracks. Place clips, MIDI, and effects anywhere. Collaborate in real-time with others.
 
+<img width="1392" height="912" alt="layers screeshot" src="https://github.com/user-attachments/assets/df65b405-030d-4576-aa17-b7a3f2986422" />
+
 Built in Rust. GPU-accelerated
 
 > Early alpha — under active development.
