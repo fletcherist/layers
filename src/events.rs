@@ -1530,9 +1530,10 @@ impl ApplicationHandler for App {
                             return;
                         }
 
-                        // Clear vol fader focus on any click (re-set below if clicking the fader)
+                        // Clear vol fader / pan knob focus on any click (re-set below if clicking them)
                         if let Some(rw) = &mut self.right_window {
                             rw.vol_fader_focused = false;
+                            rw.pan_knob_focused = false;
                         }
 
                         // Right window knob mouse down (skip if context menu is open)
@@ -1690,6 +1691,7 @@ impl ApplicationHandler for App {
                                         if let Some(rw) = &mut self.right_window {
                                             rw.pan = 0.5;
                                             rw.pan_dragging = false;
+                                            rw.pan_knob_focused = true;
                                         }
                                         let after = self.waveforms[&wf_id].clone();
                                         self.push_op(crate::operations::Operation::UpdateWaveform { id: wf_id, before, after });
@@ -1702,6 +1704,7 @@ impl ApplicationHandler for App {
                                         rw.pan_dragging = true;
                                         rw.drag_start_y = self.mouse_pos[1];
                                         rw.drag_start_value = start_value;
+                                        rw.pan_knob_focused = true;
                                     }
                                     let _ = wf_id;
                                     self.request_redraw();
@@ -3353,11 +3356,12 @@ impl ApplicationHandler for App {
                         }
                     }
 
-                    // Escape clears vol fader focus
+                    // Escape clears vol fader / pan knob focus
                     if matches!(event.logical_key, Key::Named(NamedKey::Escape)) {
                         if let Some(rw) = &mut self.right_window {
-                            if rw.vol_fader_focused {
+                            if rw.vol_fader_focused || rw.pan_knob_focused {
                                 rw.vol_fader_focused = false;
+                                rw.pan_knob_focused = false;
                                 self.request_redraw();
                                 return;
                             }
@@ -3384,6 +3388,40 @@ impl ApplicationHandler for App {
                                 }
                                 if let Some(rw) = &mut self.right_window {
                                     rw.volume = new_gain;
+                                }
+                                if let Some(after) = self.waveforms.get(&wf_id).cloned() {
+                                    self.push_op(crate::operations::Operation::UpdateWaveform {
+                                        id: wf_id,
+                                        before,
+                                        after,
+                                    });
+                                }
+                                self.sync_audio_clips();
+                                self.mark_dirty();
+                            }
+                            self.request_redraw();
+                            return;
+                        }
+                    }
+
+                    // Up/Down arrow pan adjustment when pan knob is focused
+                    if let Some(rw) = &self.right_window {
+                        if rw.pan_knob_focused && matches!(event.logical_key,
+                            Key::Named(NamedKey::ArrowUp) | Key::Named(NamedKey::ArrowDown))
+                        {
+                            let shift = self.modifiers.shift_key();
+                            let delta = match event.logical_key {
+                                Key::Named(NamedKey::ArrowUp) => if shift { 0.001 } else { 0.01 },
+                                _ => if shift { -0.001 } else { -0.01 },
+                            };
+                            let wf_id = rw.waveform_id;
+                            let new_pan = (rw.pan + delta).clamp(0.0, 1.0);
+                            if let Some(before) = self.waveforms.get(&wf_id).cloned() {
+                                if let Some(wf) = self.waveforms.get_mut(&wf_id) {
+                                    wf.pan = new_pan;
+                                }
+                                if let Some(rw) = &mut self.right_window {
+                                    rw.pan = new_pan;
                                 }
                                 if let Some(after) = self.waveforms.get(&wf_id).cloned() {
                                     self.push_op(crate::operations::Operation::UpdateWaveform {

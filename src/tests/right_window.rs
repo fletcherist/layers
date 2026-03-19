@@ -369,3 +369,112 @@ fn test_keyboard_volume_undo() {
     app.undo_op();
     assert!((app.waveforms[&id].volume - 1.0).abs() < 1e-4, "undo should restore volume to 0 dB (gain=1.0)");
 }
+
+#[test]
+fn test_pan_keyboard_adjust() {
+    let mut app = App::new_headless();
+    let id = new_id();
+    let mut wf = make_waveform();
+    wf.pan = 0.5;
+    app.waveforms.insert(id, wf);
+    app.audio_clips.insert(id, AudioClipData {
+        samples: Arc::new(Vec::new()),
+        sample_rate: 48000,
+        duration_secs: 1.0,
+    });
+
+    app.selected.push(HitTarget::Waveform(id));
+    app.update_right_window();
+
+    // Focus the pan knob
+    app.right_window.as_mut().unwrap().pan_knob_focused = true;
+
+    // Simulate Up arrow: +0.01
+    let rw = app.right_window.as_ref().unwrap();
+    let new_pan = (rw.pan + 0.01).clamp(0.0, 1.0);
+    let wf_id = rw.waveform_id;
+
+    let before = app.waveforms[&wf_id].clone();
+    app.waveforms.get_mut(&wf_id).unwrap().pan = new_pan;
+    app.right_window.as_mut().unwrap().pan = new_pan;
+    let after = app.waveforms[&wf_id].clone();
+    app.push_op(Operation::UpdateWaveform { id: wf_id, before, after });
+
+    assert!((app.waveforms[&wf_id].pan - 0.51).abs() < 1e-4, "pan should be 0.51 after Up");
+
+    // Undo
+    app.undo_op();
+    assert!((app.waveforms[&wf_id].pan - 0.5).abs() < 1e-4, "undo should restore pan to 0.5");
+}
+
+#[test]
+fn test_undo_volume_preserves_selection() {
+    use crate::ui::palette::db_to_gain;
+
+    let mut app = App::new_headless();
+    let id = new_id();
+    let mut wf = make_waveform();
+    wf.volume = 1.0;
+    app.waveforms.insert(id, wf);
+    app.audio_clips.insert(id, AudioClipData {
+        samples: Arc::new(Vec::new()),
+        sample_rate: 48000,
+        duration_secs: 1.0,
+    });
+
+    app.selected.push(HitTarget::Waveform(id));
+    app.update_right_window();
+    assert!(app.right_window.is_some());
+
+    // Apply volume change (+1 dB)
+    let new_gain = db_to_gain(1.0);
+    let before = app.waveforms[&id].clone();
+    app.waveforms.get_mut(&id).unwrap().volume = new_gain;
+    app.right_window.as_mut().unwrap().volume = new_gain;
+    let after = app.waveforms[&id].clone();
+    app.push_op(Operation::UpdateWaveform { id, before, after });
+
+    // Undo — selection and right window should be preserved
+    app.undo_op();
+    assert!((app.waveforms[&id].volume - 1.0).abs() < 1e-4, "volume should be restored");
+    assert!(!app.selected.is_empty(), "selection should be preserved after undo");
+    assert!(app.right_window.is_some(), "right_window should stay open after undo");
+}
+
+#[test]
+fn test_undo_pan_preserves_selection() {
+    let mut app = App::new_headless();
+    let id = new_id();
+    let mut wf = make_waveform();
+    wf.pan = 0.5;
+    app.waveforms.insert(id, wf);
+    app.audio_clips.insert(id, AudioClipData {
+        samples: Arc::new(Vec::new()),
+        sample_rate: 48000,
+        duration_secs: 1.0,
+    });
+
+    app.selected.push(HitTarget::Waveform(id));
+    app.update_right_window();
+    assert!(app.right_window.is_some());
+
+    // Apply pan change
+    let new_pan = 0.7;
+    let before = app.waveforms[&id].clone();
+    app.waveforms.get_mut(&id).unwrap().pan = new_pan;
+    app.right_window.as_mut().unwrap().pan = new_pan;
+    let after = app.waveforms[&id].clone();
+    app.push_op(Operation::UpdateWaveform { id, before, after });
+
+    // Undo — selection and right window should be preserved
+    app.undo_op();
+    assert!((app.waveforms[&id].pan - 0.5).abs() < 1e-4, "pan should be restored");
+    assert!(!app.selected.is_empty(), "selection should be preserved after undo");
+    assert!(app.right_window.is_some(), "right_window should stay open after undo");
+
+    // Redo — should also preserve selection
+    app.redo_op();
+    assert!((app.waveforms[&id].pan - 0.7).abs() < 1e-4, "pan should be re-applied");
+    assert!(!app.selected.is_empty(), "selection should be preserved after redo");
+    assert!(app.right_window.is_some(), "right_window should stay open after redo");
+}

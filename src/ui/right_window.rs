@@ -43,6 +43,17 @@ pub struct VolFaderLayout {
     pub tick_x_offset: f32,
 }
 
+pub struct PanKnobLayout {
+    pub center: [f32; 2],
+    pub radius: f32,
+    pub label_y: f32,
+    pub value_y: f32,
+    pub bracket_x0: f32,
+    pub bracket_x1: f32,
+    pub bracket_y0: f32,
+    pub bracket_y1: f32,
+}
+
 pub struct RightWindow {
     pub waveform_id: EntityId,
     pub volume: f32,
@@ -60,6 +71,7 @@ pub struct RightWindow {
     pub sample_bpm_entry: ValueEntry,
     pub pitch_entry: ValueEntry,
     pub vol_fader_focused: bool,
+    pub pan_knob_focused: bool,
 }
 
 impl RightWindow {
@@ -144,10 +156,10 @@ impl RightWindow {
     }
 
     pub fn hit_test_pan_knob(&self, pos: [f32; 2], screen_w: f32, screen_h: f32, scale: f32) -> bool {
-        let c = Self::pan_knob_center(screen_w, screen_h, scale);
-        let r = (KNOB_R + 8.0) * scale;
-        let dx = pos[0] - c[0];
-        let dy = pos[1] - c[1];
+        let layout = Self::pan_knob_layout(screen_w, screen_h, scale);
+        let r = layout.radius + 8.0 * scale;
+        let dx = pos[0] - layout.center[0];
+        let dy = pos[1] - layout.center[1];
         dx * dx + dy * dy <= r * r
     }
 
@@ -198,6 +210,23 @@ impl RightWindow {
             bracket_y0: track_pos[1] - 22.0 * scale,
             bracket_y1: track_pos[1] + track_size[1] + 30.0 * scale,
             tick_x_offset: track_pos[0],
+        }
+    }
+
+    pub fn pan_knob_layout(screen_w: f32, screen_h: f32, scale: f32) -> PanKnobLayout {
+        let center = Self::pan_knob_center(screen_w, screen_h, scale);
+        let radius = KNOB_R * scale;
+        let label_y = center[1] - radius - 18.0 * scale;
+        let value_y = center[1] + radius + 4.0 * scale;
+        PanKnobLayout {
+            center,
+            radius,
+            label_y,
+            value_y,
+            bracket_x0: center[0] - 30.0 * scale,
+            bracket_x1: center[0] + 30.0 * scale,
+            bracket_y0: label_y - 4.0 * scale,
+            bracket_y1: value_y + 18.0 * scale,
         }
     }
 
@@ -388,8 +417,31 @@ impl RightWindow {
         // No thumb circle — triangle indicator is rendered as text in gpu.rs
 
         // Pan knob
-        let pc = Self::pan_knob_center(screen_w, screen_h, scale);
-        Self::push_knob(&mut out, pc[0], pc[1], self.pan, scale, &settings.theme);
+        let pan_layout = Self::pan_knob_layout(screen_w, screen_h, scale);
+        Self::push_knob(&mut out, pan_layout.center[0], pan_layout.center[1], self.pan, scale, &settings.theme);
+
+        // Pan knob focus brackets
+        if self.pan_knob_focused {
+            let bracket_len = 10.0 * scale;
+            let thick = 1.0 * scale;
+            let color = [settings.theme.accent[0], settings.theme.accent[1], settings.theme.accent[2], 0.7];
+            let x0 = pan_layout.bracket_x0;
+            let x1 = pan_layout.bracket_x1;
+            let y0 = pan_layout.bracket_y0;
+            let y1 = pan_layout.bracket_y1;
+            // Top-left
+            out.push(InstanceRaw { position: [x0, y0], size: [bracket_len, thick], color, border_radius: 0.0 });
+            out.push(InstanceRaw { position: [x0, y0], size: [thick, bracket_len], color, border_radius: 0.0 });
+            // Top-right
+            out.push(InstanceRaw { position: [x1 - bracket_len, y0], size: [bracket_len, thick], color, border_radius: 0.0 });
+            out.push(InstanceRaw { position: [x1 - thick, y0], size: [thick, bracket_len], color, border_radius: 0.0 });
+            // Bottom-left
+            out.push(InstanceRaw { position: [x0, y1 - thick], size: [bracket_len, thick], color, border_radius: 0.0 });
+            out.push(InstanceRaw { position: [x0, y1 - bracket_len], size: [thick, bracket_len], color, border_radius: 0.0 });
+            // Bottom-right
+            out.push(InstanceRaw { position: [x1 - bracket_len, y1 - thick], size: [bracket_len, thick], color, border_radius: 0.0 });
+            out.push(InstanceRaw { position: [x1 - thick, y1 - bracket_len], size: [thick, bracket_len], color, border_radius: 0.0 });
+        }
 
         // Warp toggle button
         let (btn_pos, btn_size) = Self::warp_mode_button_rect(screen_w, screen_h, scale);
@@ -475,10 +527,6 @@ impl RightWindow {
     /// Format sample BPM as display string
     pub fn sample_bpm_text(&self) -> String {
         format!("{:.1}", self.sample_bpm)
-    }
-
-    pub fn pan_knob_center_pub(screen_w: f32, screen_h: f32, scale: f32) -> [f32; 2] {
-        Self::pan_knob_center(screen_w, screen_h, scale)
     }
 
     /// Compute new volume from drag delta (up = increase)

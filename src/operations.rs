@@ -602,6 +602,20 @@ impl App {
     /// If the operation is a Batch containing only Update* variants, return
     /// the HitTargets so the selection can be preserved across undo/redo.
     fn batch_update_targets(op: &Operation) -> Option<Vec<HitTarget>> {
+        // Handle standalone update operations (e.g., volume/pan keyboard change)
+        match op {
+            Operation::UpdateObject { id, .. } => return Some(vec![HitTarget::Object(*id)]),
+            Operation::UpdateWaveform { id, .. } => return Some(vec![HitTarget::Waveform(*id)]),
+            Operation::UpdateEffectRegion { id, .. } => return Some(vec![HitTarget::EffectRegion(*id)]),
+            Operation::UpdateLoopRegion { id, .. } => return Some(vec![HitTarget::LoopRegion(*id)]),
+            Operation::UpdateExportRegion { id, .. } => return Some(vec![HitTarget::ExportRegion(*id)]),
+            Operation::UpdateComponent { id, .. } => return Some(vec![HitTarget::ComponentDef(*id)]),
+            Operation::UpdateComponentInstance { id, .. } => return Some(vec![HitTarget::ComponentInstance(*id)]),
+            Operation::UpdateMidiClip { id, .. } => return Some(vec![HitTarget::MidiClip(*id)]),
+            Operation::UpdateInstrumentRegion { id, .. } => return Some(vec![HitTarget::InstrumentRegion(*id)]),
+            _ => {}
+        }
+        // Handle batch of update operations (arrow nudge)
         if let Operation::Batch(ops) = op {
             let mut targets = Vec::new();
             for sub in ops {

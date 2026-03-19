@@ -859,7 +859,7 @@ impl Gpu {
             let layout = right_window::RightWindow::vol_fader_layout(w, h, scale);
             let fader_pos = layout.track_pos;
             let fader_size = layout.track_size;
-            let pc = right_window::RightWindow::pan_knob_center_pub(w, h, scale);
+            let pan_layout = right_window::RightWindow::pan_knob_layout(w, h, scale);
             let header_font = 10.0 * scale;
             let header_line = 14.0 * scale;
             let label_font = 11.0 * scale;
@@ -876,7 +876,7 @@ impl Gpu {
             text_buffers.push(buf);
             text_meta.push((pp[0] + 12.0 * scale, 11.0 * scale, TextColor::rgba(120, 140, 170, 200), full_bounds));
 
-            let knob_r = 22.0 * scale;
+            // pan knob geometry now in pan_layout
 
             // Fader geometry helpers
             let vol_fader_pos_val = crate::ui::palette::gain_to_vol_fader_pos(rw.volume);
@@ -963,7 +963,7 @@ impl Gpu {
             }
             buf.shape_until_scroll(&mut self.font_system, false);
             text_buffers.push(buf);
-            text_meta.push((pp[0], pc[1] - knob_r - 18.0 * scale, TextColor::rgba(140, 140, 150, 180), full_bounds));
+            text_meta.push((pp[0], pan_layout.label_y, TextColor::rgba(140, 140, 150, 180), full_bounds));
 
             // PAN value — below the knob
             let pan_text = rw.pan_text();
@@ -975,7 +975,7 @@ impl Gpu {
             }
             buf.shape_until_scroll(&mut self.font_system, false);
             text_buffers.push(buf);
-            text_meta.push((pp[0], pc[1] + knob_r + 4.0 * scale, TextColor::rgba(200, 200, 210, 220), full_bounds));
+            text_meta.push((pp[0], pan_layout.value_y, TextColor::rgba(200, 200, 210, 220), full_bounds));
 
             // WARP label
             let (btn_pos, btn_size) = right_window::RightWindow::warp_mode_button_rect_pub(w, h, scale);

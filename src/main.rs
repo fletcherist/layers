@@ -2464,11 +2464,11 @@ impl App {
                 // Preserve vol_entry when updating the same waveform so that
                 // click-to-edit isn't reset by the unconditional update_right_window
                 // call at the end of the mouse-released handler.
-                let (vol_entry, sample_bpm_entry, pitch_entry, vol_fader_focused) = if self.right_window.as_ref().map_or(false, |rw| rw.waveform_id == id) {
+                let (vol_entry, sample_bpm_entry, pitch_entry, vol_fader_focused, pan_knob_focused) = if self.right_window.as_ref().map_or(false, |rw| rw.waveform_id == id) {
                     let rw = self.right_window.take().unwrap();
-                    (rw.vol_entry, rw.sample_bpm_entry, rw.pitch_entry, rw.vol_fader_focused)
+                    (rw.vol_entry, rw.sample_bpm_entry, rw.pitch_entry, rw.vol_fader_focused, rw.pan_knob_focused)
                 } else {
-                    (ui::value_entry::ValueEntry::new(), ui::value_entry::ValueEntry::new(), ui::value_entry::ValueEntry::new(), false)
+                    (ui::value_entry::ValueEntry::new(), ui::value_entry::ValueEntry::new(), ui::value_entry::ValueEntry::new(), false, false)
                 };
                 self.right_window = Some(ui::right_window::RightWindow {
                     waveform_id: id,
@@ -2487,6 +2487,7 @@ impl App {
                     sample_bpm_entry,
                     pitch_entry,
                     vol_fader_focused,
+                    pan_knob_focused,
                 });
                 return;
             }
