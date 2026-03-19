@@ -258,6 +258,71 @@ impl RuntimeTheme {
     pub fn from_hue(h: f32) -> Self {
         Self::from_hue_with_settings(h, 1.0, 1.0)
     }
+
+    pub fn from_preset_ableton() -> Self {
+        let bg       = [0.314, 0.298, 0.275, 1.0];
+        let surface  = [0.345, 0.329, 0.306, 1.0];
+        let menu     = [0.361, 0.345, 0.322, 1.0];
+        let elevated = [0.396, 0.380, 0.357, 1.0];
+        let input    = [0.290, 0.278, 0.255, 1.0];
+        let sidebar  = [0.267, 0.255, 0.235, 1.0];
+        let header   = [0.420, 0.404, 0.380, 1.0];
+        let ac       = [0.902, 0.667, 0.176, 1.0];
+        Self {
+            bg_base: bg,
+            bg_surface: surface,
+            bg_menu: menu,
+            bg_overlay: [menu[0], menu[1], menu[2], 0.98],
+            bg_elevated: elevated,
+            bg_input: input,
+            bg_dropdown: menu,
+            bg_panel: [surface[0], surface[1], surface[2], 0.85],
+            bg_window: [surface[0], surface[1], surface[2], 0.98],
+            bg_sidebar: sidebar,
+            bg_window_header: header,
+            bg_plugin: [input[0] - 0.02, input[1] - 0.02, input[2] - 0.02, 1.0],
+            bg_plugin_header: input,
+            accent: ac,
+            accent_muted:  [ac[0], ac[1], ac[2], 0.60],
+            accent_faint:  [ac[0], ac[1], ac[2], 0.08],
+            selection:     [ac[0], ac[1], ac[2], 0.80],
+            border_subtle: [1.0, 1.0, 1.0, 0.08],
+            item_hover:    [1.0, 1.0, 1.0, 0.06],
+            item_active:   [ac[0], ac[1], ac[2], 0.20],
+            option_highlight: [ac[0], ac[1], ac[2], 0.30],
+            pill_active:   [ac[0], ac[1], ac[2], 0.85],
+            pill_inactive: [1.0, 1.0, 1.0, 0.25],
+            slider_fill:   [ac[0], ac[1], ac[2], 0.80],
+            knob_inactive: [1.0, 1.0, 1.0, 0.30],
+            drop_zone_fill:   [ac[0], ac[1], ac[2], 0.10],
+            drop_zone_border: [ac[0], ac[1], ac[2], 0.60],
+            select_rect_fill:   [ac[0], ac[1], ac[2], 0.08],
+            select_rect_border: [ac[0], ac[1], ac[2], 0.50],
+            select_outline:     [ac[0], ac[1], ac[2], 0.70],
+            loop_fill_color:   [ac[0], ac[1], ac[2], 0.08],
+            loop_border_color: [ac[0], ac[1], ac[2], 0.50],
+            loop_badge_color:  [ac[0], ac[1], ac[2], 0.85],
+            export_fill_color:        [0.20, 0.75, 0.55, 0.10],
+            export_border_color:      [0.20, 0.75, 0.55, 0.50],
+            export_render_pill_color: [0.20, 0.75, 0.55, 0.85],
+            component_border_color: [0.85, 0.55, 0.20, 0.50],
+            component_fill_color:   [0.85, 0.55, 0.20, 0.06],
+            component_badge_color:  [0.85, 0.55, 0.20, 0.70],
+            instance_fill_color:    [0.85, 0.55, 0.20, 0.04],
+            instance_border_color:  [0.85, 0.55, 0.20, 0.30],
+            lock_icon_color:        [0.85, 0.55, 0.20, 0.60],
+            effect_border_color:     [ac[0], ac[1], ac[2], 0.50],
+            effect_active_border:    [ac[0], ac[1], ac[2], 0.70],
+            plugin_block_default_color: [ac[0], ac[1], ac[2], 0.70],
+            instrument_border_color:  [0.60, 0.30, 0.90, 0.50],
+            instrument_active_border: [0.70, 0.40, 1.00, 0.70],
+            midi_clip_default_color:  [0.60, 0.30, 0.90, 0.70],
+            playhead:        [0.30, 0.85, 0.50, 0.90],
+            category_dot:    [ac[0], ac[1], ac[2], 0.70],
+            pill_instrument: [0.60, 0.30, 0.90, 0.85],
+            pill_effect:     [ac[0], ac[1], ac[2], 0.85],
+        }
+    }
 }
 
 impl Default for RuntimeTheme {

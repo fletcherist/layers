@@ -24,6 +24,7 @@ const DROPDOWN_HEIGHT: f32 = 28.0;
 const DROPDOWN_RIGHT_PAD: f32 = 24.0;
 const DROPDOWN_ITEM_HEIGHT: f32 = 26.0;
 const AUDIO_DROPDOWN_COUNT: usize = 3;
+const THEME_PRESETS: &[&str] = &["Default", "Ableton"];
 
 #[derive(Clone, Copy, PartialEq)]
 pub enum SettingsCategory {
@@ -179,7 +180,7 @@ impl SettingsWindow {
         let track_h = SLIDER_TRACK_H * scale;
         let track_x =
             content_x + content_w - SLIDER_RIGHT_PAD * scale - VALUE_WIDTH * scale - track_w;
-        let row_y = wp[1] + SECTION_HEADER_HEIGHT * scale + slider_idx as f32 * ROW_HEIGHT * scale;
+        let row_y = wp[1] + SECTION_HEADER_HEIGHT * scale + (slider_idx + 1) as f32 * ROW_HEIGHT * scale;
         let track_y = row_y + (ROW_HEIGHT * scale - track_h) * 0.5;
         ([track_x, track_y], [track_w, track_h])
     }
@@ -192,6 +193,9 @@ impl SettingsWindow {
         screen_h: f32,
         scale: f32,
     ) -> Option<usize> {
+        if settings.theme_preset != "Default" {
+            return None;
+        }
         for i in 0..SLIDERS.len() {
             let (tp, ts) = self.slider_track_rect(i, screen_w, screen_h, scale);
             let val = Self::slider_value(settings, i);
@@ -542,9 +546,14 @@ impl SettingsWindow {
 
         match self.active_category {
             SettingsCategory::ThemeAndColors => {
-                self.build_slider_instances(
+                self.build_theme_dropdown_instances(
                     &mut out, settings, screen_w, screen_h, scale, content_x, content_w, wp, t,
                 );
+                if settings.theme_preset == "Default" {
+                    self.build_slider_instances(
+                        &mut out, settings, screen_w, screen_h, scale, content_x, content_w, wp, t,
+                    );
+                }
             }
             SettingsCategory::Audio => {
                 self.build_audio_instances(
@@ -621,7 +630,7 @@ impl SettingsWindow {
             });
 
             let row_bottom =
-                wp[1] + SECTION_HEADER_HEIGHT * scale + (i as f32 + 1.0) * ROW_HEIGHT * scale;
+                wp[1] + SECTION_HEADER_HEIGHT * scale + (i as f32 + 2.0) * ROW_HEIGHT * scale;
             if i < SLIDERS.len() - 1 {
                 out.push(InstanceRaw {
                     position: [content_x + 16.0 * scale, row_bottom - 0.5 * scale],
@@ -631,6 +640,168 @@ impl SettingsWindow {
                 });
             }
         }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn build_theme_dropdown_instances(
+        &self,
+        out: &mut Vec<InstanceRaw>,
+        settings: &Settings,
+        screen_w: f32,
+        screen_h: f32,
+        scale: f32,
+        content_x: f32,
+        content_w: f32,
+        wp: [f32; 2],
+        t: &crate::theme::RuntimeTheme,
+    ) {
+        let dd_br = 4.0 * scale;
+        let (dp, ds) = self.dropdown_rect(0, screen_w, screen_h, scale);
+
+        // Dropdown border
+        out.push(InstanceRaw {
+            position: [dp[0] - 1.0, dp[1] - 1.0],
+            size: [ds[0] + 2.0, ds[1] + 2.0],
+            color: t.bg_window_header,
+            border_radius: dd_br + 1.0,
+        });
+
+        // Dropdown background
+        out.push(InstanceRaw {
+            position: dp,
+            size: ds,
+            color: t.bg_input,
+            border_radius: dd_br,
+        });
+
+        // Arrow indicator
+        let arrow_size = 6.0 * scale;
+        let arrow_x = dp[0] + ds[0] - 14.0 * scale;
+        let arrow_y = dp[1] + (ds[1] - arrow_size) * 0.5;
+        out.push(InstanceRaw {
+            position: [arrow_x, arrow_y],
+            size: [arrow_size, arrow_size],
+            color: [1.0, 1.0, 1.0, 0.3],
+            border_radius: arrow_size * 0.5,
+        });
+
+        // Row separator below theme row
+        let row_bottom = wp[1] + SECTION_HEADER_HEIGHT * scale + ROW_HEIGHT * scale;
+        out.push(InstanceRaw {
+            position: [content_x + 16.0 * scale, row_bottom - 0.5 * scale],
+            size: [content_w - 32.0 * scale, 1.0 * scale],
+            color: [1.0, 1.0, 1.0, 0.04],
+            border_radius: 0.0,
+        });
+
+        // Popup
+        if self.active_category == SettingsCategory::ThemeAndColors {
+            if let Some(0) = self.open_dropdown {
+                let item_h = DROPDOWN_ITEM_HEIGHT * scale;
+                let popup_h = THEME_PRESETS.len() as f32 * item_h;
+                let popup_y = dp[1] + ds[1] + 2.0 * scale;
+                let popup_br = 6.0 * scale;
+
+                out.push(InstanceRaw {
+                    position: [dp[0] + 4.0 * scale, popup_y + 4.0 * scale],
+                    size: [ds[0], popup_h],
+                    color: [0.0, 0.0, 0.0, 0.5],
+                    border_radius: popup_br,
+                });
+                out.push(InstanceRaw {
+                    position: [dp[0] - 1.0, popup_y - 1.0],
+                    size: [ds[0] + 2.0, popup_h + 2.0],
+                    color: t.bg_window_header,
+                    border_radius: popup_br + 1.0,
+                });
+                out.push(InstanceRaw {
+                    position: [dp[0], popup_y],
+                    size: [ds[0], popup_h],
+                    color: t.bg_menu,
+                    border_radius: popup_br,
+                });
+
+                for (j, preset) in THEME_PRESETS.iter().enumerate() {
+                    let iy = popup_y + j as f32 * item_h;
+                    if *preset == settings.theme_preset {
+                        out.push(InstanceRaw {
+                            position: [dp[0] + 4.0 * scale, iy + 2.0 * scale],
+                            size: [ds[0] - 8.0 * scale, item_h - 4.0 * scale],
+                            color: t.option_highlight,
+                            border_radius: 4.0 * scale,
+                        });
+                    }
+                }
+            }
+        }
+    }
+
+    pub fn handle_theme_panel_click(
+        &mut self,
+        mouse: [f32; 2],
+        settings: &mut Settings,
+        screen_w: f32,
+        screen_h: f32,
+        scale: f32,
+    ) -> bool {
+        if self.active_category != SettingsCategory::ThemeAndColors {
+            return false;
+        }
+
+        // Check if popup is open and click is on an item
+        if self.open_dropdown == Some(0) {
+            let (dp, ds) = self.dropdown_rect(0, screen_w, screen_h, scale);
+            let item_h = DROPDOWN_ITEM_HEIGHT * scale;
+            let popup_y = dp[1] + ds[1] + 2.0 * scale;
+            let popup_h = THEME_PRESETS.len() as f32 * item_h;
+
+            if mouse[0] >= dp[0]
+                && mouse[0] <= dp[0] + ds[0]
+                && mouse[1] >= popup_y
+                && mouse[1] <= popup_y + popup_h
+            {
+                let rel = mouse[1] - popup_y;
+                let idx = (rel / item_h) as usize;
+                if idx < THEME_PRESETS.len() {
+                    let chosen = THEME_PRESETS[idx];
+                    settings.theme_preset = chosen.to_string();
+                    settings.theme = if chosen == "Ableton" {
+                        crate::theme::RuntimeTheme::from_preset_ableton()
+                    } else {
+                        crate::theme::RuntimeTheme::from_hue_with_settings(
+                            settings.primary_hue,
+                            settings.color_intensity,
+                            settings.brightness,
+                        )
+                    };
+                    self.open_dropdown = None;
+                    return true;
+                }
+            }
+        }
+
+        // Check if click is on the dropdown button
+        let (dp, ds) = self.dropdown_rect(0, screen_w, screen_h, scale);
+        if mouse[0] >= dp[0]
+            && mouse[0] <= dp[0] + ds[0]
+            && mouse[1] >= dp[1]
+            && mouse[1] <= dp[1] + ds[1]
+        {
+            if self.open_dropdown == Some(0) {
+                self.open_dropdown = None;
+            } else {
+                self.open_dropdown = Some(0);
+            }
+            return true;
+        }
+
+        // Click elsewhere closes the dropdown
+        if self.open_dropdown.is_some() {
+            self.open_dropdown = None;
+            return true;
+        }
+
+        false
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1061,39 +1232,86 @@ impl SettingsWindow {
 
                 let label_font = 13.0 * scale;
                 let label_line = 18.0 * scale;
+                let dd_font = 12.0 * scale;
+                let dd_line = 16.0 * scale;
                 let value_font = 12.0 * scale;
                 let value_line = 16.0 * scale;
                 let content_w = ws[0] - SIDEBAR_WIDTH * scale;
 
-                for (i, def) in SLIDERS.iter().enumerate() {
-                    let row_y =
-                        wp[1] + SECTION_HEADER_HEIGHT * scale + i as f32 * ROW_HEIGHT * scale;
+                // Row 0: Theme preset dropdown
+                let theme_row_y = wp[1] + SECTION_HEADER_HEIGHT * scale;
+                out.push(SettingsTextEntry {
+                    text: "Theme".to_string(),
+                    x: content_x + ROW_LABEL_X * scale,
+                    y: theme_row_y + (ROW_HEIGHT * scale - label_line) * 0.5,
+                    font_size: label_font,
+                    line_height: label_line,
+                    color: [210, 210, 218, 255],
+                    weight: 400,
+                });
+                let (dp, ds) = self.dropdown_rect(0, screen_w, screen_h, scale);
+                out.push(SettingsTextEntry {
+                    text: settings.theme_preset.clone(),
+                    x: dp[0] + 10.0 * scale,
+                    y: dp[1] + (ds[1] - dd_line) * 0.5,
+                    font_size: dd_font,
+                    line_height: dd_line,
+                    color: [210, 210, 218, 255],
+                    weight: 400,
+                });
 
-                    out.push(SettingsTextEntry {
-                        text: def.label.to_string(),
-                        x: content_x + ROW_LABEL_X * scale,
-                        y: row_y + (ROW_HEIGHT * scale - label_line) * 0.5,
-                        font_size: label_font,
-                        line_height: label_line,
-                        color: [210, 210, 218, 255],
-                        weight: 400,
-                    });
+                // Theme preset popup text
+                if let Some(0) = self.open_dropdown {
+                    let item_h = DROPDOWN_ITEM_HEIGHT * scale;
+                    let popup_y = dp[1] + ds[1] + 2.0 * scale;
+                    for (j, preset) in THEME_PRESETS.iter().enumerate() {
+                        let iy = popup_y + j as f32 * item_h;
+                        let is_selected = *preset == settings.theme_preset;
+                        out.push(SettingsTextEntry {
+                            text: preset.to_string(),
+                            x: dp[0] + 12.0 * scale,
+                            y: iy + (item_h - dd_line) * 0.5,
+                            font_size: dd_font,
+                            line_height: dd_line,
+                            color: if is_selected { [240, 240, 255, 255] } else { [200, 200, 210, 255] },
+                            weight: if is_selected { 600 } else { 400 },
+                        });
+                    }
+                }
 
-                    let val = Self::slider_value(settings, i);
-                    let display = (val * def.display_scale) as i32;
-                    let val_text = format!("{} {}", display, def.unit);
-                    let val_x =
-                        content_x + content_w - SLIDER_RIGHT_PAD * scale - VALUE_WIDTH * scale
+                // Rows 1..N: sliders (only when Default preset)
+                if settings.theme_preset == "Default" {
+                    for (i, def) in SLIDERS.iter().enumerate() {
+                        let row_y = wp[1]
+                            + SECTION_HEADER_HEIGHT * scale
+                            + (i + 1) as f32 * ROW_HEIGHT * scale;
+
+                        out.push(SettingsTextEntry {
+                            text: def.label.to_string(),
+                            x: content_x + ROW_LABEL_X * scale,
+                            y: row_y + (ROW_HEIGHT * scale - label_line) * 0.5,
+                            font_size: label_font,
+                            line_height: label_line,
+                            color: [210, 210, 218, 255],
+                            weight: 400,
+                        });
+
+                        let val = Self::slider_value(settings, i);
+                        let display = (val * def.display_scale) as i32;
+                        let val_text = format!("{} {}", display, def.unit);
+                        let val_x = content_x + content_w - SLIDER_RIGHT_PAD * scale
+                            - VALUE_WIDTH * scale
                             + 8.0 * scale;
-                    out.push(SettingsTextEntry {
-                        text: val_text,
-                        x: val_x,
-                        y: row_y + (ROW_HEIGHT * scale - value_line) * 0.5,
-                        font_size: value_font,
-                        line_height: value_line,
-                        color: [170, 170, 180, 255],
-                        weight: 400,
-                    });
+                        out.push(SettingsTextEntry {
+                            text: val_text,
+                            x: val_x,
+                            y: row_y + (ROW_HEIGHT * scale - value_line) * 0.5,
+                            font_size: value_font,
+                            line_height: value_line,
+                            color: [170, 170, 180, 255],
+                            weight: 400,
+                        });
+                    }
                 }
             }
             SettingsCategory::Audio => {

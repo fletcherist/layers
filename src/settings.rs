@@ -151,6 +151,8 @@ fn default_grid_mode() -> GridMode { GridMode::default() }
 fn default_triplet_grid() -> bool { false }
 fn default_auto_clip_fades() -> bool { true }
 fn default_primary_hue() -> f32 { 216.0 }
+fn default_theme_preset() -> String { "Default".to_string() }
+
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Settings {
     pub grid_line_intensity: f32,
@@ -180,6 +182,8 @@ pub struct Settings {
     pub sample_library_folders: Vec<String>,
     #[serde(default = "default_primary_hue")]
     pub primary_hue: f32,
+    #[serde(default = "default_theme_preset")]
+    pub theme_preset: String,
     #[serde(skip)]
     pub theme: crate::theme::RuntimeTheme,
 }
@@ -242,6 +246,7 @@ impl Default for Settings {
             auto_clip_fades: true,
             sample_library_folders: Vec::new(),
             primary_hue: 216.0,
+            theme_preset: "Default".to_string(),
             theme: crate::theme::RuntimeTheme::default(),
         }
     }
@@ -263,7 +268,11 @@ impl Settings {
             match std::fs::read_to_string(&path) {
                 Ok(json) => {
                     let mut s: Settings = serde_json::from_str(&json).unwrap_or_default();
-                    s.theme = crate::theme::RuntimeTheme::from_hue_with_settings(s.primary_hue, s.color_intensity, s.brightness);
+                    s.theme = if s.theme_preset == "Ableton" {
+                        crate::theme::RuntimeTheme::from_preset_ableton()
+                    } else {
+                        crate::theme::RuntimeTheme::from_hue_with_settings(s.primary_hue, s.color_intensity, s.brightness)
+                    };
                     s
                 }
                 Err(_) => Self::default(),

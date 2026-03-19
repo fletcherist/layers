@@ -1449,6 +1449,23 @@ impl ApplicationHandler for App {
                                     return;
                                 }
 
+                                // Try theme preset dropdown interaction
+                                let theme_consumed =
+                                    self.settings_window.as_mut().map_or(false, |sw| {
+                                        sw.handle_theme_panel_click(
+                                            self.mouse_pos,
+                                            &mut self.settings,
+                                            scr_w,
+                                            scr_h,
+                                            scale,
+                                        )
+                                    });
+                                if theme_consumed {
+                                    self.settings.save();
+                                    self.request_redraw();
+                                    return;
+                                }
+
                                 // Try developer dropdown interaction
                                 let dev_consumed =
                                     self.settings_window.as_mut().map_or(false, |sw| {
