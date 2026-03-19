@@ -1,3 +1,5 @@
+- 2026-03-19: refactor: centralize volume fader geometry into VolFaderLayout struct (31.6k loc)
+- 2026-03-19: feat: keyboard volume control — click fader to focus, Up/Down ±1dB, Shift for ±0.1dB fine control, Escape to unfocus (31.6k loc)
 - 2026-03-19: fix: arrow-key nudge now resolves waveform overlaps live, same as mouse drag (31.3k loc)
 - 2026-03-19: fix: undo/redo of batch update ops (arrow nudge) now preserves selection so user can keep moving (31.3k loc)
 - 2026-03-19: fix: arrow-key vertical nudge now uses grid subdivision (same as horizontal), shift moves by clip height (31.3k loc)

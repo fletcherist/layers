@@ -856,7 +856,9 @@ impl Gpu {
         // Right window text
         if let Some(rw) = right_window {
             let (pp, _) = right_window::RightWindow::panel_rect(w, h, scale);
-            let (fader_pos, fader_size) = right_window::RightWindow::vol_fader_rect_pub(w, h, scale);
+            let layout = right_window::RightWindow::vol_fader_layout(w, h, scale);
+            let fader_pos = layout.track_pos;
+            let fader_size = layout.track_size;
             let pc = right_window::RightWindow::pan_knob_center_pub(w, h, scale);
             let header_font = 10.0 * scale;
             let header_line = 14.0 * scale;
@@ -877,7 +879,6 @@ impl Gpu {
             let knob_r = 22.0 * scale;
 
             // Fader geometry helpers
-            let track_right_x = fader_pos[0] + fader_size[0];
             let vol_fader_pos_val = crate::ui::palette::gain_to_vol_fader_pos(rw.volume);
             let thumb_y = fader_pos[1] + (1.0 - vol_fader_pos_val) * fader_size[1];
 
@@ -890,7 +891,7 @@ impl Gpu {
             }
             buf.shape_until_scroll(&mut self.font_system, false);
             text_buffers.push(buf);
-            text_meta.push((pp[0], fader_pos[1] - 18.0 * scale, TextColor::rgba(140, 140, 150, 180), full_bounds));
+            text_meta.push((pp[0], layout.label_y, TextColor::rgba(140, 140, 150, 180), full_bounds));
 
             // Triangle indicator (▶) to the left of the track at thumb position
             let tri_font = 10.0 * scale;
@@ -900,12 +901,12 @@ impl Gpu {
             buf.set_text(&mut self.font_system, "▶", Attrs::new().family(Family::SansSerif), Shaping::Advanced);
             buf.shape_until_scroll(&mut self.font_system, false);
             text_buffers.push(buf);
-            text_meta.push((fader_pos[0] - 14.0 * scale, thumb_y - tri_line * 0.5, TextColor::rgba(220, 220, 230, 230), full_bounds));
+            text_meta.push((layout.triangle_x, thumb_y - tri_line * 0.5, TextColor::rgba(220, 220, 230, 230), full_bounds));
 
             // Scale labels to the right of tick marks
             let scale_font = 9.0 * scale;
             let scale_line = 11.0 * scale;
-            let label_x = track_right_x + 11.0 * scale;
+            let label_x = layout.scale_labels_x;
             let label_bounds = TextBounds {
                 left: label_x as i32,
                 top: 0,
@@ -951,7 +952,7 @@ impl Gpu {
             }
             buf.shape_until_scroll(&mut self.font_system, false);
             text_buffers.push(buf);
-            text_meta.push((pp[0], fader_pos[1] + fader_size[1] + 4.0 * scale, TextColor::rgba(200, 200, 210, vol_alpha), full_bounds));
+            text_meta.push((pp[0], layout.db_text_y, TextColor::rgba(200, 200, 210, vol_alpha), full_bounds));
 
             // PAN label — centered at the knob center
             let mut buf = TextBuffer::new(&mut self.font_system, Metrics::new(label_font, label_line));

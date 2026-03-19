@@ -265,3 +265,107 @@ fn test_repitch_mode_resizes_clip() {
     let w = app.waveforms.get(&id).unwrap().size[0];
     assert!((w - original_px * 2.0).abs() < 0.01, "half-tempo sample should double width: got {w}");
 }
+
+#[test]
+fn test_keyboard_volume_up() {
+    use crate::ui::palette::{gain_to_db, db_to_gain};
+
+    let mut app = App::new_headless();
+    let id = new_id();
+    let mut wf = make_waveform();
+    wf.volume = 1.0; // 0 dB
+    app.waveforms.insert(id, wf);
+    app.audio_clips.insert(id, AudioClipData {
+        samples: Arc::new(Vec::new()),
+        sample_rate: 48000,
+        duration_secs: 1.0,
+    });
+
+    app.selected.push(HitTarget::Waveform(id));
+    app.update_right_window();
+
+    // Simulate: set fader focused, then apply +1 dB
+    app.right_window.as_mut().unwrap().vol_fader_focused = true;
+
+    let rw = app.right_window.as_ref().unwrap();
+    let current_db = gain_to_db(rw.volume);
+    let new_db = (current_db + 1.0).clamp(-70.0, 24.0);
+    let new_gain = db_to_gain(new_db);
+    let wf_id = rw.waveform_id;
+
+    let before = app.waveforms[&wf_id].clone();
+    app.waveforms.get_mut(&wf_id).unwrap().volume = new_gain;
+    app.right_window.as_mut().unwrap().volume = new_gain;
+    let after = app.waveforms[&wf_id].clone();
+    app.push_op(Operation::UpdateWaveform { id: wf_id, before, after });
+
+    let expected = db_to_gain(1.0);
+    assert!((app.waveforms[&wf_id].volume - expected).abs() < 1e-4, "volume should be +1 dB");
+}
+
+#[test]
+fn test_keyboard_volume_clamp_at_max() {
+    use crate::ui::palette::{db_to_gain, VOL_FADER_DB_MAX};
+
+    let mut app = App::new_headless();
+    let id = new_id();
+    let mut wf = make_waveform();
+    wf.volume = db_to_gain(23.5); // near max
+    app.waveforms.insert(id, wf);
+    app.audio_clips.insert(id, AudioClipData {
+        samples: Arc::new(Vec::new()),
+        sample_rate: 48000,
+        duration_secs: 1.0,
+    });
+
+    app.selected.push(HitTarget::Waveform(id));
+    app.update_right_window();
+    app.right_window.as_mut().unwrap().vol_fader_focused = true;
+
+    // Apply +1 dB — should clamp to +24 dB
+    let new_db = (23.5_f32 + 1.0).clamp(-70.0, VOL_FADER_DB_MAX);
+    let new_gain = db_to_gain(new_db);
+
+    let before = app.waveforms[&id].clone();
+    app.waveforms.get_mut(&id).unwrap().volume = new_gain;
+    app.right_window.as_mut().unwrap().volume = new_gain;
+    let after = app.waveforms[&id].clone();
+    app.push_op(Operation::UpdateWaveform { id, before, after });
+
+    let expected = db_to_gain(VOL_FADER_DB_MAX);
+    assert!((app.waveforms[&id].volume - expected).abs() < 1e-4, "volume should be clamped to +24 dB");
+}
+
+#[test]
+fn test_keyboard_volume_undo() {
+    use crate::ui::palette::{db_to_gain, gain_to_db};
+
+    let mut app = App::new_headless();
+    let id = new_id();
+    let mut wf = make_waveform();
+    wf.volume = 1.0; // 0 dB
+    app.waveforms.insert(id, wf);
+    app.audio_clips.insert(id, AudioClipData {
+        samples: Arc::new(Vec::new()),
+        sample_rate: 48000,
+        duration_secs: 1.0,
+    });
+
+    app.selected.push(HitTarget::Waveform(id));
+    app.update_right_window();
+    app.right_window.as_mut().unwrap().vol_fader_focused = true;
+
+    // Apply +1 dB
+    let new_gain = db_to_gain(1.0);
+    let before = app.waveforms[&id].clone();
+    app.waveforms.get_mut(&id).unwrap().volume = new_gain;
+    app.right_window.as_mut().unwrap().volume = new_gain;
+    let after = app.waveforms[&id].clone();
+    app.push_op(Operation::UpdateWaveform { id, before, after });
+
+    assert!((gain_to_db(app.waveforms[&id].volume) - 1.0).abs() < 0.1, "should be +1 dB");
+
+    // Undo
+    app.undo_op();
+    assert!((app.waveforms[&id].volume - 1.0).abs() < 1e-4, "undo should restore volume to 0 dB (gain=1.0)");
+}

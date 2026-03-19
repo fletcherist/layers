@@ -20,6 +20,29 @@ const PAN_KNOB_Y_OFFSET: f32 = 264.0;
 const PITCH_KNOB_Y_OFFSET: f32 = 348.0;
 
 
+pub struct VolFaderLayout {
+    pub track_pos: [f32; 2],
+    pub track_size: [f32; 2],
+    pub center_x: f32,
+    /// "Gain" label Y (top of label text)
+    pub label_y: f32,
+    /// Triangle indicator X (left edge of ▶)
+    pub triangle_x: f32,
+    /// Scale labels X (left edge of "24", "0", "70")
+    pub scale_labels_x: f32,
+    /// dB value text Y (top of text)
+    pub db_text_y: f32,
+    /// dB value text rect (for hit testing)
+    pub db_text_rect: ([f32; 2], [f32; 2]),
+    /// Focus bracket bounds
+    pub bracket_x0: f32,
+    pub bracket_x1: f32,
+    pub bracket_y0: f32,
+    pub bracket_y1: f32,
+    /// Tick mark X offset (right edge of tick gap, left of track)
+    pub tick_x_offset: f32,
+}
+
 pub struct RightWindow {
     pub waveform_id: EntityId,
     pub volume: f32,
@@ -36,6 +59,7 @@ pub struct RightWindow {
     pub vol_entry: ValueEntry,
     pub sample_bpm_entry: ValueEntry,
     pub pitch_entry: ValueEntry,
+    pub vol_fader_focused: bool,
 }
 
 impl RightWindow {
@@ -112,6 +136,13 @@ impl RightWindow {
             && pos[1] >= thumb_y - hit_h * 0.5 && pos[1] <= thumb_y + hit_h * 0.5
     }
 
+    pub fn hit_test_vol_track(&self, pos: [f32; 2], screen_w: f32, screen_h: f32, scale: f32) -> bool {
+        let (track_pos, track_size) = Self::vol_fader_rects(screen_w, screen_h, scale);
+        let margin = 12.0 * scale;
+        pos[0] >= track_pos[0] - margin && pos[0] <= track_pos[0] + track_size[0] + margin
+            && pos[1] >= track_pos[1] && pos[1] <= track_pos[1] + track_size[1]
+    }
+
     pub fn hit_test_pan_knob(&self, pos: [f32; 2], screen_w: f32, screen_h: f32, scale: f32) -> bool {
         let c = Self::pan_knob_center(screen_w, screen_h, scale);
         let r = (KNOB_R + 8.0) * scale;
@@ -147,12 +178,27 @@ impl RightWindow {
             && pos[1] >= rp[1] && pos[1] <= rp[1] + rs[1]
     }
 
-    fn vol_db_text_rect(screen_w: f32, screen_h: f32, scale: f32) -> ([f32; 2], [f32; 2]) {
+    pub fn vol_fader_layout(screen_w: f32, screen_h: f32, scale: f32) -> VolFaderLayout {
         let (pp, _ps) = Self::panel_rect(screen_w, screen_h, scale);
-        let (fader_pos, fader_size) = Self::vol_fader_rects(screen_w, screen_h, scale);
+        let (track_pos, track_size) = Self::vol_fader_rects(screen_w, screen_h, scale);
+        let center_x = track_pos[0] + track_size[0] * 0.5;
         let rw_w = RIGHT_WINDOW_WIDTH * scale;
-        let text_y = fader_pos[1] + fader_size[1] + 4.0 * scale;
-        ([pp[0], text_y], [rw_w, 20.0 * scale])
+        let db_text_y = track_pos[1] + track_size[1] + 4.0 * scale;
+        VolFaderLayout {
+            track_pos,
+            track_size,
+            center_x,
+            label_y: track_pos[1] - 18.0 * scale,
+            triangle_x: track_pos[0] - 14.0 * scale,
+            scale_labels_x: track_pos[0] + track_size[0] + 11.0 * scale,
+            db_text_y,
+            db_text_rect: ([pp[0], db_text_y], [rw_w, 20.0 * scale]),
+            bracket_x0: center_x - 20.0 * scale,
+            bracket_x1: center_x + 20.0 * scale,
+            bracket_y0: track_pos[1] - 22.0 * scale,
+            bracket_y1: track_pos[1] + track_size[1] + 30.0 * scale,
+            tick_x_offset: track_pos[0],
+        }
     }
 
     pub fn warp_mode_button_rect_pub(screen_w: f32, screen_h: f32, scale: f32) -> ([f32; 2], [f32; 2]) {
@@ -161,7 +207,8 @@ impl RightWindow {
 
 
     pub fn hit_test_vol_text(&self, pos: [f32; 2], screen_w: f32, screen_h: f32, scale: f32) -> bool {
-        let (rp, rs) = Self::vol_db_text_rect(screen_w, screen_h, scale);
+        let layout = Self::vol_fader_layout(screen_w, screen_h, scale);
+        let (rp, rs) = layout.db_text_rect;
         pos[0] >= rp[0] && pos[0] <= rp[0] + rs[0]
             && pos[1] >= rp[1] && pos[1] <= rp[1] + rs[1]
     }
@@ -260,9 +307,10 @@ impl RightWindow {
 
         // Volume fader
         let vol_pos = gain_to_vol_fader_pos(self.volume);
-        let (track_pos, track_size) = Self::vol_fader_rects(screen_w, screen_h, scale);
+        let layout = Self::vol_fader_layout(screen_w, screen_h, scale);
+        let track_pos = layout.track_pos;
+        let track_size = layout.track_size;
         let thumb_y = Self::vol_fader_thumb_y(vol_pos, track_pos, track_size[1]);
-        let panel_cx = track_pos[0] + track_size[0] * 0.5;
 
         // Track background
         out.push(InstanceRaw {
@@ -271,6 +319,29 @@ impl RightWindow {
             color: [0.2, 0.2, 0.25, 1.0],
             border_radius: FADER_TRACK_W * 0.5 * scale,
         });
+
+        // Focus corner brackets — enclose Gain label, fader track, ticks, scale labels, dB value
+        if self.vol_fader_focused {
+            let bracket_len = 10.0 * scale;
+            let thick = 1.0 * scale;
+            let color = [settings.theme.accent[0], settings.theme.accent[1], settings.theme.accent[2], 0.7];
+            let x0 = layout.bracket_x0;
+            let x1 = layout.bracket_x1;
+            let y0 = layout.bracket_y0;
+            let y1 = layout.bracket_y1;
+            // Top-left
+            out.push(InstanceRaw { position: [x0, y0], size: [bracket_len, thick], color, border_radius: 0.0 });
+            out.push(InstanceRaw { position: [x0, y0], size: [thick, bracket_len], color, border_radius: 0.0 });
+            // Top-right
+            out.push(InstanceRaw { position: [x1 - bracket_len, y0], size: [bracket_len, thick], color, border_radius: 0.0 });
+            out.push(InstanceRaw { position: [x1 - thick, y0], size: [thick, bracket_len], color, border_radius: 0.0 });
+            // Bottom-left
+            out.push(InstanceRaw { position: [x0, y1 - thick], size: [bracket_len, thick], color, border_radius: 0.0 });
+            out.push(InstanceRaw { position: [x0, y1 - bracket_len], size: [thick, bracket_len], color, border_radius: 0.0 });
+            // Bottom-right
+            out.push(InstanceRaw { position: [x1 - bracket_len, y1 - thick], size: [bracket_len, thick], color, border_radius: 0.0 });
+            out.push(InstanceRaw { position: [x1 - thick, y1 - bracket_len], size: [thick, bracket_len], color, border_radius: 0.0 });
+        }
 
         // Fill anchored at 0 dB: extends up when volume > 0 dB, down when volume < 0 dB
         let y_zero = Self::vol_fader_thumb_y(VOL_FADER_P_ZERO, track_pos, track_size[1]);
@@ -305,7 +376,7 @@ impl RightWindow {
             let ty = Self::vol_fader_thumb_y(fpos, track_pos, track_size[1]);
             let tick_w = if major { 6.0 } else { 3.0 };
             // Ticks extend leftward from the track left edge
-            let tick_x = track_pos[0] - (tick_w + 3.0) * scale;
+            let tick_x = layout.tick_x_offset - (tick_w + 3.0) * scale;
             out.push(InstanceRaw {
                 position: [tick_x, ty - 0.5 * scale],
                 size: [tick_w * scale, 1.0 * scale],
@@ -404,10 +475,6 @@ impl RightWindow {
     /// Format sample BPM as display string
     pub fn sample_bpm_text(&self) -> String {
         format!("{:.1}", self.sample_bpm)
-    }
-
-    pub fn vol_fader_rect_pub(screen_w: f32, screen_h: f32, scale: f32) -> ([f32; 2], [f32; 2]) {
-        Self::vol_fader_rects(screen_w, screen_h, scale)
     }
 
     pub fn pan_knob_center_pub(screen_w: f32, screen_h: f32, scale: f32) -> [f32; 2] {

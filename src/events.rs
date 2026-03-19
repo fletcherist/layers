@@ -1530,6 +1530,11 @@ impl ApplicationHandler for App {
                             return;
                         }
 
+                        // Clear vol fader focus on any click (re-set below if clicking the fader)
+                        if let Some(rw) = &mut self.right_window {
+                            rw.vol_fader_focused = false;
+                        }
+
                         // Right window knob mouse down (skip if context menu is open)
                         if self.context_menu.is_none() {
                         if let Some(rw) = &self.right_window {
@@ -1540,6 +1545,7 @@ impl ApplicationHandler for App {
                                 let wf_id = rw.waveform_id;
                                 let hit_vol_text = rw.hit_test_vol_text(self.mouse_pos, sw, sh, scale);
                                 let hit_vol = rw.hit_test_vol_knob(self.mouse_pos, sw, sh, scale);
+                                let hit_vol_track = rw.hit_test_vol_track(self.mouse_pos, sw, sh, scale);
                                 let hit_pan = rw.hit_test_pan_knob(self.mouse_pos, sw, sh, scale);
                                 let hit_warp_btn = rw.hit_test_warp_mode_button(self.mouse_pos, sw, sh, scale);
                                 let hit_warp_sel = rw.hit_test_warp_mode_selector(self.mouse_pos, sw, sh, scale);
@@ -1649,6 +1655,7 @@ impl ApplicationHandler for App {
                                         if let Some(rw) = &mut self.right_window {
                                             rw.volume = 1.0;
                                             rw.vol_dragging = false;
+                                            rw.vol_fader_focused = true;
                                         }
                                         let after = self.waveforms[&wf_id].clone();
                                         self.push_op(crate::operations::Operation::UpdateWaveform { id: wf_id, before, after });
@@ -1661,8 +1668,15 @@ impl ApplicationHandler for App {
                                         rw.vol_dragging = true;
                                         rw.drag_start_y = self.mouse_pos[1];
                                         rw.drag_start_value = start_value;
+                                        rw.vol_fader_focused = true;
                                     }
                                     let _ = wf_id;
+                                    self.request_redraw();
+                                    return;
+                                } else if hit_vol_track {
+                                    if let Some(rw) = &mut self.right_window {
+                                        rw.vol_fader_focused = true;
+                                    }
                                     self.request_redraw();
                                     return;
                                 } else if hit_pan {
@@ -3336,6 +3350,53 @@ impl ApplicationHandler for App {
                                     }
                                 }
                             }
+                        }
+                    }
+
+                    // Escape clears vol fader focus
+                    if matches!(event.logical_key, Key::Named(NamedKey::Escape)) {
+                        if let Some(rw) = &mut self.right_window {
+                            if rw.vol_fader_focused {
+                                rw.vol_fader_focused = false;
+                                self.request_redraw();
+                                return;
+                            }
+                        }
+                    }
+
+                    // Up/Down arrow volume adjustment when fader is focused
+                    if let Some(rw) = &self.right_window {
+                        if rw.vol_fader_focused && matches!(event.logical_key,
+                            Key::Named(NamedKey::ArrowUp) | Key::Named(NamedKey::ArrowDown))
+                        {
+                            let shift = self.modifiers.shift_key();
+                            let delta_db = match event.logical_key {
+                                Key::Named(NamedKey::ArrowUp) => if shift { 0.1 } else { 1.0 },
+                                _ => if shift { -0.1 } else { -1.0 },
+                            };
+                            let wf_id = rw.waveform_id;
+                            let current_db = ui::palette::gain_to_db(rw.volume);
+                            let new_db = (current_db + delta_db).clamp(ui::palette::VOL_FADER_DB_BOTTOM, ui::palette::VOL_FADER_DB_MAX);
+                            let new_gain = if new_db <= ui::palette::VOL_FADER_DB_BOTTOM { 0.0 } else { ui::palette::db_to_gain(new_db) };
+                            if let Some(before) = self.waveforms.get(&wf_id).cloned() {
+                                if let Some(wf) = self.waveforms.get_mut(&wf_id) {
+                                    wf.volume = new_gain;
+                                }
+                                if let Some(rw) = &mut self.right_window {
+                                    rw.volume = new_gain;
+                                }
+                                if let Some(after) = self.waveforms.get(&wf_id).cloned() {
+                                    self.push_op(crate::operations::Operation::UpdateWaveform {
+                                        id: wf_id,
+                                        before,
+                                        after,
+                                    });
+                                }
+                                self.sync_audio_clips();
+                                self.mark_dirty();
+                            }
+                            self.request_redraw();
+                            return;
                         }
                     }
 
