@@ -416,6 +416,8 @@ impl ApplicationHandler for App {
                         if let Some(sw) = &mut self.settings_window {
                             sw.update_hover(pos, scr_w, scr_h, scale);
                         }
+                        self.request_redraw();
+                        return;
                     }
                 }
 
@@ -1165,7 +1167,7 @@ impl ApplicationHandler for App {
             WindowEvent::MouseInput { state, button, .. } => match button {
                 MouseButton::Middle => match state {
                     ElementState::Pressed => {
-                        if self.context_menu.is_some() {
+                        if self.context_menu.is_some() || self.settings_window.is_some() {
                             return;
                         }
                         self.command_palette = None;
@@ -1762,8 +1764,8 @@ impl ApplicationHandler for App {
                             });
 
                             if let Some(action) = clicked_action {
-                                self.context_menu = None;
                                 self.execute_command(action);
+                                self.context_menu = None;
                             } else {
                                 self.context_menu = None;
                             }
@@ -4373,7 +4375,7 @@ impl ApplicationHandler for App {
 
             // --- scroll = pan, Cmd+scroll = zoom, pinch = zoom ---
             WindowEvent::MouseWheel { delta, .. } => {
-                if self.context_menu.is_some() {
+                if self.context_menu.is_some() || self.settings_window.is_some() {
                     return;
                 }
                 let is_pixel_delta = matches!(delta, MouseScrollDelta::PixelDelta(_));
@@ -4449,7 +4451,7 @@ impl ApplicationHandler for App {
             }
 
             WindowEvent::PinchGesture { delta, .. } => {
-                if self.command_palette.is_some() || self.context_menu.is_some() {
+                if self.command_palette.is_some() || self.context_menu.is_some() || self.settings_window.is_some() {
                     return;
                 }
                 let factor = (1.0 + delta as f32).clamp(0.5, 2.0);

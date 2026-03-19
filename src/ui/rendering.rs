@@ -72,10 +72,13 @@ pub(crate) fn build_instances(out: &mut Vec<InstanceRaw>, ctx: &RenderContext) {
         let major_line_w = 2.0 / camera.zoom;
         let bar_line_w = 2.5 / camera.zoom;
         let grid_i = ctx.settings.grid_line_intensity;
-        let ac = ctx.settings.theme.accent;
-        let minor_color = [ac[0], ac[1], ac[2], grid_i * 0.20];
-        let beat_color  = [ac[0], ac[1], ac[2], grid_i * 0.38];
-        let bar_color   = [ac[0], ac[1], ac[2], grid_i * 0.60];
+        let bg = ctx.settings.theme.bg_base;
+        let lighten = |amt: f32| -> [f32; 4] {
+            [(bg[0] + amt).min(1.0), (bg[1] + amt).min(1.0), (bg[2] + amt).min(1.0), 1.0]
+        };
+        let minor_color = lighten(grid_i * 0.08);
+        let beat_color  = lighten(grid_i * 0.15);
+        let bar_color   = lighten(grid_i * 0.25);
 
         let first_xi = (world_left / spacing).floor() as i64;
         let last_xi = (world_right / spacing).ceil() as i64;

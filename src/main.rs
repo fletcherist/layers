@@ -4249,7 +4249,12 @@ impl App {
     }
 
     fn split_sample_at_cursor(&mut self) {
-        let world = self.camera.screen_to_world(self.mouse_pos);
+        let screen_pos = self
+            .context_menu
+            .as_ref()
+            .map(|m| m.position)
+            .unwrap_or(self.mouse_pos);
+        let world = self.camera.screen_to_world(screen_pos);
         let hit = hit_test(
             &self.objects,
             &self.waveforms,

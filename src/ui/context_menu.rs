@@ -1,21 +1,21 @@
 use crate::settings::{AdaptiveGridSize, FixedGrid, GridMode, Settings};
 use crate::ui::palette::CommandAction;
 use crate::InstanceRaw;
-use crate::theme::{WAVEFORM_COLORS, SCROLLBAR_BG};
+use crate::theme::{WAVEFORM_COLORS, WAVEFORM_COLOR_COLS, WAVEFORM_COLOR_ROWS, SCROLLBAR_BG};
 
-pub const CTX_MENU_WIDTH: f32 = 210.0;
+pub const CTX_MENU_WIDTH: f32 = 260.0;
 pub const CTX_MENU_ITEM_HEIGHT: f32 = 26.0;
 pub const CTX_MENU_SECTION_HEIGHT: f32 = 22.0;
 pub const CTX_MENU_SEPARATOR_HEIGHT: f32 = 7.0;
 pub const CTX_MENU_PADDING: f32 = 3.0;
 pub const CTX_MENU_BORDER_RADIUS: f32 = 8.0;
 pub const CTX_MENU_INLINE_HEIGHT: f32 = 24.0;
-pub const CTX_MENU_SWATCH_HEIGHT: f32 = 26.0;
+pub const CTX_MENU_SWATCH_HEIGHT: f32 = 17.0;
 const INLINE_PILL_PAD_X: f32 = 7.0;
 const INLINE_PILL_GAP: f32 = 2.0;
 const INLINE_PILL_HEIGHT: f32 = 22.0;
-const COLOR_SWATCH_SIZE: f32 = 18.0;
-const COLOR_SWATCH_GAP: f32 = 6.0;
+const COLOR_SWATCH_SIZE: f32 = 15.0;
+const COLOR_SWATCH_GAP: f32 = 2.0;
 const COLOR_SWATCH_RING: f32 = 2.0;
 
 #[derive(Clone, Copy, PartialEq)]
@@ -378,12 +378,14 @@ impl ContextMenu {
                                 .map_or(false, |cur| colors_match(cur, c)),
                         })
                         .collect();
-                    let mid = all_swatches.len() / 2;
-                    let row2 = all_swatches[mid..].to_vec();
-                    let row1 = all_swatches[..mid].to_vec();
                     entries.push(ContextMenuEntry::SectionHeader("Color:"));
-                    entries.push(ContextMenuEntry::ColorSwatchGroup(row1));
-                    entries.push(ContextMenuEntry::ColorSwatchGroup(row2));
+                    for row in 0..WAVEFORM_COLOR_ROWS {
+                        let start = row * WAVEFORM_COLOR_COLS;
+                        let end = (start + WAVEFORM_COLOR_COLS).min(all_swatches.len());
+                        entries.push(ContextMenuEntry::ColorSwatchGroup(
+                            all_swatches[start..end].to_vec(),
+                        ));
+                    }
                     entries.push(ContextMenuEntry::Separator);
                 }
                 entries.push(ContextMenuEntry::Item(ContextMenuItem {
@@ -695,7 +697,7 @@ impl ContextMenu {
                 }
                 ContextMenuEntry::ColorSwatchGroup(swatches) => {
                     let sz = COLOR_SWATCH_SIZE * scale;
-                    let r = sz * 0.5;
+                    let r = 2.0 * scale;
                     let swatch_y = y + (rh - sz) * 0.5;
                     let mut px = pos[0] + pad + 4.0 * scale;
                     for (si, swatch) in swatches.iter().enumerate() {
