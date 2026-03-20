@@ -1,3 +1,5 @@
+- fix: waveform label text no longer renders over the right inspector panel (32.8k loc)
+- 2026-03-20: overlap system now splits background clip when a smaller clip is dropped inside it (32.8k loc)
 - recording now auto-starts playback (seeked to clip position) and stops it when recording ends (32.4k loc)
 - keyboard shortcuts now work on non-Latin layouts (e.g. Russian) by using physical key codes for Cmd+key combos (32.4k loc)
 - fix: grid line colors now derived from canvas background instead of accent hue (32.3k loc)

@@ -176,6 +176,7 @@ enum DragState {
         offsets: Vec<(HitTarget, [f32; 2])>,
         before_states: Vec<(HitTarget, EntityBeforeState)>,
         overlap_snapshots: IndexMap<EntityId, WaveformView>,
+        overlap_temp_splits: Vec<EntityId>,
     },
     DraggingFromBrowser {
         path: PathBuf,
@@ -230,6 +231,7 @@ enum DragState {
         initial_offset_px: f32,
         before: WaveformView,
         overlap_snapshots: IndexMap<EntityId, WaveformView>,
+        overlap_temp_splits: Vec<EntityId>,
     },
     DraggingAutomationPoint {
         waveform_id: EntityId,
@@ -490,6 +492,7 @@ struct App {
     arrow_nudge_before: Option<Vec<(HitTarget, EntityBeforeState)>>,
     arrow_nudge_last: Option<TimeInstant>,
     arrow_nudge_overlap_snapshots: IndexMap<EntityId, WaveformView>,
+    arrow_nudge_overlap_temp_splits: Vec<EntityId>,
     current_project_name: String,
     effect_regions: IndexMap<EntityId, effects::EffectRegion>,
     plugin_blocks: IndexMap<EntityId, effects::PluginBlock>,
@@ -519,6 +522,7 @@ struct App {
     editing_bpm: ui::value_entry::ValueEntry,
     dragging_bpm: Option<(f32, f32)>,
     bpm_drag_overlap_snapshots: IndexMap<EntityId, WaveformView>,
+    bpm_drag_overlap_temp_splits: Vec<EntityId>,
     last_click_time: TimeInstant,
     last_vol_text_click_time: TimeInstant,
     last_vol_knob_click_time: TimeInstant,
@@ -605,6 +609,7 @@ impl App {
             arrow_nudge_before: None,
             arrow_nudge_last: None,
             arrow_nudge_overlap_snapshots: IndexMap::new(),
+            arrow_nudge_overlap_temp_splits: Vec::new(),
             current_project_name: project_name.into(),
             effect_regions: IndexMap::new(),
             plugin_blocks: IndexMap::new(),
@@ -634,6 +639,7 @@ impl App {
             editing_bpm: ui::value_entry::ValueEntry::new(),
             dragging_bpm: None,
             bpm_drag_overlap_snapshots: IndexMap::new(),
+            bpm_drag_overlap_temp_splits: Vec::new(),
             last_click_time: TimeInstant::now(),
             last_vol_text_click_time: TimeInstant::now(),
             last_vol_knob_click_time: TimeInstant::now(),
@@ -1270,6 +1276,7 @@ impl App {
             arrow_nudge_before: None,
             arrow_nudge_last: None,
             arrow_nudge_overlap_snapshots: IndexMap::new(),
+            arrow_nudge_overlap_temp_splits: Vec::new(),
             current_project_name: project_name,
             effect_regions: restored_effect_regions,
             plugin_blocks: restored_plugin_blocks,
@@ -1299,6 +1306,7 @@ impl App {
             editing_bpm: ui::value_entry::ValueEntry::new(),
             dragging_bpm: None,
             bpm_drag_overlap_snapshots: IndexMap::new(),
+            bpm_drag_overlap_temp_splits: Vec::new(),
             last_click_time: TimeInstant::now(),
             last_vol_text_click_time: TimeInstant::now(),
             last_vol_knob_click_time: TimeInstant::now(),
@@ -1733,6 +1741,10 @@ impl App {
         self.editing_bpm.cancel();
         self.dragging_bpm = None;
         self.bpm_drag_overlap_snapshots.clear();
+        for id in self.bpm_drag_overlap_temp_splits.drain(..) {
+            self.waveforms.shift_remove(&id);
+            self.audio_clips.shift_remove(&id);
+        }
         self.command_palette = None;
         self.context_menu = None;
 
@@ -2013,6 +2025,10 @@ impl App {
         self.editing_bpm.cancel();
         self.dragging_bpm = None;
         self.bpm_drag_overlap_snapshots.clear();
+        for id in self.bpm_drag_overlap_temp_splits.drain(..) {
+            self.waveforms.shift_remove(&id);
+            self.audio_clips.shift_remove(&id);
+        }
         self.command_palette = None;
         self.context_menu = None;
 
@@ -2106,6 +2122,7 @@ impl App {
         let active_set: HashSet<EntityId> = active_ids.iter().copied().collect();
         let mut to_delete: HashSet<EntityId> = HashSet::new();
         let mut updates: Vec<(EntityId, ui::waveform::WaveformView, ui::waveform::WaveformView)> = Vec::new();
+        let mut to_create: Vec<(EntityId, ui::waveform::WaveformView, Option<AudioClipData>)> = Vec::new();
 
         for &aid in active_ids {
             let (a_pos, a_size) = match self.waveforms.get(&aid) {
@@ -2139,6 +2156,57 @@ impl App {
                 // Case 1: B fully covered by A
                 if b_start >= a_start && b_end <= a_end {
                     to_delete.insert(bid);
+                    continue;
+                }
+
+                // Case 4: A fully inside B — split B into left and right portions
+                if b_start < a_start && b_end > a_end {
+                    let before = self.waveforms[&bid].clone();
+                    let left_width = a_start - b_start;
+                    let right_width = b_end - a_end;
+
+                    if left_width >= WAVEFORM_MIN_WIDTH_PX {
+                        let wf = self.waveforms.get_mut(&bid).unwrap();
+                        wf.size[0] = left_width;
+                        wf.fade_out_px = 0.0;
+                        if wf.fade_in_px > left_width * 0.5 {
+                            wf.fade_in_px = left_width * 0.5;
+                        }
+                        updates.push((bid, before.clone(), wf.clone()));
+                    } else {
+                        to_delete.insert(bid);
+                    }
+
+                    if right_width >= WAVEFORM_MIN_WIDTH_PX {
+                        let right_id = new_id();
+                        let mut right_wf = before.clone();
+                        right_wf.position[0] = a_end;
+                        right_wf.size[0] = right_width;
+                        right_wf.sample_offset_px += a_end - b_start;
+                        right_wf.fade_in_px = 0.0;
+                        if right_wf.fade_out_px > right_width * 0.5 {
+                            right_wf.fade_out_px = right_width * 0.5;
+                        }
+                        let ac = self.audio_clips.get(&bid).cloned();
+                        self.waveforms.insert(right_id, right_wf.clone());
+                        if let Some(clip) = ac.clone() {
+                            self.audio_clips.insert(right_id, clip);
+                        }
+                        to_create.push((right_id, right_wf, ac));
+
+                        for comp in self.components.values_mut() {
+                            if comp.waveform_ids.contains(&bid) {
+                                let mut new_ids = Vec::new();
+                                for &wi in &comp.waveform_ids {
+                                    new_ids.push(wi);
+                                    if wi == bid {
+                                        new_ids.push(right_id);
+                                    }
+                                }
+                                comp.waveform_ids = new_ids;
+                            }
+                        }
+                    }
                     continue;
                 }
 
@@ -2185,6 +2253,13 @@ impl App {
                 ops.push(operations::Operation::UpdateWaveform { id, before, after });
             }
         }
+        for (id, wf_data, ac) in to_create {
+            ops.push(operations::Operation::CreateWaveform {
+                id,
+                data: wf_data,
+                audio_clip: ac.map(|c| (id, c)),
+            });
+        }
         for &id in &to_delete {
             if let Some(data) = self.waveforms.shift_remove(&id) {
                 let ac = self.audio_clips.shift_remove(&id);
@@ -2223,8 +2298,13 @@ impl App {
     fn resolve_all_waveform_overlaps_live(
         &mut self,
         snapshots: &mut IndexMap<EntityId, WaveformView>,
+        temp_splits: &mut Vec<EntityId>,
     ) {
-        // Restore all previously-affected waveforms
+        for id in temp_splits.drain(..) {
+            self.waveforms.shift_remove(&id);
+            self.audio_clips.shift_remove(&id);
+        }
+
         for (id, original) in snapshots.iter() {
             if let Some(wf) = self.waveforms.get_mut(id) {
                 *wf = original.clone();
@@ -2277,6 +2357,36 @@ impl App {
                     self.waveforms.get_mut(&bid).unwrap().disabled = true;
                     continue;
                 }
+                if b_start < a_start && b_end > a_end {
+                    let left_width = a_start - b_start;
+                    let right_width = b_end - a_end;
+                    if left_width < WAVEFORM_MIN_WIDTH_PX {
+                        self.waveforms.get_mut(&bid).unwrap().disabled = true;
+                    } else {
+                        let wf = self.waveforms.get_mut(&bid).unwrap();
+                        wf.size[0] = left_width;
+                        wf.fade_out_px = 0.0;
+                        if wf.fade_in_px > left_width * 0.5 { wf.fade_in_px = left_width * 0.5; }
+                    }
+                    if right_width >= WAVEFORM_MIN_WIDTH_PX {
+                        let orig = new_snapshots.get(&bid)
+                            .or_else(|| snapshots.get(&bid))
+                            .unwrap();
+                        let mut right_wf = orig.clone();
+                        right_wf.position[0] = a_end;
+                        right_wf.size[0] = right_width;
+                        right_wf.sample_offset_px += a_end - b_start;
+                        right_wf.fade_in_px = 0.0;
+                        if right_wf.fade_out_px > right_width * 0.5 { right_wf.fade_out_px = right_width * 0.5; }
+                        let right_id = new_id();
+                        if let Some(clip) = self.audio_clips.get(&bid).cloned() {
+                            self.audio_clips.insert(right_id, clip);
+                        }
+                        self.waveforms.insert(right_id, right_wf);
+                        temp_splits.push(right_id);
+                    }
+                    continue;
+                }
                 if b_start < a_start && b_end > a_start {
                     let new_width = a_start - b_start;
                     if new_width < WAVEFORM_MIN_WIDTH_PX {
@@ -2318,17 +2428,25 @@ impl App {
     /// from `snapshots`, then re-resolves. Mutates `snapshots` to track affected waveforms.
     /// Deleted waveforms are hidden (set disabled=true) rather than removed, so they
     /// can be restored if the user drags away.
+    /// `temp_splits` tracks temporary waveforms created by split (Case 4) so they can
+    /// be cleaned up on subsequent calls or on commit.
     fn resolve_waveform_overlaps_live(
         &mut self,
         active_ids: &[EntityId],
         snapshots: &mut IndexMap<EntityId, WaveformView>,
+        temp_splits: &mut Vec<EntityId>,
     ) {
+        // 0. Remove temporary split waveforms from previous frame
+        for id in temp_splits.drain(..) {
+            self.waveforms.shift_remove(&id);
+            self.audio_clips.shift_remove(&id);
+        }
+
         // 1. Restore all previously-affected waveforms to their original state
         for (id, original) in snapshots.iter() {
             if let Some(wf) = self.waveforms.get_mut(id) {
                 *wf = original.clone();
             } else {
-                // Was removed — re-insert
                 self.waveforms.insert(*id, original.clone());
             }
         }
@@ -2353,7 +2471,6 @@ impl App {
 
             for bid in other_ids {
                 if new_snapshots.contains_key(&bid) {
-                    // Already processed by another active waveform; use current (already-modified) state
                     let bwf = match self.waveforms.get(&bid) {
                         Some(wf) => wf,
                         None => continue,
@@ -2367,6 +2484,34 @@ impl App {
 
                     if b_start >= a_start && b_end <= a_end {
                         self.waveforms.get_mut(&bid).unwrap().disabled = true;
+                        continue;
+                    }
+                    if b_start < a_start && b_end > a_end {
+                        let left_width = a_start - b_start;
+                        let right_width = b_end - a_end;
+                        if left_width < WAVEFORM_MIN_WIDTH_PX {
+                            self.waveforms.get_mut(&bid).unwrap().disabled = true;
+                        } else {
+                            let wf = self.waveforms.get_mut(&bid).unwrap();
+                            wf.size[0] = left_width;
+                            wf.fade_out_px = 0.0;
+                            if wf.fade_in_px > left_width * 0.5 { wf.fade_in_px = left_width * 0.5; }
+                        }
+                        if right_width >= WAVEFORM_MIN_WIDTH_PX {
+                            let orig = new_snapshots.get(&bid).unwrap_or(&self.waveforms[&bid]);
+                            let mut right_wf = orig.clone();
+                            right_wf.position[0] = a_end;
+                            right_wf.size[0] = right_width;
+                            right_wf.sample_offset_px += a_end - orig.position[0];
+                            right_wf.fade_in_px = 0.0;
+                            if right_wf.fade_out_px > right_width * 0.5 { right_wf.fade_out_px = right_width * 0.5; }
+                            let right_id = new_id();
+                            if let Some(clip) = self.audio_clips.get(&bid).cloned() {
+                                self.audio_clips.insert(right_id, clip);
+                            }
+                            self.waveforms.insert(right_id, right_wf);
+                            temp_splits.push(right_id);
+                        }
                         continue;
                     }
                     if b_start < a_start && b_end > a_start {
@@ -2408,7 +2553,6 @@ impl App {
                 let has_x_overlap = b_start < a_end && b_end > a_start;
                 if !has_x_overlap { continue; }
 
-                // Snapshot the original before modifying
                 if !snapshots.contains_key(&bid) {
                     new_snapshots.insert(bid, bwf.clone());
                 } else if !new_snapshots.contains_key(&bid) {
@@ -2417,6 +2561,36 @@ impl App {
 
                 if b_start >= a_start && b_end <= a_end {
                     self.waveforms.get_mut(&bid).unwrap().disabled = true;
+                    continue;
+                }
+                if b_start < a_start && b_end > a_end {
+                    let left_width = a_start - b_start;
+                    let right_width = b_end - a_end;
+                    if left_width < WAVEFORM_MIN_WIDTH_PX {
+                        self.waveforms.get_mut(&bid).unwrap().disabled = true;
+                    } else {
+                        let wf = self.waveforms.get_mut(&bid).unwrap();
+                        wf.size[0] = left_width;
+                        wf.fade_out_px = 0.0;
+                        if wf.fade_in_px > left_width * 0.5 { wf.fade_in_px = left_width * 0.5; }
+                    }
+                    if right_width >= WAVEFORM_MIN_WIDTH_PX {
+                        let orig = new_snapshots.get(&bid)
+                            .or_else(|| snapshots.get(&bid))
+                            .unwrap_or(&self.waveforms[&bid]);
+                        let mut right_wf = orig.clone();
+                        right_wf.position[0] = a_end;
+                        right_wf.size[0] = right_width;
+                        right_wf.sample_offset_px += a_end - b_start;
+                        right_wf.fade_in_px = 0.0;
+                        if right_wf.fade_out_px > right_width * 0.5 { right_wf.fade_out_px = right_width * 0.5; }
+                        let right_id = new_id();
+                        if let Some(clip) = self.audio_clips.get(&bid).cloned() {
+                            self.audio_clips.insert(right_id, clip);
+                        }
+                        self.waveforms.insert(right_id, right_wf);
+                        temp_splits.push(right_id);
+                    }
                     continue;
                 }
                 if b_start < a_start && b_end > a_start {
@@ -2445,14 +2619,12 @@ impl App {
             }
         }
 
-        // Remove snapshot entries for waveforms that are no longer affected
         let prev_keys: Vec<EntityId> = snapshots.keys().copied().collect();
         for id in prev_keys {
             if !new_snapshots.contains_key(&id) {
                 snapshots.shift_remove(&id);
             }
         }
-        // Merge new snapshots (preserve originals from earlier frames)
         for (id, original) in new_snapshots {
             snapshots.entry(id).or_insert(original);
         }
@@ -3698,7 +3870,7 @@ impl App {
                 (*t, [world[0] - pos[0], world[1] - pos[1]])
             })
             .collect();
-        self.drag = DragState::MovingSelection { offsets, before_states, overlap_snapshots: IndexMap::new() };
+        self.drag = DragState::MovingSelection { offsets, before_states, overlap_snapshots: IndexMap::new(), overlap_temp_splits: Vec::new() };
     }
 
     /// Flush any pending coalesced arrow-nudge into the undo stack.
@@ -3783,6 +3955,14 @@ impl App {
                     }
                 }
             }
+            for id in self.arrow_nudge_overlap_temp_splits.drain(..) {
+                if let Some(wf_data) = self.waveforms.get(&id).cloned() {
+                    let ac = self.audio_clips.get(&id).cloned();
+                    ops.push(crate::operations::Operation::CreateWaveform {
+                        id, data: wf_data, audio_clip: ac.map(|c| (id, c)),
+                    });
+                }
+            }
             if !ops.is_empty() {
                 self.push_op(crate::operations::Operation::Batch(ops));
             }
@@ -3841,8 +4021,10 @@ impl App {
             .collect();
         if !moved_wf_ids.is_empty() {
             let mut snaps = std::mem::take(&mut self.arrow_nudge_overlap_snapshots);
-            self.resolve_waveform_overlaps_live(&moved_wf_ids, &mut snaps);
+            let mut tsplits = std::mem::take(&mut self.arrow_nudge_overlap_temp_splits);
+            self.resolve_waveform_overlaps_live(&moved_wf_ids, &mut snaps, &mut tsplits);
             self.arrow_nudge_overlap_snapshots = snaps;
+            self.arrow_nudge_overlap_temp_splits = tsplits;
         }
 
         self.sync_audio_clips();

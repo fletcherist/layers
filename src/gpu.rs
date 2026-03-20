@@ -1751,10 +1751,11 @@ impl Gpu {
 
         // Waveform sample name labels (cached shaping, positions recomputed each frame)
         let browser_right = sample_browser.map_or(0.0, |b| b.panel_width(scale));
+        let right_panel_left = right_window.map_or(w, |_| w - right_window::RIGHT_WINDOW_WIDTH * scale);
         let wf_label_bounds = TextBounds {
             left: browser_right as i32,
             top: 0,
-            right: w as i32,
+            right: right_panel_left as i32,
             bottom: h as i32,
         };
         let mut old_wf_cache = std::mem::take(&mut self.cached_wf_label_bufs);

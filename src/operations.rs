@@ -522,6 +522,14 @@ impl App {
                         }
                     }
                 }
+                for id in self.arrow_nudge_overlap_temp_splits.drain(..) {
+                    if let Some(wf_data) = self.waveforms.get(&id).cloned() {
+                        let ac = self.audio_clips.get(&id).cloned();
+                        nudge_ops.push(Operation::CreateWaveform {
+                            id, data: wf_data, audio_clip: ac.map(|c| (id, c)),
+                        });
+                    }
+                }
                 if !nudge_ops.is_empty() {
                     let nudge_batch = Operation::Batch(nudge_ops);
                     // Push the nudge batch directly (inline to avoid recursion)

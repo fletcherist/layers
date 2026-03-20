@@ -487,8 +487,10 @@ impl ApplicationHandler for App {
                     self.bpm = new_bpm;
                     self.resize_warped_clips();
                     let mut snaps = std::mem::take(&mut self.bpm_drag_overlap_snapshots);
-                    self.resolve_all_waveform_overlaps_live(&mut snaps);
+                    let mut tsplits = std::mem::take(&mut self.bpm_drag_overlap_temp_splits);
+                    self.resolve_all_waveform_overlaps_live(&mut snaps, &mut tsplits);
                     self.bpm_drag_overlap_snapshots = snaps;
+                    self.bpm_drag_overlap_temp_splits = tsplits;
                     self.sync_audio_clips();
                     self.mark_dirty();
                     self.request_redraw();
@@ -781,14 +783,15 @@ impl ApplicationHandler for App {
                         }
                     }
                     // Live waveform overlap resolution during resize
-                    let mut snaps = if let DragState::ResizingWaveform { ref mut overlap_snapshots, .. } = self.drag {
-                        std::mem::take(overlap_snapshots)
+                    let (mut snaps, mut tsplits) = if let DragState::ResizingWaveform { ref mut overlap_snapshots, ref mut overlap_temp_splits, .. } = self.drag {
+                        (std::mem::take(overlap_snapshots), std::mem::take(overlap_temp_splits))
                     } else {
-                        indexmap::IndexMap::new()
+                        (indexmap::IndexMap::new(), Vec::new())
                     };
-                    self.resolve_waveform_overlaps_live(&[waveform_id], &mut snaps);
-                    if let DragState::ResizingWaveform { ref mut overlap_snapshots, .. } = self.drag {
+                    self.resolve_waveform_overlaps_live(&[waveform_id], &mut snaps, &mut tsplits);
+                    if let DragState::ResizingWaveform { ref mut overlap_snapshots, ref mut overlap_temp_splits, .. } = self.drag {
                         *overlap_snapshots = snaps;
+                        *overlap_temp_splits = tsplits;
                     }
                     self.sync_audio_clips();
                     self.mark_dirty();
@@ -941,14 +944,15 @@ impl ApplicationHandler for App {
                             .filter_map(|(t, _)| if let HitTarget::Waveform(id) = t { Some(*id) } else { None })
                             .collect();
                         if !moved_wf_ids.is_empty() {
-                            let mut snaps = if let DragState::MovingSelection { ref mut overlap_snapshots, .. } = self.drag {
-                                std::mem::take(overlap_snapshots)
+                            let (mut snaps, mut tsplits) = if let DragState::MovingSelection { ref mut overlap_snapshots, ref mut overlap_temp_splits, .. } = self.drag {
+                                (std::mem::take(overlap_snapshots), std::mem::take(overlap_temp_splits))
                             } else {
-                                indexmap::IndexMap::new()
+                                (indexmap::IndexMap::new(), Vec::new())
                             };
-                            self.resolve_waveform_overlaps_live(&moved_wf_ids, &mut snaps);
-                            if let DragState::MovingSelection { ref mut overlap_snapshots, .. } = self.drag {
+                            self.resolve_waveform_overlaps_live(&moved_wf_ids, &mut snaps, &mut tsplits);
+                            if let DragState::MovingSelection { ref mut overlap_snapshots, ref mut overlap_temp_splits, .. } = self.drag {
                                 *overlap_snapshots = snaps;
+                                *overlap_temp_splits = tsplits;
                             }
                             needs_sync = true;
                         }
@@ -2191,6 +2195,7 @@ impl ApplicationHandler for App {
                                     initial_offset_px: offset,
                                     before,
                                     overlap_snapshots: indexmap::IndexMap::new(),
+                                    overlap_temp_splits: Vec::new(),
                                 };
                                 self.update_cursor();
                                 self.request_redraw();
@@ -2738,7 +2743,8 @@ impl ApplicationHandler for App {
                             self.resize_warped_clips();
                             // Re-resolve after rounding correction, then commit snapshots
                             let mut snaps = std::mem::take(&mut self.bpm_drag_overlap_snapshots);
-                            self.resolve_all_waveform_overlaps_live(&mut snaps);
+                            let mut tsplits = std::mem::take(&mut self.bpm_drag_overlap_temp_splits);
+                            self.resolve_all_waveform_overlaps_live(&mut snaps, &mut tsplits);
                             let mut ops = Vec::new();
                             if (before_bpm - after).abs() > f32::EPSILON {
                                 ops.push(crate::operations::Operation::SetBpm { before: before_bpm, after });
@@ -2756,6 +2762,14 @@ impl ApplicationHandler for App {
                                             id, before: original, after: wf.clone(),
                                         });
                                     }
+                                }
+                            }
+                            for id in tsplits {
+                                if let Some(wf_data) = self.waveforms.get(&id).cloned() {
+                                    let ac = self.audio_clips.get(&id).cloned();
+                                    ops.push(crate::operations::Operation::CreateWaveform {
+                                        id, data: wf_data, audio_clip: ac.map(|c| (id, c)),
+                                    });
                                 }
                             }
                             if !ops.is_empty() {
@@ -3072,7 +3086,7 @@ impl ApplicationHandler for App {
 
                         // --- finish resizing waveform ---
                         if matches!(self.drag, DragState::ResizingWaveform { .. }) {
-                            if let DragState::ResizingWaveform { waveform_id, before, overlap_snapshots, .. } =
+                            if let DragState::ResizingWaveform { waveform_id, before, overlap_snapshots, overlap_temp_splits, .. } =
                                 std::mem::replace(&mut self.drag, DragState::None)
                             {
                                 let mut ops = Vec::new();
@@ -3094,6 +3108,14 @@ impl ApplicationHandler for App {
                                         }
                                     }
                                 }
+                                for id in overlap_temp_splits {
+                                    if let Some(wf_data) = self.waveforms.get(&id).cloned() {
+                                        let ac = self.audio_clips.get(&id).cloned();
+                                        ops.push(crate::operations::Operation::CreateWaveform {
+                                            id, data: wf_data, audio_clip: ac.map(|c| (id, c)),
+                                        });
+                                    }
+                                }
                                 if !ops.is_empty() {
                                     self.push_op(crate::operations::Operation::Batch(ops));
                                 }
@@ -3108,7 +3130,7 @@ impl ApplicationHandler for App {
                         // --- finish moving selection ---
                         if matches!(self.drag, DragState::MovingSelection { .. }) {
                             self.broadcast_drag_end();
-                            if let DragState::MovingSelection { before_states, overlap_snapshots, .. } =
+                            if let DragState::MovingSelection { before_states, overlap_snapshots, overlap_temp_splits, .. } =
                                 std::mem::replace(&mut self.drag, DragState::None)
                             {
                             let mut ops = Vec::new();
@@ -3187,6 +3209,14 @@ impl ApplicationHandler for App {
                                             id, before: original, after: wf.clone(),
                                         });
                                     }
+                                }
+                            }
+                            for id in overlap_temp_splits {
+                                if let Some(wf_data) = self.waveforms.get(&id).cloned() {
+                                    let ac = self.audio_clips.get(&id).cloned();
+                                    ops.push(crate::operations::Operation::CreateWaveform {
+                                        id, data: wf_data, audio_clip: ac.map(|c| (id, c)),
+                                    });
                                 }
                             }
                             if !ops.is_empty() {
