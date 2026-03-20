@@ -1419,7 +1419,7 @@ impl App {
                             );
                             if let Some(target) = hit2 {
                                 self.selected.push(target);
-                                self.begin_move_selection(world, self.modifiers.alt_key());
+                                self.begin_move_selection(world, self.modifiers.alt_key(), Some(target));
                             } else {
                                 self.drag = DragState::Selecting { start_world: world };
                             }
@@ -1440,7 +1440,7 @@ impl App {
                             self.selected.push(target);
                             self.update_right_window();
                         }
-                        self.begin_move_selection(world, self.modifiers.alt_key());
+                        self.begin_move_selection(world, self.modifiers.alt_key(), Some(target));
                     }
                     None => {
                         self.drag = DragState::Selecting { start_world: world };

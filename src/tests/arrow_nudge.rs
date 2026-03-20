@@ -40,11 +40,12 @@ fn make_waveform(x: f32, y: f32) -> WaveformView {
 fn test_horizontal_nudge() {
     let mut app = App::new_headless();
     let id = new_id();
-    let start_x = 100.0;
+    // Start on a grid line so nudge by one step lands on the next grid line
+    let step = grid::grid_spacing_for_settings(&app.settings, app.camera.zoom, app.bpm);
+    let start_x = step * 2.0; // on grid
     app.waveforms.insert(id, make_waveform(start_x, 200.0));
     app.selected.push(HitTarget::Waveform(id));
 
-    let step = grid::grid_spacing_for_settings(&app.settings, app.camera.zoom, app.bpm);
     app.nudge_selection(step, 0.0);
 
     let pos = app.waveforms[&id].position;
@@ -56,6 +57,7 @@ fn test_horizontal_nudge() {
 fn test_vertical_nudge() {
     let mut app = App::new_headless();
     let id = new_id();
+    // Vertical snap is off by default, so raw delta is applied
     let start_y = 300.0;
     app.waveforms.insert(id, make_waveform(100.0, start_y));
     app.selected.push(HitTarget::Waveform(id));
@@ -73,16 +75,22 @@ fn test_multi_select_nudge() {
     let mut app = App::new_headless();
     let id1 = new_id();
     let id2 = new_id();
-    app.waveforms.insert(id1, make_waveform(100.0, 200.0));
-    app.waveforms.insert(id2, make_waveform(400.0, 500.0));
+    let step = grid::grid_spacing_for_settings(&app.settings, app.camera.zoom, app.bpm);
+    // Place clips on grid lines so snapping is predictable
+    let x1 = step * 2.0;
+    let x2 = step * 5.0;
+    app.waveforms.insert(id1, make_waveform(x1, 200.0));
+    app.waveforms.insert(id2, make_waveform(x2, 500.0));
     app.selected.push(HitTarget::Waveform(id1));
     app.selected.push(HitTarget::Waveform(id2));
 
-    let dx = 50.0;
-    app.nudge_selection(dx, 0.0);
+    // Nudge by one grid step — both clips should move by exactly one step (group snap)
+    app.nudge_selection(step, 0.0);
 
-    assert!((app.waveforms[&id1].position[0] - 150.0).abs() < 0.01);
-    assert!((app.waveforms[&id2].position[0] - 450.0).abs() < 0.01);
+    assert!((app.waveforms[&id1].position[0] - (x1 + step)).abs() < 0.01,
+        "first clip should move by one grid step");
+    assert!((app.waveforms[&id2].position[0] - (x2 + step)).abs() < 0.01,
+        "second clip should move by the same amount (group snap)");
     // Y unchanged
     assert!((app.waveforms[&id1].position[1] - 200.0).abs() < 0.01);
     assert!((app.waveforms[&id2].position[1] - 500.0).abs() < 0.01);
@@ -92,17 +100,20 @@ fn test_multi_select_nudge() {
 fn test_undo_coalescing() {
     let mut app = App::new_headless();
     let id = new_id();
-    app.waveforms.insert(id, make_waveform(100.0, 200.0));
+    let step = grid::grid_spacing_for_settings(&app.settings, app.camera.zoom, app.bpm);
+    let start_x = step * 3.0; // on grid
+    app.waveforms.insert(id, make_waveform(start_x, 200.0));
     app.selected.push(HitTarget::Waveform(id));
 
     let undo_len_before = app.op_undo_stack.len();
 
-    // Two rapid nudges (within 500ms — immediate calls coalesce)
-    app.nudge_selection(10.0, 0.0);
-    app.nudge_selection(10.0, 0.0);
+    // Two rapid nudges by one grid step each (within 500ms — immediate calls coalesce)
+    app.nudge_selection(step, 0.0);
+    app.nudge_selection(step, 0.0);
 
-    // Position should reflect both nudges
-    assert!((app.waveforms[&id].position[0] - 120.0).abs() < 0.01);
+    // Position should reflect both nudges (two grid steps)
+    let expected = start_x + step * 2.0;
+    assert!((app.waveforms[&id].position[0] - expected).abs() < 0.01);
 
     // Commit the coalesced nudge
     app.commit_arrow_nudge();
@@ -112,7 +123,29 @@ fn test_undo_coalescing() {
 
     // Undo should restore original position and preserve selection
     app.undo_op();
-    assert!((app.waveforms[&id].position[0] - 100.0).abs() < 0.01);
+    assert!((app.waveforms[&id].position[0] - start_x).abs() < 0.01);
     assert_eq!(app.selected.len(), 1, "selection should be preserved after undo");
     assert_eq!(app.selected[0], HitTarget::Waveform(id));
+}
+
+#[test]
+fn test_multi_nudge_preserves_relative_spacing() {
+    let mut app = App::new_headless();
+    let id1 = new_id();
+    let id2 = new_id();
+    let step = grid::grid_spacing_for_settings(&app.settings, app.camera.zoom, app.bpm);
+    // Place first clip on grid, second off-grid (half step offset)
+    let x1 = step * 2.0;
+    let x2 = step * 2.0 + step * 0.5; // off-grid by half a step
+    app.waveforms.insert(id1, make_waveform(x1, 200.0));
+    app.waveforms.insert(id2, make_waveform(x2, 200.0));
+    app.selected.push(HitTarget::Waveform(id1));
+    app.selected.push(HitTarget::Waveform(id2));
+
+    let gap_before = app.waveforms[&id2].position[0] - app.waveforms[&id1].position[0];
+    app.nudge_selection(step, 0.0);
+    let gap_after = app.waveforms[&id2].position[0] - app.waveforms[&id1].position[0];
+
+    assert!((gap_before - gap_after).abs() < 0.01,
+        "relative spacing must be preserved: before={gap_before}, after={gap_after}");
 }

@@ -174,6 +174,7 @@ enum DragState {
     },
     MovingSelection {
         offsets: Vec<(HitTarget, [f32; 2])>,
+        anchor_idx: usize,
         before_states: Vec<(HitTarget, EntityBeforeState)>,
         overlap_snapshots: IndexMap<EntityId, WaveformView>,
         overlap_temp_splits: Vec<EntityId>,
@@ -3713,7 +3714,7 @@ impl App {
         self.modifiers.super_key()
     }
 
-    pub(crate) fn begin_move_selection(&mut self, world: [f32; 2], alt_copy: bool) {
+    pub(crate) fn begin_move_selection(&mut self, world: [f32; 2], alt_copy: bool, clicked_target: Option<HitTarget>) {
         if alt_copy {
             let mut new_selected: Vec<HitTarget> = Vec::new();
             let mut copy_ops: Vec<operations::Operation> = Vec::new();
@@ -3870,7 +3871,10 @@ impl App {
                 (*t, [world[0] - pos[0], world[1] - pos[1]])
             })
             .collect();
-        self.drag = DragState::MovingSelection { offsets, before_states, overlap_snapshots: IndexMap::new(), overlap_temp_splits: Vec::new() };
+        let anchor_idx = clicked_target
+            .and_then(|ct| offsets.iter().position(|(t, _)| *t == ct))
+            .unwrap_or(0);
+        self.drag = DragState::MovingSelection { offsets, anchor_idx, before_states, overlap_snapshots: IndexMap::new(), overlap_temp_splits: Vec::new() };
     }
 
     /// Flush any pending coalesced arrow-nudge into the undo stack.
@@ -4008,11 +4012,35 @@ impl App {
             self.arrow_nudge_before = Some(before_states);
         }
 
-        // Move each selected entity
+        // Move all selected entities as a group: snap the anchor and apply the same delta to all.
+        // Only snap the axis that is actually being nudged (dx != 0 or dy != 0).
         let targets: Vec<HitTarget> = self.selected.clone();
+        let anchor_pos = self.get_target_pos(&targets[0]);
+        let actual_dx = if dx != 0.0 {
+            let raw_x = anchor_pos[0] + dx;
+            let snapped_x = if self.is_snap_override_active() {
+                raw_x
+            } else {
+                crate::grid::snap_to_grid(raw_x, &self.settings, self.camera.zoom, self.bpm)
+            };
+            snapped_x - anchor_pos[0]
+        } else {
+            0.0
+        };
+        let actual_dy = if dy != 0.0 {
+            let raw_y = anchor_pos[1] + dy;
+            let snapped_y = if self.is_snap_override_active() {
+                raw_y
+            } else {
+                crate::grid::snap_to_vertical_grid(raw_y, &self.settings, self.camera.zoom, self.bpm)
+            };
+            snapped_y - anchor_pos[1]
+        } else {
+            0.0
+        };
         for t in &targets {
             let pos = self.get_target_pos(t);
-            self.set_target_pos(t, [pos[0] + dx, pos[1] + dy]);
+            self.set_target_pos(t, [pos[0] + actual_dx, pos[1] + actual_dy]);
         }
 
         // Live waveform overlap resolution (same as mouse drag)

@@ -474,7 +474,7 @@ impl App {
 
         enum Action {
             Pan([f32; 2], [f32; 2]),
-            MoveSelection(Vec<(HitTarget, [f32; 2])>),
+            MoveSelection(Vec<(HitTarget, [f32; 2])>, usize),
             Other,
         }
         let action = match &self.drag {
@@ -482,8 +482,8 @@ impl App {
                 start_mouse,
                 start_camera,
             } => Action::Pan(*start_mouse, *start_camera),
-            DragState::MovingSelection { offsets, .. } => {
-                Action::MoveSelection(offsets.clone())
+            DragState::MovingSelection { offsets, anchor_idx, .. } => {
+                Action::MoveSelection(offsets.clone(), *anchor_idx)
             }
             _ => Action::Other,
         };
@@ -495,23 +495,27 @@ impl App {
                 self.camera.position[1] =
                     sc[1] - (self.mouse_pos[1] - sm[1]) / self.camera.zoom;
             }
-            Action::MoveSelection(offsets) => {
+            Action::MoveSelection(offsets, anchor_idx) => {
                 let world = self.camera.screen_to_world(self.mouse_pos);
+                // Snap only the anchor clip, then apply the same snap delta to all clips
+                let anchor_offset = &offsets[anchor_idx].1;
+                let raw_anchor_x = world[0] - anchor_offset[0];
+                let raw_anchor_y = world[1] - anchor_offset[1];
+                let snap_delta_x = if self.is_snap_override_active() {
+                    0.0
+                } else {
+                    snap_to_grid(raw_anchor_x, &self.settings, self.camera.zoom, self.bpm) - raw_anchor_x
+                };
+                let snap_delta_y = if self.is_snap_override_active() {
+                    0.0
+                } else {
+                    snap_to_vertical_grid(raw_anchor_y, &self.settings, self.camera.zoom, self.bpm) - raw_anchor_y
+                };
                 let mut needs_sync = false;
                 for (target, offset) in &offsets {
-                    let raw_x = world[0] - offset[0];
-                    let snapped_x = if self.is_snap_override_active() {
-                        raw_x
-                    } else {
-                        snap_to_grid(raw_x, &self.settings, self.camera.zoom, self.bpm)
-                    };
-                    let raw_y = world[1] - offset[1];
-                    let snapped_y = if self.is_snap_override_active() {
-                        raw_y
-                    } else {
-                        snap_to_vertical_grid(raw_y, &self.settings, self.camera.zoom, self.bpm)
-                    };
-                    self.set_target_pos(target, [snapped_x, snapped_y]);
+                    let final_x = (world[0] - offset[0]) + snap_delta_x;
+                    let final_y = (world[1] - offset[1]) + snap_delta_y;
+                    self.set_target_pos(target, [final_x, final_y]);
                     if matches!(
                         target,
                         HitTarget::Waveform(_)

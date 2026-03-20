@@ -1,3 +1,5 @@
+- add `make release-intel` and `make dist-intel` for Intel-only build + zip (32.9k loc)
+- fix: multi-clip move/nudge now snaps as a group, preserving relative spacing (32.9k loc)
 - refactor: extract text rendering from gpu.rs into UI components via unified TextEntry type (32.8k loc)
 - refactor: split events.rs (4749 lines) into events/ directory with 6 files (32.8k loc)
 - fix: waveform label text no longer renders over the right inspector panel (32.8k loc)
