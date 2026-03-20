@@ -1,3 +1,4 @@
+- recording now auto-starts playback (seeked to clip position) and stops it when recording ends (32.4k loc)
 - keyboard shortcuts now work on non-Latin layouts (e.g. Russian) by using physical key codes for Cmd+key combos (32.4k loc)
 - fix: grid line colors now derived from canvas background instead of accent hue (32.3k loc)
 - ui: color swatch vertical gap now matches horizontal gap (2px) for uniform grid spacing (32.3k loc)

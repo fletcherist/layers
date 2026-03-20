@@ -2839,6 +2839,12 @@ impl App {
                     self.audio_clips.shift_remove(&wf_id);
                 }
             }
+
+            if let Some(engine) = &self.audio_engine {
+                if engine.is_playing() {
+                    engine.toggle_playback();
+                }
+            }
         } else {
             let world = self.last_canvas_click_world;
             let height = grid::clip_height(self.bpm);
@@ -2883,6 +2889,14 @@ impl App {
             self.push_op(operations::Operation::CreateWaveform { id: wf_id, data: wf_data, audio_clip: Some((wf_id, ac_data)) });
             self.recording_waveform_id = Some(wf_id);
             self.recorder.as_mut().unwrap().start();
+
+            if let Some(engine) = &self.audio_engine {
+                let secs = world[0] as f64 / PIXELS_PER_SECOND as f64;
+                engine.seek_to_seconds(secs);
+                if !engine.is_playing() {
+                    engine.toggle_playback();
+                }
+            }
         }
     }
 
