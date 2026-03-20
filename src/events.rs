@@ -151,6 +151,7 @@ impl ApplicationHandler for App {
         {
             if let Some(ms) = &mut self.menu_state {
                 if !ms.initialized {
+                    #[cfg(target_os = "macos")]
                     ms.menu.init_for_nsapp();
                     ms.initialized = true;
                 }
@@ -2477,7 +2478,7 @@ impl ApplicationHandler for App {
                                     // Check if clicking on existing note (editing-aware)
                                     let hit_note = midi::hit_test_midi_note_editing(&self.midi_clips[&mc_idx], world, &self.camera, true);
                                     if let Some((note_idx, zone)) = hit_note {
-                                        if self.modifiers.super_key() && !matches!(zone, midi::MidiNoteHitZone::VelocityBar) {
+                                        if self.cmd_held() && !matches!(zone, midi::MidiNoteHitZone::VelocityBar) {
                                             let indices = if self.selected_midi_notes.contains(&note_idx) {
                                                 self.selected_midi_notes.clone()
                                             } else {
@@ -3263,7 +3264,7 @@ impl ApplicationHandler for App {
 
             WindowEvent::KeyboardInput { event, .. } => {
                 if event.state == ElementState::Pressed {
-                    println!("[KEY] pressed: {:?} super={} shift={}", event.logical_key, self.modifiers.super_key(), self.modifiers.shift_key());
+                    println!("[KEY] pressed: {:?} super={} shift={}", event.logical_key, self.cmd_held(), self.modifiers.shift_key());
                     if self.plugin_editor.is_some() {
                         if matches!(event.logical_key, Key::Named(NamedKey::Escape)) {
                             self.plugin_editor = None;
@@ -3280,7 +3281,7 @@ impl ApplicationHandler for App {
                             return;
                         }
                         // Block other keyboard input while settings is open
-                        if !self.modifiers.super_key() {
+                        if !self.cmd_held() {
                             return;
                         }
                     }
@@ -3334,7 +3335,7 @@ impl ApplicationHandler for App {
                             }
                         }
                         // Cmd+D: duplicate selected MIDI notes
-                        if self.modifiers.super_key() && matches!(physical_key_to_char(&event.physical_key), Some("d")) {
+                        if self.cmd_held() && matches!(physical_key_to_char(&event.physical_key), Some("d")) {
                             if let Some(mc_idx) = self.editing_midi_clip {
                                 if self.midi_clips.contains_key(&mc_idx) && !self.selected_midi_notes.is_empty() {
                                     let before_notes = self.midi_clips[&mc_idx].notes.clone();
@@ -3689,7 +3690,7 @@ impl ApplicationHandler for App {
                                 self.request_redraw();
                                 return;
                             }
-                            Key::Character(ch) if !self.modifiers.super_key() => {
+                            Key::Character(ch) if !self.cmd_held() => {
                                 let s = ch.as_ref();
                                 if s.chars().all(|c| c.is_ascii_digit() || c == '.') {
                                     self.editing_bpm.push_char(s);
@@ -3753,7 +3754,7 @@ impl ApplicationHandler for App {
                                 self.request_redraw();
                                 return;
                             }
-                            Key::Character(ch) if !self.modifiers.super_key() => {
+                            Key::Character(ch) if !self.cmd_held() => {
                                 let s = ch.as_ref();
                                 if s.chars().all(|c| c.is_ascii_digit() || c == '.' || c == '-') {
                                     if let Some(rw) = &mut self.right_window {
@@ -3822,7 +3823,7 @@ impl ApplicationHandler for App {
                                 self.request_redraw();
                                 return;
                             }
-                            Key::Character(ch) if !self.modifiers.super_key() => {
+                            Key::Character(ch) if !self.cmd_held() => {
                                 let s = ch.as_ref();
                                 if s.chars().all(|c| c.is_ascii_digit() || c == '.') {
                                     if let Some(rw) = &mut self.right_window {
@@ -3885,7 +3886,7 @@ impl ApplicationHandler for App {
                                 self.request_redraw();
                                 return;
                             }
-                            Key::Character(ch) if !self.modifiers.super_key() => {
+                            Key::Character(ch) if !self.cmd_held() => {
                                 let s = ch.as_ref();
                                 if s.chars().all(|c| c.is_ascii_digit() || c == '.' || c == '-') {
                                     if let Some(rw) = &mut self.right_window {
@@ -3938,7 +3939,7 @@ impl ApplicationHandler for App {
                                 self.request_redraw();
                                 return;
                             }
-                            Key::Character(ch) if !self.modifiers.super_key() => {
+                            Key::Character(ch) if !self.cmd_held() => {
                                 if let Some((_, ref mut text)) = self.editing_effect_name {
                                     text.push_str(ch.as_ref());
                                 }
@@ -3991,7 +3992,7 @@ impl ApplicationHandler for App {
                                 self.request_redraw();
                                 return;
                             }
-                            Key::Character(ch) if !self.modifiers.super_key() => {
+                            Key::Character(ch) if !self.cmd_held() => {
                                 if let Some((_, ref mut text)) = self.editing_waveform_name {
                                     text.push_str(ch.as_ref());
                                 }
@@ -4081,7 +4082,7 @@ impl ApplicationHandler for App {
                                     self.request_redraw();
                                     return;
                                 }
-                                Key::Character(ch) if !self.modifiers.super_key() => {
+                                Key::Character(ch) if !self.cmd_held() => {
                                     if let Some(p) = &mut self.command_palette {
                                         p.search_text.push_str(ch.as_ref());
                                         p.update_filter(self.settings.dev_mode);
@@ -4170,7 +4171,7 @@ impl ApplicationHandler for App {
                                 self.request_redraw();
                                 return;
                             }
-                            Key::Character(ch) if !self.modifiers.super_key() => {
+                            Key::Character(ch) if !self.cmd_held() => {
                                 if let Some(p) = &mut self.command_palette {
                                     p.search_text.push_str(ch.as_ref());
                                     p.update_filter(self.settings.dev_mode);
@@ -4260,7 +4261,7 @@ impl ApplicationHandler for App {
                                 self.request_redraw();
                             }
                         }
-                        Key::Character(ch) if !self.modifiers.super_key() => match ch.as_ref() {
+                        Key::Character(ch) if !self.cmd_held() => match ch.as_ref() {
                             "0" => {
                                 let wf_ids: Vec<EntityId> = self
                                     .selected
@@ -4310,7 +4311,7 @@ impl ApplicationHandler for App {
                             }
                             _ => {}
                         },
-                        _ if self.modifiers.super_key() => {
+                        _ if self.cmd_held() => {
                             if let Some(ch) = physical_key_to_char(&event.physical_key) {
                                 match ch {
                                     "," => {
@@ -4486,9 +4487,9 @@ impl ApplicationHandler for App {
 
                 let zoom_modifier = if cfg!(target_arch = "wasm32") {
                     // In browsers, trackpad pinch-to-zoom is reported as ctrl+wheel
-                    self.modifiers.super_key() || self.modifiers.control_key()
+                    self.cmd_held() || self.modifiers.control_key()
                 } else {
-                    self.modifiers.super_key()
+                    self.cmd_held()
                 };
                 if zoom_modifier {
                     let zoom_sensitivity = 0.005;

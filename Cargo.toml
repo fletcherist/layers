@@ -8,8 +8,6 @@ default-run = "layers"
 default = ["native"]
 native = [
     "dep:cpal",
-    "dep:vst3-gui",
-    "dep:rack",
     "dep:muda",
     "dep:rfd",
     "dep:dirs",
@@ -44,9 +42,11 @@ surrealdb = { version = "3", features = ["kv-rocksdb", "protocol-ws"], optional 
 futures-util = { version = "0.3", optional = true }
 dirs = { version = "6", optional = true }
 rfd = { version = "0.15", optional = true }
-rack = { version = "0.4", optional = true }
 muda = { version = "0.17", optional = true }
-vst3-gui = { path = "vst3-gui", optional = true }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+rack = "0.4"
+vst3-gui = { path = "vst3-gui" }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen = "0.2"

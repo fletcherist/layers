@@ -2017,6 +2017,7 @@ impl App {
         self.context_menu = None;
 
         // If plugins are already scanned, open vst3-gui instances for restored plugin blocks
+        #[cfg(target_os = "macos")]
         if self.plugin_registry.is_scanned() {
             for (_pb_id, pb) in &mut self.plugin_blocks {
                 let has_gui = pb.gui.lock().ok().map_or(false, |g| g.is_some());
@@ -3262,7 +3263,7 @@ impl App {
         } else {
             false
         };
-        self.cmd_velocity_hover_note = if self.modifiers.super_key() {
+        self.cmd_velocity_hover_note = if self.cmd_held() {
             if let Some(mc_id) = self.editing_midi_clip {
                 if let Some(mc) = self.midi_clips.get(&mc_id) {
                     match midi::hit_test_midi_note_editing(mc, world, &self.camera, true) {
@@ -3537,8 +3538,18 @@ impl App {
         }
     }
 
+    /// Returns true when the platform's primary shortcut modifier is held.
+    /// Cmd on macOS, Ctrl on Windows/Linux.
+    fn cmd_held(&self) -> bool {
+        if cfg!(target_os = "macos") {
+            self.modifiers.super_key()
+        } else {
+            self.modifiers.control_key()
+        }
+    }
+
     fn is_snap_override_active(&self) -> bool {
-        self.modifiers.super_key()
+        self.cmd_held()
     }
 
     pub(crate) fn begin_move_selection(&mut self, world: [f32; 2], alt_copy: bool) {
@@ -5328,6 +5339,13 @@ fn build_app_menu(storage: Option<&Storage>) -> MenuState {
         Menu, MenuItem, PredefinedMenuItem, Submenu,
     };
 
+    // Cmd on macOS, Ctrl on Windows/Linux
+    let cmd = if cfg!(target_os = "macos") {
+        Modifiers::SUPER
+    } else {
+        Modifiers::CONTROL
+    };
+
     let menu = Menu::new();
 
     // -- App menu (Layers) --
@@ -5337,7 +5355,7 @@ fn build_app_menu(storage: Option<&Storage>) -> MenuState {
     let settings_item = MenuItem::new(
         "Settings...",
         true,
-        Some(Accelerator::new(Some(Modifiers::SUPER), Code::Comma)),
+        Some(Accelerator::new(Some(cmd), Code::Comma)),
     );
     let _ = app_menu.append(&settings_item);
     let _ = app_menu.append(&PredefinedMenuItem::separator());
@@ -5349,14 +5367,14 @@ fn build_app_menu(storage: Option<&Storage>) -> MenuState {
     let new_project_item = MenuItem::new(
         "New Project",
         true,
-        Some(Accelerator::new(Some(Modifiers::SUPER), Code::KeyN)),
+        Some(Accelerator::new(Some(cmd), Code::KeyN)),
     );
     let _ = file_menu.append(&new_project_item);
     let _ = file_menu.append(&PredefinedMenuItem::separator());
     let save_project_item = MenuItem::new(
         "Save Project",
         true,
-        Some(Accelerator::new(Some(Modifiers::SUPER), Code::KeyS)),
+        Some(Accelerator::new(Some(cmd), Code::KeyS)),
     );
     let _ = file_menu.append(&save_project_item);
     let _ = file_menu.append(&PredefinedMenuItem::separator());
@@ -5364,7 +5382,7 @@ fn build_app_menu(storage: Option<&Storage>) -> MenuState {
     let open_project_item = MenuItem::new(
         "Open Project...",
         true,
-        Some(Accelerator::new(Some(Modifiers::SUPER), Code::KeyO)),
+        Some(Accelerator::new(Some(cmd), Code::KeyO)),
     );
     let _ = file_menu.append(&open_project_item);
 
@@ -5394,30 +5412,30 @@ fn build_app_menu(storage: Option<&Storage>) -> MenuState {
     let undo_item = MenuItem::new(
         "Undo",
         true,
-        Some(Accelerator::new(Some(Modifiers::SUPER), Code::KeyZ)),
+        Some(Accelerator::new(Some(cmd), Code::KeyZ)),
     );
     let redo_item = MenuItem::new(
         "Redo",
         true,
         Some(Accelerator::new(
-            Some(Modifiers::SUPER | Modifiers::SHIFT),
+            Some(cmd | Modifiers::SHIFT),
             Code::KeyZ,
         )),
     );
     let copy_item = MenuItem::new(
         "Copy",
         true,
-        Some(Accelerator::new(Some(Modifiers::SUPER), Code::KeyC)),
+        Some(Accelerator::new(Some(cmd), Code::KeyC)),
     );
     let paste_item = MenuItem::new(
         "Paste",
         true,
-        Some(Accelerator::new(Some(Modifiers::SUPER), Code::KeyV)),
+        Some(Accelerator::new(Some(cmd), Code::KeyV)),
     );
     let select_all_item = MenuItem::new(
         "Select All",
         true,
-        Some(Accelerator::new(Some(Modifiers::SUPER), Code::KeyA)),
+        Some(Accelerator::new(Some(cmd), Code::KeyA)),
     );
     let _ = edit_menu.append(&undo_item);
     let _ = edit_menu.append(&redo_item);
@@ -5453,6 +5471,7 @@ fn build_app_menu(storage: Option<&Storage>) -> MenuState {
 fn main() {
     env_logger::init();
 
+    let m = if cfg!(target_os = "macos") { "Cmd" } else { "Ctrl" };
     println!("╔════════════════════════════════════════════╗");
     println!("║              Layers                         ║");
     println!("╠════════════════════════════════════════════╣");
@@ -5460,17 +5479,17 @@ fn main() {
     println!("║  Click background   →  Seek playhead       ║");
     println!("║  Drop audio file    →  Add to canvas       ║");
     println!("║  Two-finger scroll  →  Pan canvas          ║");
-    println!("║  Cmd + scroll       →  Zoom in/out         ║");
+    println!("║  {} + scroll       →  Zoom in/out         ║", m);
     println!("║  Pinch              →  Zoom in/out         ║");
     println!("║  Middle drag        →  Pan canvas          ║");
     println!("║  Left drag empty    →  Selection rectangle ║");
     println!("║  Left drag object   →  Move (+ selection)  ║");
-    println!("║  Cmd + K / Right-click → Command palette   ║");
+    println!("║  {} + K / Right-click → Command palette   ║", m);
     println!("║  Backspace / Delete →  Delete selected     ║");
-    println!("║  Cmd + Z / ⇧⌘Z     →  Undo / Redo         ║");
-    println!("║  Cmd + S            →  Save project        ║");
-    println!("║  Cmd + B            →  Toggle browser      ║");
-    println!("║  Cmd + Shift + A    →  Add folder           ║");
+    println!("║  {} + Z / Shift+Z  →  Undo / Redo         ║", m);
+    println!("║  {} + S            →  Save project        ║", m);
+    println!("║  {} + B            →  Toggle browser      ║", m);
+    println!("║  {} + Shift + A    →  Add folder           ║", m);
     println!("╚════════════════════════════════════════════╝");
 
     let skip_load = std::env::args().any(|a| a == "--empty");

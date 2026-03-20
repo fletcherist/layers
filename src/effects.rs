@@ -1,11 +1,11 @@
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-#[cfg(feature = "native")]
+#[cfg(target_os = "macos")]
 use rack::plugin_info::{PluginInfo, PluginType};
-#[cfg(feature = "native")]
+#[cfg(target_os = "macos")]
 use rack::traits::{PluginInstance, PluginScanner};
-#[cfg(feature = "native")]
+#[cfg(target_os = "macos")]
 use rack::vst3::Vst3Scanner;
 use serde::{Deserialize, Serialize};
 
@@ -15,7 +15,7 @@ use crate::{point_in_rect, push_border, rects_overlap, Camera, InstanceRaw};
 // Plugin cache (native only)
 // ---------------------------------------------------------------------------
 
-#[cfg(feature = "native")]
+#[cfg(target_os = "macos")]
 #[derive(Serialize, Deserialize)]
 struct CachedPluginInfo {
     name: String,
@@ -26,14 +26,14 @@ struct CachedPluginInfo {
     unique_id: String,
 }
 
-#[cfg(feature = "native")]
+#[cfg(target_os = "macos")]
 #[derive(Serialize, Deserialize)]
 struct PluginCache {
     version: u32,
     plugins: Vec<CachedPluginInfo>,
 }
 
-#[cfg(feature = "native")]
+#[cfg(target_os = "macos")]
 fn plugin_type_to_str(pt: &PluginType) -> &'static str {
     match pt {
         PluginType::Effect => "Effect",
@@ -46,7 +46,7 @@ fn plugin_type_to_str(pt: &PluginType) -> &'static str {
     }
 }
 
-#[cfg(feature = "native")]
+#[cfg(target_os = "macos")]
 fn str_to_plugin_type(s: &str) -> PluginType {
     match s {
         "Effect" => PluginType::Effect,
@@ -59,7 +59,7 @@ fn str_to_plugin_type(s: &str) -> PluginType {
     }
 }
 
-#[cfg(feature = "native")]
+#[cfg(target_os = "macos")]
 fn cache_path() -> PathBuf {
     dirs::home_dir()
         .unwrap_or_else(|| PathBuf::from("."))
@@ -67,7 +67,7 @@ fn cache_path() -> PathBuf {
         .join("vst_plugin_cache.json")
 }
 
-#[cfg(feature = "native")]
+#[cfg(target_os = "macos")]
 fn load_cache() -> Option<Vec<PluginInfo>> {
     let data = std::fs::read_to_string(cache_path()).ok()?;
     let cache: PluginCache = serde_json::from_str(&data).ok()?;
@@ -90,7 +90,7 @@ fn load_cache() -> Option<Vec<PluginInfo>> {
     )
 }
 
-#[cfg(feature = "native")]
+#[cfg(target_os = "macos")]
 fn save_cache(plugins: &[PluginInfo]) {
     let cache = PluginCache {
         version: 1,
@@ -191,11 +191,38 @@ pub const PLUGIN_BLOCK_DEFAULT_SIZE: [f32; 2] = [120.0, 40.0];
 pub use crate::theme::PLUGIN_BLOCK_DEFAULT_COLOR;
 pub const PLUGIN_BLOCK_BORDER_RADIUS: f32 = 6.0;
 
-/// Native GUI handle type — vst3_gui::Vst3Gui on native, () on web.
-#[cfg(feature = "native")]
+/// Native GUI handle type — vst3_gui::Vst3Gui on macOS, stub elsewhere.
+#[cfg(target_os = "macos")]
 pub type PluginGuiHandle = vst3_gui::Vst3Gui;
-#[cfg(not(feature = "native"))]
-pub type PluginGuiHandle = ();
+#[cfg(not(target_os = "macos"))]
+pub type PluginGuiHandle = PluginGuiStub;
+
+/// Stub that provides the same API as vst3_gui::Vst3Gui but does nothing.
+/// Used on platforms where VST3 is not available (Windows, WASM).
+#[cfg(not(target_os = "macos"))]
+#[derive(Clone)]
+pub struct PluginGuiStub;
+
+#[cfg(not(target_os = "macos"))]
+impl PluginGuiStub {
+    pub fn is_open(&self) -> bool { false }
+    pub fn hide(&self) {}
+    pub fn show(&self) {}
+    pub fn get_size(&self) -> Option<(f32, f32)> { None }
+    pub fn parameter_count(&self) -> usize { 0 }
+    pub fn get_parameter(&self, _index: usize) -> Option<f64> { None }
+    pub fn set_parameter(&self, _index: usize, _value: f64) -> bool { false }
+    pub fn get_state(&self) -> Option<Vec<u8>> { None }
+    pub fn set_state(&self, _data: &[u8]) -> bool { false }
+    pub fn get_all_parameters(&self) -> Vec<f64> { Vec::new() }
+    pub fn set_all_parameters(&self, _values: &[f64]) {}
+    pub fn setup_processing(&self, _sample_rate: f64, _block_size: i32) -> bool { false }
+    pub fn process(&self, _inputs: &[&[f32]], _outputs: &mut [&mut [f32]], _num_frames: usize) -> bool { false }
+    pub fn send_midi_note_on(&self, _note: u8, _velocity: u8, _channel: u8, _sample_offset: i32) {}
+    pub fn send_midi_note_off(&self, _note: u8, _velocity: u8, _channel: u8, _sample_offset: i32) {}
+    pub fn audio_input_channels(&self) -> usize { 0 }
+    pub fn audio_output_channels(&self) -> usize { 0 }
+}
 
 #[derive(Clone)]
 pub struct PluginBlock {
@@ -388,12 +415,12 @@ pub fn build_effect_region_instances(
 // PluginRegistry (native only)
 // ---------------------------------------------------------------------------
 
-#[cfg(feature = "native")]
+#[cfg(target_os = "macos")]
 pub struct PluginRegistryEntry {
     pub info: PluginInfo,
 }
 
-#[cfg(feature = "native")]
+#[cfg(target_os = "macos")]
 pub struct PluginRegistry {
     pub plugins: Vec<PluginRegistryEntry>,
     pub instruments: Vec<PluginRegistryEntry>,
@@ -401,12 +428,27 @@ pub struct PluginRegistry {
     scanned: bool,
 }
 
-#[cfg(not(feature = "native"))]
+#[cfg(not(target_os = "macos"))]
+pub struct PluginRegistryEntry {
+    pub info: StubPluginInfo,
+}
+
+#[cfg(not(target_os = "macos"))]
+pub struct StubPluginInfo {
+    pub unique_id: String,
+    pub name: String,
+    pub manufacturer: String,
+    pub path: std::path::PathBuf,
+}
+
+#[cfg(not(target_os = "macos"))]
 pub struct PluginRegistry {
+    pub plugins: Vec<PluginRegistryEntry>,
+    pub instruments: Vec<PluginRegistryEntry>,
     scanned: bool,
 }
 
-#[cfg(feature = "native")]
+#[cfg(target_os = "macos")]
 impl PluginRegistry {
     pub fn new() -> Self {
         Self {
@@ -564,13 +606,21 @@ impl PluginRegistry {
     }
 }
 
-#[cfg(not(feature = "native"))]
+#[cfg(not(target_os = "macos"))]
 impl PluginRegistry {
     pub fn new() -> Self {
-        Self { scanned: false }
+        Self {
+            plugins: Vec::new(),
+            instruments: Vec::new(),
+            scanned: false,
+        }
     }
 
     pub fn is_scanned(&self) -> bool {
         self.scanned
+    }
+
+    pub fn ensure_scanned(&mut self) {
+        self.scanned = true;
     }
 }

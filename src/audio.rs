@@ -44,7 +44,7 @@ pub struct AudioEffectRegion {
     pub x_end_px: f32,
     pub y_start: f32,
     pub y_end: f32,
-    pub plugins: Vec<Arc<Mutex<Option<vst3_gui::Vst3Gui>>>>,
+    pub plugins: Vec<Arc<Mutex<Option<crate::effects::PluginGuiHandle>>>>,
 }
 
 pub struct AudioInstrumentRegion {
@@ -52,7 +52,7 @@ pub struct AudioInstrumentRegion {
     pub x_end_px: f32,
     pub y_start: f32,
     pub y_end: f32,
-    pub gui: Arc<Mutex<Option<vst3_gui::Vst3Gui>>>,
+    pub gui: Arc<Mutex<Option<crate::effects::PluginGuiHandle>>>,
     pub midi_events: Vec<TimedMidiEvent>,
 }
 

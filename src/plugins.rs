@@ -41,6 +41,7 @@ impl App {
         self.sample_browser.set_plugins(entries);
 
         // Reload any saved plugin blocks that were waiting for the scanner.
+        #[cfg(target_os = "macos")]
         for pb in self.plugin_blocks.values_mut() {
             let has_gui = pb.gui.lock().ok().map_or(false, |g| g.is_some());
             if !has_gui {
@@ -69,6 +70,7 @@ impl App {
             }
         }
         // Reload any saved instrument regions that were waiting for the scanner
+        #[cfg(target_os = "macos")]
         for ir in self.instrument_regions.values_mut() {
             if ir.plugin_id.is_empty() {
                 continue;
@@ -120,8 +122,8 @@ impl App {
 
     pub(crate) fn add_plugin_block(&mut self, position: [f32; 2], plugin_id: &str, plugin_name: &str) {
         self.ensure_plugins_scanned();
-        let sample_rate = 48000.0;
-        let block_size = 512;
+        let _sample_rate = 48000.0;
+        let _block_size = 512;
 
         let plugin_path = self
             .plugin_registry
@@ -138,13 +140,16 @@ impl App {
             plugin_path,
         );
 
-        let path = pb.plugin_path.to_string_lossy().to_string();
-        if !path.is_empty() {
-            if let Some(gui) = vst3_gui::Vst3Gui::open(&path, plugin_id, plugin_name) {
-                gui.setup_processing(sample_rate, block_size as i32);
-                println!("  Opened native GUI for '{}'", plugin_name);
-                if let Ok(mut g) = pb.gui.lock() {
-                    *g = Some(gui);
+        #[cfg(target_os = "macos")]
+        {
+            let path = pb.plugin_path.to_string_lossy().to_string();
+            if !path.is_empty() {
+                if let Some(gui) = vst3_gui::Vst3Gui::open(&path, plugin_id, plugin_name) {
+                    gui.setup_processing(_sample_rate, _block_size as i32);
+                    println!("  Opened native GUI for '{}'", plugin_name);
+                    if let Ok(mut g) = pb.gui.lock() {
+                        *g = Some(gui);
+                    }
                 }
             }
         }
@@ -187,6 +192,7 @@ impl App {
         self.add_plugin_block(position, plugin_id, plugin_name);
     }
 
+    #[cfg(target_os = "macos")]
     pub(crate) fn open_plugin_block_gui(&mut self, id: EntityId) {
         let Some(pb) = self.plugin_blocks.get(&id) else {
             return;
@@ -267,6 +273,11 @@ impl App {
         ));
     }
 
+    #[cfg(not(target_os = "macos"))]
+    pub(crate) fn open_plugin_block_gui(&mut self, _id: EntityId) {
+        // VST3 plugin GUIs are not available on this platform
+    }
+
     pub(crate) fn add_instrument(&mut self, plugin_id: &str, plugin_name: &str) {
         self.ensure_plugins_scanned();
 
@@ -298,17 +309,20 @@ impl App {
             .unwrap_or_default();
         ir.plugin_path = plugin_path.clone();
 
-        let path_str = plugin_path.to_string_lossy().to_string();
-        if !path_str.is_empty() {
-            if let Some(gui) = vst3_gui::Vst3Gui::open(&path_str, plugin_id, plugin_name) {
-                if gui.setup_processing(48000.0, 512) {
-                    println!("  Set up audio processing for instrument '{}'", plugin_name);
-                } else {
-                    println!("  Warning: audio processing setup failed for '{}'", plugin_name);
-                }
-                println!("  Opened native GUI for instrument '{}'", plugin_name);
-                if let Ok(mut g) = ir.gui.lock() {
-                    *g = Some(gui);
+        #[cfg(target_os = "macos")]
+        {
+            let path_str = plugin_path.to_string_lossy().to_string();
+            if !path_str.is_empty() {
+                if let Some(gui) = vst3_gui::Vst3Gui::open(&path_str, plugin_id, plugin_name) {
+                    if gui.setup_processing(48000.0, 512) {
+                        println!("  Set up audio processing for instrument '{}'", plugin_name);
+                    } else {
+                        println!("  Warning: audio processing setup failed for '{}'", plugin_name);
+                    }
+                    println!("  Opened native GUI for instrument '{}'", plugin_name);
+                    if let Ok(mut g) = ir.gui.lock() {
+                        *g = Some(gui);
+                    }
                 }
             }
         }
@@ -340,6 +354,7 @@ impl App {
         println!("  Added instrument '{}'", plugin_name);
     }
 
+    #[cfg(target_os = "macos")]
     pub(crate) fn open_instrument_region_gui(&mut self, id: EntityId) {
         let Some(ir) = self.instrument_regions.get(&id) else {
             return;
@@ -375,5 +390,10 @@ impl App {
                 }
             }
         }
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    pub(crate) fn open_instrument_region_gui(&mut self, _id: EntityId) {
+        // VST3 instrument GUIs are not available on this platform
     }
 }
