@@ -494,7 +494,7 @@ impl AudioEngine {
                                 if beat_idx < met_last_beat {
                                     met_last_beat = beat_idx - 1;
                                 }
-                                if beat_idx > met_last_beat && t >= 0.0 {
+                                if beat_idx > met_last_beat {
                                     met_last_beat = beat_idx;
                                     // Only click if we're very close to the beat boundary;
                                     // suppresses the first click after play/seek mid-beat

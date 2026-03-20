@@ -751,6 +751,16 @@ impl Gpu {
             });
         }
 
+        overlay_instances.extend(TransportPanel::build_instances(
+            settings,
+            w,
+            h,
+            self.scale_factor,
+            is_playing,
+            is_recording,
+            settings.metronome_enabled,
+        ));
+
         if let Some(p) = command_palette {
             overlay_instances.extend(p.build_instances(settings, w, h, self.scale_factor));
         }
@@ -766,16 +776,6 @@ impl Gpu {
         if let Some(pe) = plugin_editor {
             overlay_instances.extend(pe.build_instances(settings, w, h, self.scale_factor));
         }
-
-        overlay_instances.extend(TransportPanel::build_instances(
-            settings,
-            w,
-            h,
-            self.scale_factor,
-            is_playing,
-            is_recording,
-            settings.metronome_enabled,
-        ));
 
 
         overlay_instances.extend(toast_manager.build_instances(w, h, self.scale_factor));
@@ -885,6 +885,18 @@ impl Gpu {
                     bounds,
                 ));
             }
+        }
+
+        // Transport panel text (rendered before menus so menus appear on top)
+        for te in TransportPanel::get_text_entries(w, h, scale, playback_position, bpm, editing_bpm) {
+            let buf = shape_text_entry(&mut self.font_system, &te);
+            text_buffers.push(buf);
+            text_meta.push((
+                te.x,
+                te.y,
+                TextColor::rgba(te.color[0], te.color[1], te.color[2], te.color[3]),
+                full_bounds,
+            ));
         }
 
         if let Some(palette) = command_palette {
@@ -1698,18 +1710,6 @@ impl Gpu {
                 ));
             }
             }
-        }
-
-        // Transport panel text
-        for te in TransportPanel::get_text_entries(w, h, scale, playback_position, bpm, editing_bpm) {
-            let buf = shape_text_entry(&mut self.font_system, &te);
-            text_buffers.push(buf);
-            text_meta.push((
-                te.x,
-                te.y,
-                TextColor::rgba(te.color[0], te.color[1], te.color[2], te.color[3]),
-                full_bounds,
-            ));
         }
 
         // Toast text

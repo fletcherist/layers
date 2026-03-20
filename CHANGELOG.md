@@ -1,3 +1,4 @@
+- fix: metronome now plays on negative side of the grid (33.4k loc)
 - feat: transport tooltips — general tooltip system with 300ms delay, hints for metronome/play/record/BPM (33.4k loc)
 - feat: metronome click track — synthesized sine bursts, transport toggle, settings persistence (33.1k loc)
 - 2026-03-20: Windows build support, cross-platform Ctrl/Cmd shortcuts (32.9k loc)
