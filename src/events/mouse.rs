@@ -794,7 +794,14 @@ impl App {
                 {
                     let (sw, sh, scale) = self.screen_info();
                     if TransportPanel::contains(self.mouse_pos, sw, sh, scale) {
-                        if TransportPanel::hit_record_button(self.mouse_pos, sw, sh, scale)
+                        if TransportPanel::hit_metronome_button(self.mouse_pos, sw, sh, scale) {
+                            self.settings.metronome_enabled = !self.settings.metronome_enabled;
+                            self.settings.save();
+                            #[cfg(feature = "native")]
+                            if let Some(engine) = &self.audio_engine {
+                                engine.set_metronome_enabled(self.settings.metronome_enabled);
+                            }
+                        } else if TransportPanel::hit_record_button(self.mouse_pos, sw, sh, scale)
                         {
                             self.toggle_recording();
                         } else if TransportPanel::hit_bpm(self.mouse_pos, sw, sh, scale) {
@@ -1557,6 +1564,10 @@ impl App {
                         self.push_op(crate::operations::Operation::Batch(ops));
                     }
                     self.sync_audio_clips();
+                    #[cfg(feature = "native")]
+                    if let Some(engine) = &self.audio_engine {
+                        engine.set_bpm(self.bpm);
+                    }
                     self.mark_dirty();
                     self.request_redraw();
                     return;

@@ -7,7 +7,7 @@ use crate::theme::{RECORD_ACTIVE, RECORD_DIM};
 // Transport Panel (bottom-center playback status)
 // ---------------------------------------------------------------------------
 
-pub(crate) const TRANSPORT_WIDTH: f32 = 210.0;
+pub(crate) const TRANSPORT_WIDTH: f32 = 240.0;
 const TRANSPORT_HEIGHT: f32 = 36.0;
 const TRANSPORT_BOTTOM_MARGIN: f32 = 32.0;
 
@@ -37,6 +37,7 @@ impl TransportPanel {
         scale: f32,
         is_playing: bool,
         is_recording: bool,
+        metronome_enabled: bool,
     ) -> Vec<InstanceRaw> {
         let mut out = Vec::new();
         let (pos, size) = Self::panel_rect(screen_w, screen_h, scale);
@@ -49,8 +50,24 @@ impl TransportPanel {
             border_radius: size[1] * 0.5,
         });
 
-        let icon_x = pos[0] + 14.0 * scale;
+        // metronome dot
+        let met_d = 8.0 * scale;
         let icon_cy = pos[1] + size[1] * 0.5;
+        let met_x = pos[0] + 10.0 * scale;
+        let met_y = icon_cy - met_d * 0.5;
+        let met_color = if metronome_enabled {
+            settings.theme.accent
+        } else {
+            [1.0, 1.0, 1.0, 0.25]
+        };
+        out.push(InstanceRaw {
+            position: [met_x, met_y],
+            size: [met_d, met_d],
+            color: met_color,
+            border_radius: met_d * 0.5,
+        });
+
+        let icon_x = pos[0] + 28.0 * scale;
 
         if is_playing {
             let bar_w = 3.0 * scale;
@@ -116,6 +133,19 @@ impl TransportPanel {
         out
     }
 
+    pub(crate) fn metronome_button_rect(screen_w: f32, screen_h: f32, scale: f32) -> ([f32; 2], [f32; 2]) {
+        let (pos, size) = Self::panel_rect(screen_w, screen_h, scale);
+        let btn_size = 20.0 * scale;
+        let btn_x = pos[0] + 4.0 * scale;
+        let btn_y = pos[1] + (size[1] - btn_size) * 0.5;
+        ([btn_x, btn_y], [btn_size, btn_size])
+    }
+
+    pub(crate) fn hit_metronome_button(pos: [f32; 2], screen_w: f32, screen_h: f32, scale: f32) -> bool {
+        let (rp, rs) = Self::metronome_button_rect(screen_w, screen_h, scale);
+        point_in_rect(pos, rp, rs)
+    }
+
     pub(crate) fn contains(pos: [f32; 2], screen_w: f32, screen_h: f32, scale: f32) -> bool {
         let (rp, rs) = Self::panel_rect(screen_w, screen_h, scale);
         point_in_rect(pos, rp, rs)
@@ -156,7 +186,7 @@ impl TransportPanel {
         let time_str = crate::format_playback_time(playback_position);
         out.push(TextEntry {
             text: time_str,
-            x: tp_pos[0] + 38.0 * scale,
+            x: tp_pos[0] + 50.0 * scale,
             y: tp_pos[1] + (tp_size[1] - tline) * 0.5,
             font_size: tfont,
             line_height: tline,

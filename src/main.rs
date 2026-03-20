@@ -1087,6 +1087,8 @@ impl App {
                 settings.audio_output_device = actual.to_string();
                 settings.save();
             }
+            engine.set_bpm(loaded_bpm);
+            engine.set_metronome_enabled(settings.metronome_enabled);
         } else {
             println!("  Warning: no audio output device found");
         }
@@ -1944,6 +1946,10 @@ impl App {
             .collect();
         self.next_component_id = entity_id::new_id();
         self.bpm = if state.bpm > 0.0 { state.bpm } else { DEFAULT_BPM };
+        #[cfg(feature = "native")]
+        if let Some(engine) = &self.audio_engine {
+            engine.set_bpm(self.bpm);
+        }
 
         self.sample_browser = if !state.browser_expanded.is_empty() {
             let folders: Vec<PathBuf> = state.browser_folders.iter().map(PathBuf::from).collect();

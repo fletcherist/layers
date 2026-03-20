@@ -79,6 +79,10 @@ impl App {
             self.bpm_drag_overlap_snapshots = snaps;
             self.bpm_drag_overlap_temp_splits = tsplits;
             self.sync_audio_clips();
+            #[cfg(feature = "native")]
+            if let Some(engine) = &self.audio_engine {
+                engine.set_bpm(self.bpm);
+            }
             self.mark_dirty();
             self.request_redraw();
             return;

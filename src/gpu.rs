@@ -772,6 +772,7 @@ impl Gpu {
             self.scale_factor,
             is_playing,
             is_recording,
+            settings.metronome_enabled,
         ));
 
 

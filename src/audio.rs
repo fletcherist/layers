@@ -76,6 +76,8 @@ pub struct AudioEngine {
     loop_enabled: Arc<AtomicBool>,
     loop_start_bits: Arc<AtomicU64>,
     loop_end_bits: Arc<AtomicU64>,
+    metronome_enabled: Arc<AtomicBool>,
+    bpm_bits: Arc<AtomicU64>,
 }
 
 fn store_f64(atomic: &AtomicU64, value: f64) {
@@ -157,6 +159,8 @@ impl AudioEngine {
         let loop_enabled = Arc::new(AtomicBool::new(false));
         let loop_start_bits = Arc::new(AtomicU64::new(0.0f64.to_bits()));
         let loop_end_bits = Arc::new(AtomicU64::new(0.0f64.to_bits()));
+        let metronome_enabled = Arc::new(AtomicBool::new(false));
+        let bpm_bits = Arc::new(AtomicU64::new(120.0f64.to_bits()));
 
         let p = playing.clone();
         let pos = position_bits.clone();
@@ -168,6 +172,8 @@ impl AudioEngine {
         let lp_en = loop_enabled.clone();
         let lp_s = loop_start_bits.clone();
         let lp_e = loop_end_bits.clone();
+        let met_en = metronome_enabled.clone();
+        let met_bpm = bpm_bits.clone();
         let sr = sample_rate as f64;
 
         let mut fx_buf_l = vec![0.0f32; EFFECT_BLOCK_SIZE];
@@ -177,6 +183,11 @@ impl AudioEngine {
         let mut inst_out_l = vec![0.0f32; EFFECT_BLOCK_SIZE];
         let mut inst_out_r = vec![0.0f32; EFFECT_BLOCK_SIZE];
         let mut was_playing = false;
+        let mut met_phase: f64 = 0.0;
+        let mut met_samples_left: u32 = 0;
+        let mut met_click_total: u32 = 0;
+        let mut met_freq: f64 = 1000.0;
+        let mut met_last_beat: i64 = -1;
 
         let stream = device
             .build_output_stream(
@@ -186,6 +197,7 @@ impl AudioEngine {
 
                     // Send all-notes-off to every instrument on play→stop transition
                     if was_playing && !is_playing {
+                        met_last_beat = -1;
                         if let Ok(inst_guard) = inst_r.try_lock() {
                             for region in inst_guard.iter() {
                                 if let Ok(gui_guard) = region.gui.try_lock() {
@@ -471,6 +483,45 @@ impl AudioEngine {
                         }
                     }
 
+                    // Metronome click synthesis
+                    if is_playing && met_en.load(Ordering::Relaxed) {
+                        let bpm = load_f64(&met_bpm);
+                        if bpm > 0.0 {
+                            let beat_dur = 60.0 / bpm;
+                            for i in 0..frames {
+                                let t = current_time + i as f64 / sr;
+                                let beat_idx = (t / beat_dur).floor() as i64;
+                                if beat_idx < met_last_beat {
+                                    met_last_beat = beat_idx - 1;
+                                }
+                                if beat_idx > met_last_beat && t >= 0.0 {
+                                    met_last_beat = beat_idx;
+                                    // Only click if we're very close to the beat boundary;
+                                    // suppresses the first click after play/seek mid-beat
+                                    let beat_start = beat_idx as f64 * beat_dur;
+                                    if t - beat_start < 0.001 {
+                                        let is_downbeat = beat_idx.rem_euclid(4) == 0;
+                                        met_freq = if is_downbeat { 1000.0 } else { 800.0 };
+                                        let dur_secs = if is_downbeat { 0.020 } else { 0.015 };
+                                        met_click_total = (dur_secs * sr) as u32;
+                                        met_samples_left = met_click_total;
+                                        met_phase = 0.0;
+                                    }
+                                }
+                                if met_samples_left > 0 {
+                                    let progress = 1.0 - (met_samples_left as f32 / met_click_total as f32);
+                                    let envelope = (-progress * 5.0_f32).exp();
+                                    let sine = (met_phase * std::f64::consts::TAU).sin() as f32;
+                                    let click = sine * envelope * 0.5;
+                                    dry_mix[i][0] += click;
+                                    dry_mix[i][1] += click;
+                                    met_phase += met_freq / sr;
+                                    met_samples_left -= 1;
+                                }
+                            }
+                        }
+                    }
+
                     // Write final output (stereo)
                     for i in 0..frames {
                         let base = i * channels;
@@ -529,6 +580,8 @@ impl AudioEngine {
             loop_enabled,
             loop_start_bits,
             loop_end_bits,
+            metronome_enabled,
+            bpm_bits,
         })
     }
 
@@ -657,6 +710,14 @@ impl AudioEngine {
 
     pub fn rms_peak(&self) -> f32 {
         load_f64(&self.rms_peak) as f32
+    }
+
+    pub fn set_metronome_enabled(&self, enabled: bool) {
+        self.metronome_enabled.store(enabled, Ordering::Relaxed);
+    }
+
+    pub fn set_bpm(&self, bpm: f32) {
+        store_f64(&self.bpm_bits, bpm as f64);
     }
 }
 

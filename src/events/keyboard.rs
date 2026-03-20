@@ -466,6 +466,10 @@ impl App {
                                     ops.extend(overlap_ops);
                                     self.push_op(crate::operations::Operation::Batch(ops));
                                     self.sync_audio_clips();
+                                    #[cfg(feature = "native")]
+                                    if let Some(engine) = &self.audio_engine {
+                                        engine.set_bpm(self.bpm);
+                                    }
                                 }
                                 self.mark_dirty();
                             }

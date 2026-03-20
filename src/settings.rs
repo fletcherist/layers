@@ -150,6 +150,7 @@ fn default_snap_to_grid() -> bool { true }
 fn default_grid_mode() -> GridMode { GridMode::default() }
 fn default_triplet_grid() -> bool { false }
 fn default_auto_clip_fades() -> bool { true }
+fn default_metronome_enabled() -> bool { false }
 fn default_primary_hue() -> f32 { 216.0 }
 fn default_theme_preset() -> String { "Default".to_string() }
 
@@ -184,6 +185,8 @@ pub struct Settings {
     pub primary_hue: f32,
     #[serde(default = "default_theme_preset")]
     pub theme_preset: String,
+    #[serde(default = "default_metronome_enabled")]
+    pub metronome_enabled: bool,
     #[serde(skip)]
     pub theme: crate::theme::RuntimeTheme,
 }
@@ -247,6 +250,7 @@ impl Default for Settings {
             sample_library_folders: Vec::new(),
             primary_hue: 216.0,
             theme_preset: "Default".to_string(),
+            metronome_enabled: false,
             theme: crate::theme::RuntimeTheme::default(),
         }
     }
