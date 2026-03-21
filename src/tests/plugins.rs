@@ -12,7 +12,7 @@ fn make_plugin_block(x: f32, y: f32, id: &str, name: &str) -> PluginBlock {
 }
 
 /// Known-good plugin names that open reliably (FabFilter, etc).
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 const PREFERRED_PLUGINS: &[&str] = &[
     "Pro-Q 4",
     "Pro-Q 3",
@@ -24,7 +24,7 @@ const PREFERRED_PLUGINS: &[&str] = &[
 /// Returns (plugin_id, plugin_name, plugin_path) of a known-good effect plugin.
 /// Prefers FabFilter plugins which are known to work well.
 /// Returns None if no VST3 effects are installed.
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 fn first_available_effect(app: &mut App) -> Option<(String, String, PathBuf)> {
     app.ensure_plugins_scanned();
 
@@ -50,7 +50,7 @@ fn first_available_effect(app: &mut App) -> Option<(String, String, PathBuf)> {
 }
 
 /// Open a plugin headlessly (no GUI window, no main thread required).
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 fn open_headless(path: &PathBuf, id: &str) -> Option<vst3_gui::Vst3Gui> {
     let path_str = path.to_string_lossy().to_string();
     vst3_gui::Vst3Gui::open_headless(&path_str, id)
@@ -68,11 +68,11 @@ fn has_gui(app: &App, id: &EntityId) -> bool {
 // Integration tests using real VST3 plugins (e.g. FabFilter Pro-Q 4)
 // Uses headless mode -- no GUI window, works from any thread.
 // Skip on CI / machines without VST3 effects installed.
-// macOS only — VST3 GUI support is not available on other platforms.
+// macOS and Windows — VST3 GUI support is not available on other platforms.
 // =========================================================================
 
 #[test]
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 fn test_plugin_block_create_with_real_vst3() {
     let mut app = App::new_headless();
     let Some((id, name, path)) = first_available_effect(&mut app) else {
@@ -95,7 +95,7 @@ fn test_plugin_block_create_with_real_vst3() {
 }
 
 #[test]
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 fn test_plugin_block_gui_has_parameters() {
     let mut app = App::new_headless();
     let Some((id, name, path)) = first_available_effect(&mut app) else {
@@ -111,7 +111,7 @@ fn test_plugin_block_gui_has_parameters() {
 }
 
 #[test]
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 fn test_plugin_block_state_save_restore() {
     let mut app = App::new_headless();
     let Some((id, name, path)) = first_available_effect(&mut app) else {
@@ -145,7 +145,7 @@ fn test_plugin_block_state_save_restore() {
 }
 
 #[test]
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 fn test_plugin_block_pending_state_restored_on_reopen() {
     let mut app = App::new_headless();
     let Some((id, name, path)) = first_available_effect(&mut app) else {
@@ -178,7 +178,7 @@ fn test_plugin_block_pending_state_restored_on_reopen() {
 }
 
 #[test]
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 fn test_plugin_block_audio_processing() {
     let mut app = App::new_headless();
     let Some((id, name, path)) = first_available_effect(&mut app) else {

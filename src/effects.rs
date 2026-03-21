@@ -1,12 +1,6 @@
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-#[cfg(target_os = "macos")]
-use rack::plugin_info::{PluginInfo, PluginType};
-#[cfg(target_os = "macos")]
-use rack::traits::{PluginInstance, PluginScanner};
-#[cfg(target_os = "macos")]
-use rack::vst3::Vst3Scanner;
 use serde::{Deserialize, Serialize};
 
 use crate::{point_in_rect, push_border, rects_overlap, Camera, InstanceRaw};
@@ -15,51 +9,24 @@ use crate::{point_in_rect, push_border, rects_overlap, Camera, InstanceRaw};
 // Plugin cache (native only)
 // ---------------------------------------------------------------------------
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 #[derive(Serialize, Deserialize)]
 struct CachedPluginInfo {
     name: String,
     manufacturer: String,
-    version: u32,
-    plugin_type: String,
+    subcategories: String,
     path: String,
     unique_id: String,
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 #[derive(Serialize, Deserialize)]
 struct PluginCache {
     version: u32,
     plugins: Vec<CachedPluginInfo>,
 }
 
-#[cfg(target_os = "macos")]
-fn plugin_type_to_str(pt: &PluginType) -> &'static str {
-    match pt {
-        PluginType::Effect => "Effect",
-        PluginType::Instrument => "Instrument",
-        PluginType::Mixer => "Mixer",
-        PluginType::FormatConverter => "FormatConverter",
-        PluginType::Analyzer => "Analyzer",
-        PluginType::Spatial => "Spatial",
-        PluginType::Other => "Other",
-    }
-}
-
-#[cfg(target_os = "macos")]
-fn str_to_plugin_type(s: &str) -> PluginType {
-    match s {
-        "Effect" => PluginType::Effect,
-        "Instrument" => PluginType::Instrument,
-        "Mixer" => PluginType::Mixer,
-        "FormatConverter" => PluginType::FormatConverter,
-        "Analyzer" => PluginType::Analyzer,
-        "Spatial" => PluginType::Spatial,
-        _ => PluginType::Other,
-    }
-}
-
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 fn cache_path() -> PathBuf {
     dirs::home_dir()
         .unwrap_or_else(|| PathBuf::from("."))
@@ -67,42 +34,40 @@ fn cache_path() -> PathBuf {
         .join("vst_plugin_cache.json")
 }
 
-#[cfg(target_os = "macos")]
-fn load_cache() -> Option<Vec<PluginInfo>> {
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+fn load_cache() -> Option<Vec<vst3_gui::ScannedPlugin>> {
     let data = std::fs::read_to_string(cache_path()).ok()?;
     let cache: PluginCache = serde_json::from_str(&data).ok()?;
-    if cache.version != 1 {
+    if cache.version != 2 {
         return None;
     }
     Some(
         cache
             .plugins
             .into_iter()
-            .map(|c| PluginInfo::new(
-                c.name,
-                c.manufacturer,
-                c.version,
-                str_to_plugin_type(&c.plugin_type),
-                PathBuf::from(c.path),
-                c.unique_id,
-            ))
+            .map(|c| vst3_gui::ScannedPlugin {
+                name: c.name,
+                vendor: c.manufacturer,
+                uid: c.unique_id,
+                path: PathBuf::from(c.path),
+                subcategories: c.subcategories,
+            })
             .collect(),
     )
 }
 
-#[cfg(target_os = "macos")]
-fn save_cache(plugins: &[PluginInfo]) {
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+fn save_cache(plugins: &[vst3_gui::ScannedPlugin]) {
     let cache = PluginCache {
-        version: 1,
+        version: 2,
         plugins: plugins
             .iter()
             .map(|p| CachedPluginInfo {
                 name: p.name.clone(),
-                manufacturer: p.manufacturer.clone(),
-                version: p.version,
-                plugin_type: plugin_type_to_str(&p.plugin_type).to_string(),
+                manufacturer: p.vendor.clone(),
+                subcategories: p.subcategories.clone(),
                 path: p.path.to_string_lossy().to_string(),
-                unique_id: p.unique_id.clone(),
+                unique_id: p.uid.clone(),
             })
             .collect(),
     };
@@ -192,18 +157,18 @@ pub use crate::theme::PLUGIN_BLOCK_DEFAULT_COLOR;
 pub const PLUGIN_BLOCK_BORDER_RADIUS: f32 = 6.0;
 
 /// Native GUI handle type — vst3_gui::Vst3Gui on macOS, stub elsewhere.
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 pub type PluginGuiHandle = vst3_gui::Vst3Gui;
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
 pub type PluginGuiHandle = PluginGuiStub;
 
 /// Stub that provides the same API as vst3_gui::Vst3Gui but does nothing.
-/// Used on platforms where VST3 is not available (Windows, WASM).
-#[cfg(not(target_os = "macos"))]
+/// Used on platforms where VST3 is not available (WASM, Linux).
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
 #[derive(Clone)]
 pub struct PluginGuiStub;
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
 impl PluginGuiStub {
     pub fn is_open(&self) -> bool { false }
     pub fn hide(&self) {}
@@ -415,46 +380,29 @@ pub fn build_effect_region_instances(
 // PluginRegistry (native only)
 // ---------------------------------------------------------------------------
 
-#[cfg(target_os = "macos")]
 pub struct PluginRegistryEntry {
-    pub info: PluginInfo,
+    pub info: PluginEntryInfo,
 }
 
-#[cfg(target_os = "macos")]
-pub struct PluginRegistry {
-    pub plugins: Vec<PluginRegistryEntry>,
-    pub instruments: Vec<PluginRegistryEntry>,
-    scanner: Option<Vst3Scanner>,
-    scanned: bool,
-}
-
-#[cfg(not(target_os = "macos"))]
-pub struct PluginRegistryEntry {
-    pub info: StubPluginInfo,
-}
-
-#[cfg(not(target_os = "macos"))]
-pub struct StubPluginInfo {
+pub struct PluginEntryInfo {
     pub unique_id: String,
     pub name: String,
     pub manufacturer: String,
-    pub path: std::path::PathBuf,
+    pub path: PathBuf,
 }
 
-#[cfg(not(target_os = "macos"))]
 pub struct PluginRegistry {
     pub plugins: Vec<PluginRegistryEntry>,
     pub instruments: Vec<PluginRegistryEntry>,
     scanned: bool,
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 impl PluginRegistry {
     pub fn new() -> Self {
         Self {
             plugins: Vec::new(),
             instruments: Vec::new(),
-            scanner: None,
             scanned: false,
         }
     }
@@ -472,74 +420,63 @@ impl PluginRegistry {
     pub fn scan(&mut self) {
         self.scanned = true;
 
-        let split_plugins = |all: Vec<PluginInfo>| -> (Vec<PluginInfo>, Vec<PluginInfo>) {
+        let split_plugins = |all: Vec<vst3_gui::ScannedPlugin>| -> (Vec<vst3_gui::ScannedPlugin>, Vec<vst3_gui::ScannedPlugin>) {
             let mut effects = Vec::new();
             let mut instruments = Vec::new();
             for p in all {
-                if matches!(p.plugin_type, PluginType::Instrument) {
+                if p.is_instrument() {
                     instruments.push(p);
-                } else if matches!(p.plugin_type, PluginType::Effect | PluginType::Other) {
+                } else {
                     effects.push(p);
                 }
             }
             (effects, instruments)
         };
 
+        let to_entries = |plugins: Vec<vst3_gui::ScannedPlugin>| -> Vec<PluginRegistryEntry> {
+            plugins
+                .into_iter()
+                .map(|p| PluginRegistryEntry {
+                    info: PluginEntryInfo {
+                        unique_id: p.uid,
+                        name: p.name,
+                        manufacturer: p.vendor,
+                        path: p.path,
+                    },
+                })
+                .collect()
+        };
+
         if let Some(cached) = load_cache() {
             let (effects, instruments) = split_plugins(cached);
             println!("  VST3 (cached): found {} effect, {} instrument plugins", effects.len(), instruments.len());
             for p in &effects {
-                println!("    - {} ({})", p.name, p.manufacturer);
+                println!("    - {} ({})", p.name, p.vendor);
             }
             for p in &instruments {
-                println!("    - [INST] {} ({})", p.name, p.manufacturer);
+                println!("    - [INST] {} ({})", p.name, p.vendor);
             }
-            self.plugins = effects
-                .into_iter()
-                .map(|info| PluginRegistryEntry { info })
-                .collect();
-            self.instruments = instruments
-                .into_iter()
-                .map(|info| PluginRegistryEntry { info })
-                .collect();
-            if let Ok(scanner) = Vst3Scanner::new() {
-                self.scanner = Some(scanner);
-            }
+            self.plugins = to_entries(effects);
+            self.instruments = to_entries(instruments);
             return;
         }
 
-        match Vst3Scanner::new() {
-            Ok(scanner) => {
-                match scanner.scan() {
-                    Ok(plugins) => {
-                        save_cache(&plugins);
-                        let (effects, instruments) = split_plugins(plugins);
-                        println!("  VST3: found {} effect, {} instrument plugins", effects.len(), instruments.len());
-                        for p in &effects {
-                            println!("    - {} ({})", p.name, p.manufacturer);
-                        }
-                        for p in &instruments {
-                            println!("    - [INST] {} ({})", p.name, p.manufacturer);
-                        }
-                        self.plugins = effects
-                            .into_iter()
-                            .map(|info| PluginRegistryEntry { info })
-                            .collect();
-                        self.instruments = instruments
-                            .into_iter()
-                            .map(|info| PluginRegistryEntry { info })
-                            .collect();
-                    }
-                    Err(e) => {
-                        println!("  VST3 scan error: {}", e);
-                    }
-                }
-                self.scanner = Some(scanner);
-            }
-            Err(e) => {
-                println!("  VST3 scanner init error: {}", e);
-            }
+        let all = vst3_gui::scan_plugins();
+        if all.is_empty() {
+            println!("  VST3: no plugins found");
+            return;
         }
+        save_cache(&all);
+        let (effects, instruments) = split_plugins(all);
+        println!("  VST3: found {} effect, {} instrument plugins", effects.len(), instruments.len());
+        for p in &effects {
+            println!("    - {} ({})", p.name, p.vendor);
+        }
+        for p in &instruments {
+            println!("    - [INST] {} ({})", p.name, p.vendor);
+        }
+        self.plugins = to_entries(effects);
+        self.instruments = to_entries(instruments);
     }
 
     pub fn rescan(&mut self) {
@@ -547,66 +484,11 @@ impl PluginRegistry {
         self.scanned = false;
         self.plugins.clear();
         self.instruments.clear();
-        self.scanner = None;
         self.scan();
-    }
-
-    pub fn load_plugin(
-        &self,
-        plugin_id: &str,
-        sample_rate: f64,
-        block_size: usize,
-    ) -> Option<Box<dyn PluginInstance>> {
-        let scanner = self.scanner.as_ref()?;
-        let entry = self
-            .plugins
-            .iter()
-            .find(|e| e.info.unique_id == plugin_id)?;
-        match scanner.load(&entry.info) {
-            Ok(mut plugin) => {
-                if let Err(e) = plugin.initialize(sample_rate, block_size) {
-                    println!("  VST3 plugin init error: {}", e);
-                    return None;
-                }
-                println!("  VST3 plugin loaded: {}", entry.info.name);
-                Some(Box::new(plugin))
-            }
-            Err(e) => {
-                println!("  VST3 plugin load error: {}", e);
-                None
-            }
-        }
-    }
-
-    pub fn load_instrument(
-        &self,
-        plugin_id: &str,
-        sample_rate: f64,
-        block_size: usize,
-    ) -> Option<Box<dyn PluginInstance>> {
-        let scanner = self.scanner.as_ref()?;
-        let entry = self
-            .instruments
-            .iter()
-            .find(|e| e.info.unique_id == plugin_id)?;
-        match scanner.load(&entry.info) {
-            Ok(mut plugin) => {
-                if let Err(e) = plugin.initialize(sample_rate, block_size) {
-                    println!("  VST3 instrument init error: {}", e);
-                    return None;
-                }
-                println!("  VST3 instrument loaded: {}", entry.info.name);
-                Some(Box::new(plugin))
-            }
-            Err(e) => {
-                println!("  VST3 instrument load error: {}", e);
-                None
-            }
-        }
     }
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
 impl PluginRegistry {
     pub fn new() -> Self {
         Self {

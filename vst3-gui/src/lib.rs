@@ -1,4 +1,5 @@
-use std::ffi::CString;
+use std::ffi::{CStr, CString};
+use std::path::PathBuf;
 
 extern "C" {
     fn vst3_gui_open(
@@ -37,6 +38,16 @@ extern "C" {
     ) -> i32;
     fn vst3_gui_get_audio_input_channels(handle: *mut std::ffi::c_void) -> i32;
     fn vst3_gui_get_audio_output_channels(handle: *mut std::ffi::c_void) -> i32;
+
+    // Scanning
+    fn vst3_gui_scan() -> *mut std::ffi::c_void;
+    fn vst3_gui_scan_count(result: *const std::ffi::c_void) -> i32;
+    fn vst3_gui_scan_get_name(result: *const std::ffi::c_void, index: i32) -> *const std::ffi::c_char;
+    fn vst3_gui_scan_get_vendor(result: *const std::ffi::c_void, index: i32) -> *const std::ffi::c_char;
+    fn vst3_gui_scan_get_uid(result: *const std::ffi::c_void, index: i32) -> *const std::ffi::c_char;
+    fn vst3_gui_scan_get_path(result: *const std::ffi::c_void, index: i32) -> *const std::ffi::c_char;
+    fn vst3_gui_scan_get_subcategories(result: *const std::ffi::c_void, index: i32) -> *const std::ffi::c_char;
+    fn vst3_gui_scan_free(result: *mut std::ffi::c_void);
 }
 
 pub struct Vst3Gui {
@@ -44,8 +55,8 @@ pub struct Vst3Gui {
 }
 
 // The handle is a pointer to a C++ struct that manages its own thread safety.
-// GUI operations must happen on the main thread (macOS requirement), which is
-// where we always call these functions from.
+// GUI operations must happen on the main thread (macOS/Windows requirement),
+// which is where we always call these functions from.
 unsafe impl Send for Vst3Gui {}
 
 impl Vst3Gui {
@@ -65,7 +76,7 @@ impl Vst3Gui {
         }
     }
 
-    /// Open a VST3 plugin without a GUI window (no NSWindow, works from any thread).
+    /// Open a VST3 plugin without a GUI window (no native window, works from any thread).
     /// For audio processing, state, and parameters only.
     pub fn open_headless(vst3_path: &str, uid: &str) -> Option<Self> {
         let c_path = CString::new(vst3_path).ok()?;
@@ -225,4 +236,71 @@ impl Drop for Vst3Gui {
     fn drop(&mut self) {
         unsafe { vst3_gui_destroy(self.handle) }
     }
+}
+
+// ---------------------------------------------------------------------------
+// Plugin scanning
+// ---------------------------------------------------------------------------
+
+/// A plugin discovered during scanning.
+#[derive(Debug, Clone)]
+pub struct ScannedPlugin {
+    pub name: String,
+    pub vendor: String,
+    pub uid: String,
+    pub path: PathBuf,
+    pub subcategories: String,
+}
+
+impl ScannedPlugin {
+    /// Returns true if the subcategories indicate this is an instrument.
+    pub fn is_instrument(&self) -> bool {
+        let sc = self.subcategories.to_ascii_lowercase();
+        sc.contains("instrument") || sc.contains("synth") || sc.contains("sampler")
+    }
+
+    /// Returns true if the subcategories indicate this is an effect (or "Other").
+    pub fn is_effect(&self) -> bool {
+        !self.is_instrument()
+    }
+}
+
+/// Scan for all installed VST3 plugins.
+/// Returns an empty Vec if no plugins are found or scanning fails.
+pub fn scan_plugins() -> Vec<ScannedPlugin> {
+    unsafe {
+        let result = vst3_gui_scan();
+        if result.is_null() {
+            return Vec::new();
+        }
+
+        let count = vst3_gui_scan_count(result);
+        let mut plugins = Vec::with_capacity(count.max(0) as usize);
+
+        for i in 0..count {
+            let name = c_ptr_to_string(vst3_gui_scan_get_name(result, i));
+            let vendor = c_ptr_to_string(vst3_gui_scan_get_vendor(result, i));
+            let uid = c_ptr_to_string(vst3_gui_scan_get_uid(result, i));
+            let path_str = c_ptr_to_string(vst3_gui_scan_get_path(result, i));
+            let subcategories = c_ptr_to_string(vst3_gui_scan_get_subcategories(result, i));
+
+            plugins.push(ScannedPlugin {
+                name,
+                vendor,
+                uid,
+                path: PathBuf::from(path_str),
+                subcategories,
+            });
+        }
+
+        vst3_gui_scan_free(result);
+        plugins
+    }
+}
+
+unsafe fn c_ptr_to_string(ptr: *const std::ffi::c_char) -> String {
+    if ptr.is_null() {
+        return String::new();
+    }
+    unsafe { CStr::from_ptr(ptr) }.to_string_lossy().into_owned()
 }

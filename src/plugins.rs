@@ -53,7 +53,7 @@ impl App {
         self.sample_browser.set_plugins(effects, instruments);
 
         // Reload any saved plugin blocks that were waiting for the scanner.
-        #[cfg(target_os = "macos")]
+        #[cfg(any(target_os = "macos", target_os = "windows"))]
         for pb in self.plugin_blocks.values_mut() {
             let has_gui = pb.gui.lock().ok().map_or(false, |g| g.is_some());
             if !has_gui {
@@ -82,7 +82,7 @@ impl App {
             }
         }
         // Reload any saved instrument regions that were waiting for the scanner
-        #[cfg(target_os = "macos")]
+        #[cfg(any(target_os = "macos", target_os = "windows"))]
         for ir in self.instrument_regions.values_mut() {
             if ir.plugin_id.is_empty() {
                 continue;
@@ -152,7 +152,7 @@ impl App {
             plugin_path,
         );
 
-        #[cfg(target_os = "macos")]
+        #[cfg(any(target_os = "macos", target_os = "windows"))]
         {
             let path = pb.plugin_path.to_string_lossy().to_string();
             if !path.is_empty() {
@@ -204,7 +204,7 @@ impl App {
         self.add_plugin_block(position, plugin_id, plugin_name);
     }
 
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
     pub(crate) fn open_plugin_block_gui(&mut self, id: EntityId) {
         let Some(pb) = self.plugin_blocks.get(&id) else {
             return;
@@ -285,7 +285,7 @@ impl App {
         ));
     }
 
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     pub(crate) fn open_plugin_block_gui(&mut self, _id: EntityId) {
         // VST3 plugin GUIs are not available on this platform
     }
@@ -321,7 +321,7 @@ impl App {
             .unwrap_or_default();
         ir.plugin_path = plugin_path.clone();
 
-        #[cfg(target_os = "macos")]
+        #[cfg(any(target_os = "macos", target_os = "windows"))]
         {
             let path_str = plugin_path.to_string_lossy().to_string();
             if !path_str.is_empty() {
@@ -367,7 +367,7 @@ impl App {
         println!("  Added instrument '{}'", plugin_name);
     }
 
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
     pub(crate) fn open_instrument_region_gui(&mut self, id: EntityId) {
         let Some(ir) = self.instrument_regions.get(&id) else {
             return;
@@ -405,7 +405,7 @@ impl App {
         }
     }
 
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     pub(crate) fn open_instrument_region_gui(&mut self, _id: EntityId) {
         // VST3 instrument GUIs are not available on this platform
     }

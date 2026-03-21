@@ -1,3 +1,5 @@
+- 2026-03-21: feat: replace rack dependency with built-in vst3-gui scanner — removed rack crate, unified plugin scanning cross-platform (35.0k loc)
+- 2026-03-21: feat: vst3-gui cross-platform — split into common/mac/win, Windows HWND support, VST3 plugin GUI now works on both macOS and Windows (35.1k loc)
 - 2026-03-21: feat: layers panel — hierarchical browser with instruments, MIDI, audio, effects; expand/collapse, reorder, click-to-select (35.1k loc)
 - 2026-03-21: tests: add `instrument_region_id` to `MidiClip` / `StoredMidiClip` struct literals (34.3k loc)
 - 2026-03-21: fix: computer MIDI preview now tracks/releases the right instrument, and Project browser refreshes when reopened (34.2k loc)
