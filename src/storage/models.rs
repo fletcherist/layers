@@ -164,6 +164,20 @@ surreal_derive! {
 
 surreal_derive! {
     #[derive(Clone)]
+    pub struct StoredTextNote {
+        pub id: String,
+        pub position: [f32; 2],
+        pub size: [f32; 2],
+        pub color: [f32; 4],
+        pub border_radius: f32,
+        pub text: String,
+        pub font_size: f32,
+        pub text_color: [f32; 4],
+    }
+}
+
+surreal_derive! {
+    #[derive(Clone)]
     pub struct StoredLayerNode {
         pub entity_id: String,
         pub kind_tag: String,
@@ -194,6 +208,7 @@ surreal_derive! {
         pub midi_clips: Vec<StoredMidiClip>,
         pub instrument_regions: Vec<StoredInstrumentRegion>,
         pub layer_tree: Vec<StoredLayerNode>,
+        pub text_notes: Vec<StoredTextNote>,
     }
 }
 

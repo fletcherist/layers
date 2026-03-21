@@ -294,6 +294,7 @@ pub(crate) struct Gpu {
 
     cached_wf_label_bufs: Vec<(TextLabelCacheKey, TextBuffer)>,
     cached_er_label_bufs: Vec<(TextLabelCacheKey, TextBuffer)>,
+    cached_text_note_bufs: Vec<(TextLabelCacheKey, TextBuffer)>,
     cached_plugin_block_bufs: Vec<(TextLabelCacheKey, TextBuffer)>,
     cached_auto_dot_bufs: Vec<(TextLabelCacheKey, TextBuffer)>,
     cached_auto_lane_bufs: Vec<(TextLabelCacheKey, TextBuffer)>,
@@ -642,6 +643,7 @@ impl Gpu {
             browser_text_generation: 0,
             cached_wf_label_bufs: Vec::new(),
             cached_er_label_bufs: Vec::new(),
+            cached_text_note_bufs: Vec::new(),
             cached_plugin_block_bufs: Vec::new(),
             cached_auto_dot_bufs: Vec::new(),
             cached_auto_lane_bufs: Vec::new(),
@@ -694,6 +696,8 @@ impl Gpu {
         cmd_velocity_hover_note: Option<(crate::entity_id::EntityId, usize)>,
         has_remote_storage: bool,
         right_window: Option<&right_window::RightWindow>,
+        text_notes: &indexmap::IndexMap<crate::entity_id::EntityId, crate::text_note::TextNote>,
+        editing_text_note: Option<(crate::entity_id::EntityId, usize)>,
     ) {
         let w = self.config.width as f32;
         let h = self.config.height as f32;
@@ -734,6 +738,47 @@ impl Gpu {
 
         // Build overlay instances: browser panel + drag ghost + command palette
         let mut overlay_instances: Vec<InstanceRaw> = Vec::new();
+
+        // Text note cursor (screen-space)
+        if let Some((edit_id, cursor_idx)) = editing_text_note {
+            if let Some(tn) = text_notes.get(&edit_id) {
+                let sf = self.scale_factor;
+                let pad = 8.0 / camera.zoom;
+                let text_screen_x = (tn.position[0] + pad - camera.position[0]) * camera.zoom;
+                let text_screen_y = (tn.position[1] + pad - camera.position[1]) * camera.zoom;
+                let font_size_sc = tn.font_size * sf;
+                let line_height_sc = (tn.font_size * 1.4) * sf;
+
+                // Walk text to find line and column for cursor
+                let text = &tn.text;
+                let mut line = 0usize;
+                let mut col_start = 0usize;
+                for (i, ch) in text.char_indices() {
+                    if i >= cursor_idx { break; }
+                    if ch == '\n' {
+                        line += 1;
+                        col_start = i + 1;
+                    }
+                }
+                let col_text = if cursor_idx <= text.len() {
+                    &text[col_start..cursor_idx]
+                } else { "" };
+
+                // Approximate cursor x from column text width
+                let char_w = font_size_sc * 0.55;
+                let cursor_x = text_screen_x + col_text.len() as f32 * char_w;
+                let cursor_y = text_screen_y + line as f32 * line_height_sc;
+                let cursor_w = 1.5 * sf;
+                let tc = tn.text_color;
+
+                overlay_instances.push(InstanceRaw {
+                    position: [cursor_x, cursor_y],
+                    size: [cursor_w, line_height_sc],
+                    color: [tc[0], tc[1], tc[2], 0.9],
+                    border_radius: 0.0,
+                });
+            }
+        }
 
         if let Some(br) = sample_browser {
             overlay_instances.extend(br.build_instances(settings, w, h, self.scale_factor));
@@ -1218,6 +1263,94 @@ impl Gpu {
             ));
         }
         self.cached_wf_label_bufs = new_wf_cache;
+
+        // Text note content labels (cached shaping, positions recomputed each frame)
+        let mut old_tn_cache = std::mem::take(&mut self.cached_text_note_bufs);
+        let mut new_tn_cache: Vec<(TextLabelCacheKey, TextBuffer)> = Vec::new();
+        let mut tn_label_meta: Vec<(f32, f32, TextColor, TextBounds)> = Vec::new();
+        if settings_window.is_none() && command_palette.is_none() {
+            for (_tn_id, tn) in text_notes.iter() {
+                let tn_right = tn.position[0] + tn.size[0];
+                let tn_bottom = tn.position[1] + tn.size[1];
+                if tn_right < world_left
+                    || tn.position[0] > world_right
+                    || tn_bottom < world_top
+                    || tn.position[1] > world_bottom
+                {
+                    continue;
+                }
+                let note_screen_w = tn.size[0] * camera.zoom;
+                let note_screen_h = tn.size[1] * camera.zoom;
+                if note_screen_w < 20.0 {
+                    continue;
+                }
+
+                let pad = 8.0 / camera.zoom;
+                let text_x_world = tn.position[0] + pad;
+                let text_y_world = tn.position[1] + pad;
+                let text_screen_x = (text_x_world - camera.position[0]) * camera.zoom;
+                let text_screen_y = (text_y_world - camera.position[1]) * camera.zoom;
+
+                let text_content = if tn.text.is_empty() && editing_text_note.map(|(id, _)| id) != Some(*_tn_id) {
+                    "Text note".to_string()
+                } else {
+                    tn.text.clone()
+                };
+
+                let font_size = tn.font_size * scale;
+                let line_height = (tn.font_size * 1.4) * scale;
+                let max_text_w = (note_screen_w - 16.0 * scale).max(20.0);
+                let max_text_h = (note_screen_h - 16.0 * scale).max(20.0);
+
+                let key = TextLabelCacheKey {
+                    text: text_content.clone(),
+                    max_width_q: (max_text_w * 2.0) as i32,
+                    font_size_q: (font_size * 2.0) as i32,
+                };
+                if let Some(pos) = old_tn_cache.iter().position(|(k, _)| *k == key) {
+                    new_tn_cache.push(old_tn_cache.swap_remove(pos));
+                } else {
+                    let mut buf =
+                        TextBuffer::new(&mut self.font_system, Metrics::new(font_size, line_height));
+                    buf.set_size(&mut self.font_system, Some(max_text_w), Some(max_text_h));
+                    let attrs = Attrs::new()
+                        .family(Family::Name(".AppleSystemUIFont"))
+                        .weight(glyphon::Weight(400));
+                    buf.set_text(
+                        &mut self.font_system,
+                        &text_content,
+                        attrs,
+                        Shaping::Advanced,
+                    );
+                    buf.shape_until_scroll(&mut self.font_system, false);
+                    new_tn_cache.push((key, buf));
+                }
+
+                let tc = tn.text_color;
+                let alpha = if tn.text.is_empty() && editing_text_note.map(|(id, _)| id) != Some(*_tn_id) { 100 } else { 230 };
+                let text_color = TextColor::rgba(
+                    (tc[0] * 255.0) as u8,
+                    (tc[1] * 255.0) as u8,
+                    (tc[2] * 255.0) as u8,
+                    alpha,
+                );
+
+                // Clip to note bounds
+                let clip_left = ((tn.position[0] - camera.position[0]) * camera.zoom) as i32;
+                let clip_top = ((tn.position[1] - camera.position[1]) * camera.zoom) as i32;
+                let clip_right = clip_left + note_screen_w as i32;
+                let clip_bottom = clip_top + note_screen_h as i32;
+                let bounds = TextBounds {
+                    left: clip_left.max(0),
+                    top: clip_top.max(0),
+                    right: clip_right.min(w as i32),
+                    bottom: clip_bottom.min(h as i32),
+                };
+
+                tn_label_meta.push((text_screen_x, text_screen_y, text_color, bounds));
+            }
+        }
+        self.cached_text_note_bufs = new_tn_cache;
 
         // Plugin block name labels (cached shaping, positions recomputed each frame)
         let mut old_pb_cache = std::mem::take(&mut self.cached_plugin_block_bufs);
@@ -1872,6 +2005,12 @@ impl Gpu {
             .zip(pn_label_meta.iter())
             .map(|(e, m)| cached_label_area(e, m));
 
+        let text_note_areas = self
+            .cached_text_note_bufs
+            .iter()
+            .zip(tn_label_meta.iter())
+            .map(|(e, m)| cached_label_area(e, m));
+
         let text_areas: Vec<TextArea> = browser_text_areas
             .into_iter()
             .chain(other_areas)
@@ -1882,6 +2021,7 @@ impl Gpu {
             .chain(auto_lane_areas)
             .chain(midi_note_label_areas)
             .chain(midi_per_note_areas)
+            .chain(text_note_areas)
             .collect();
 
         self.text_renderer

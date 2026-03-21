@@ -226,3 +226,45 @@ pub fn instrument_regions_from_stored(
         })
         .collect()
 }
+
+pub fn text_notes_to_stored(
+    map: &IndexMap<EntityId, crate::text_note::TextNote>,
+) -> Vec<StoredTextNote> {
+    map.iter()
+        .map(|(id, tn)| StoredTextNote {
+            id: entity_id_to_string(*id),
+            position: tn.position,
+            size: tn.size,
+            color: tn.color,
+            border_radius: tn.border_radius,
+            text: tn.text.clone(),
+            font_size: tn.font_size,
+            text_color: tn.text_color,
+        })
+        .collect()
+}
+
+pub fn text_notes_from_stored(
+    stored: Vec<StoredTextNote>,
+) -> IndexMap<EntityId, crate::text_note::TextNote> {
+    stored
+        .into_iter()
+        .map(|s| {
+            let id = if s.id.is_empty() {
+                new_id()
+            } else {
+                entity_id_from_string(&s.id)
+            };
+            let tn = crate::text_note::TextNote {
+                position: s.position,
+                size: s.size,
+                color: s.color,
+                border_radius: s.border_radius,
+                text: s.text,
+                font_size: s.font_size,
+                text_color: s.text_color,
+            };
+            (id, tn)
+        })
+        .collect()
+}

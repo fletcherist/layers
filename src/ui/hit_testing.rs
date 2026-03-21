@@ -200,6 +200,7 @@ pub(crate) fn hit_test(
     component_instances: &IndexMap<EntityId, component::ComponentInstance>,
     midi_clips: &IndexMap<EntityId, midi::MidiClip>,
     instrument_regions: &IndexMap<EntityId, instruments::InstrumentRegion>,
+    text_notes: &IndexMap<EntityId, crate::text_note::TextNote>,
     editing_component: Option<EntityId>,
     world_pos: [f32; 2],
     camera: &Camera,
@@ -242,6 +243,11 @@ pub(crate) fn hit_test(
     for (&id, obj) in objects.iter().rev() {
         if point_in_rect(world_pos, obj.position, obj.size) {
             return Some(HitTarget::Object(id));
+        }
+    }
+    for (&id, tn) in text_notes.iter().rev() {
+        if point_in_rect(world_pos, tn.position, tn.size) {
+            return Some(HitTarget::TextNote(id));
         }
     }
     for (&id, def) in components.iter().rev() {
@@ -293,6 +299,7 @@ pub(crate) fn targets_in_rect(
     component_instances: &IndexMap<EntityId, component::ComponentInstance>,
     midi_clips: &IndexMap<EntityId, midi::MidiClip>,
     instrument_regions: &IndexMap<EntityId, instruments::InstrumentRegion>,
+    text_notes: &IndexMap<EntityId, crate::text_note::TextNote>,
     editing_component: Option<EntityId>,
     rect_pos: [f32; 2],
     rect_size: [f32; 2],
@@ -371,6 +378,11 @@ pub(crate) fn targets_in_rect(
     for (&id, ir) in instrument_regions.iter() {
         if rects_overlap(rect_pos, rect_size, ir.position, ir.size) {
             result.push(HitTarget::InstrumentRegion(id));
+        }
+    }
+    for (&id, tn) in text_notes.iter() {
+        if rects_overlap(rect_pos, rect_size, tn.position, tn.size) {
+            result.push(HitTarget::TextNote(id));
         }
     }
     result

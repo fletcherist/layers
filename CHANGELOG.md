@@ -1,3 +1,4 @@
+- 2026-03-21: feat: text notes — create, edit, move, resize, delete text note rectangles on the canvas with multiline editing, undo/redo, and persistence (35.7k loc)
 - 2026-03-21: feat: replace rack dependency with built-in vst3-gui scanner — removed rack crate, unified plugin scanning cross-platform (35.0k loc)
 - 2026-03-21: feat: vst3-gui cross-platform — split into common/mac/win, Windows HWND support, VST3 plugin GUI now works on both macOS and Windows (35.1k loc)
 - 2026-03-21: feat: layers panel — hierarchical browser with instruments, MIDI, audio, effects; expand/collapse, reorder, click-to-select (35.1k loc)

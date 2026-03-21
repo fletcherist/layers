@@ -447,6 +447,13 @@ impl ContextMenu {
                 }),
                 ContextMenuEntry::Separator,
                 ContextMenuEntry::Item(ContextMenuItem {
+                    label: "Add Text Note",
+                    shortcut: "",
+                    action: CommandAction::AddTextNote,
+                    checked: false,
+                }),
+                ContextMenuEntry::Separator,
+                ContextMenuEntry::Item(ContextMenuItem {
                     label: "Select All",
                     shortcut: "⌘A",
                     action: CommandAction::SelectAll,

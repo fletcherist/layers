@@ -17,3 +17,4 @@ mod waveform_overlap;
 mod metronome;
 mod tooltip;
 mod layers;
+mod text_notes;

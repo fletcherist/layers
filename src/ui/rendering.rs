@@ -47,6 +47,7 @@ pub(crate) struct RenderContext<'a> {
     pub(crate) active_automation_param: crate::automation::AutomationParam,
     pub(crate) midi_clips: &'a IndexMap<EntityId, midi::MidiClip>,
     pub(crate) instrument_regions: &'a IndexMap<EntityId, instruments::InstrumentRegion>,
+    pub(crate) text_notes: &'a IndexMap<EntityId, crate::text_note::TextNote>,
     pub(crate) editing_midi_clip: Option<EntityId>,
     pub(crate) selected_midi_notes: &'a [usize],
     pub(crate) midi_note_select_rect: Option<[f32; 4]>,
@@ -433,6 +434,33 @@ pub(crate) fn build_instances(out: &mut Vec<InstanceRaw>, ctx: &RenderContext) {
         });
     }
 
+    // --- text notes ---
+    for (&id, tn) in ctx.text_notes.iter() {
+        let tn_right = tn.position[0] + tn.size[0];
+        let tn_bottom = tn.position[1] + tn.size[1];
+        if tn_right < world_left
+            || tn.position[0] > world_right
+            || tn_bottom < world_top
+            || tn.position[1] > world_bottom
+        {
+            continue;
+        }
+        let is_sel = ctx.selected.contains(&HitTarget::TextNote(id));
+        let is_hov = ctx.hovered == Some(HitTarget::TextNote(id));
+        let mut color = apply_intensity(tn.color);
+        if is_sel || is_hov {
+            color[0] = (color[0] + 0.08).min(1.0);
+            color[1] = (color[1] + 0.08).min(1.0);
+            color[2] = (color[2] + 0.08).min(1.0);
+        }
+        out.push(InstanceRaw {
+            position: tn.position,
+            size: tn.size,
+            color,
+            border_radius: tn.border_radius,
+        });
+    }
+
     // --- waveforms ---
     for (&id, wf) in ctx.waveforms.iter() {
         let wf_right = wf.position[0] + wf.size[0];
@@ -571,6 +599,7 @@ pub(crate) fn build_instances(out: &mut Vec<InstanceRaw>, ctx: &RenderContext) {
             ctx.component_instances,
             ctx.midi_clips,
             ctx.instrument_regions,
+            ctx.text_notes,
             target,
         ) else {
             continue;
@@ -852,6 +881,7 @@ pub(crate) fn target_rect(
     component_instances: &IndexMap<EntityId, component::ComponentInstance>,
     midi_clips: &IndexMap<EntityId, midi::MidiClip>,
     instrument_regions: &IndexMap<EntityId, instruments::InstrumentRegion>,
+    text_notes: &IndexMap<EntityId, crate::text_note::TextNote>,
     target: &HitTarget,
 ) -> Option<([f32; 2], [f32; 2])> {
     match target {
@@ -898,6 +928,10 @@ pub(crate) fn target_rect(
         HitTarget::InstrumentRegion(id) => {
             let ir = instrument_regions.get(id)?;
             Some((ir.position, ir.size))
+        }
+        HitTarget::TextNote(id) => {
+            let tn = text_notes.get(id)?;
+            Some((tn.position, tn.size))
         }
     }
 }

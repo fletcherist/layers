@@ -227,6 +227,20 @@ impl App {
             return;
         }
 
+        // Resizing text note
+        if let DragState::ResizingTextNote { note_id, anchor, .. } = self.drag {
+            let world = self.camera.screen_to_world(self.mouse_pos);
+            let (pos, size) = compute_resize(anchor, world, 40.0, false, &self.settings, self.camera.zoom, self.bpm);
+            if let Some(tn) = self.text_notes.get_mut(&note_id) {
+                tn.position = pos;
+                tn.size = size;
+            }
+            self.render_generation += 1;
+            self.mark_dirty();
+            self.request_redraw();
+            return;
+        }
+
         // Resizing export region
         if let DragState::ResizingExportRegion { region_id, anchor, .. } = self.drag {
             let world = self.camera.screen_to_world(self.mouse_pos);
@@ -603,6 +617,7 @@ impl App {
                             &self.component_instances,
                             &self.midi_clips,
                             &self.instrument_regions,
+                            &self.text_notes,
                             self.editing_component,
                             rp,
                             rs,

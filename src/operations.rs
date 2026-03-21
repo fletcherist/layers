@@ -5,6 +5,7 @@ use crate::entity_id::EntityId;
 use crate::instruments::{InstrumentRegion, InstrumentRegionSnapshot};
 use crate::midi::{MidiClip, MidiNote};
 use crate::regions::{ExportRegion, LoopRegion};
+use crate::text_note::TextNote;
 use crate::{CanvasObject, WaveformView};
 
 pub type UserId = EntityId;
@@ -74,6 +75,11 @@ pub enum Operation {
     DeleteInstrumentRegion { id: EntityId, data: InstrumentRegionSnapshot },
     UpdateInstrumentRegion { id: EntityId, before: InstrumentRegionSnapshot, after: InstrumentRegionSnapshot },
 
+    // --- TextNote ---
+    CreateTextNote { id: EntityId, data: TextNote },
+    DeleteTextNote { id: EntityId, data: TextNote },
+    UpdateTextNote { id: EntityId, before: TextNote, after: TextNote },
+
     // --- Global state ---
     SetBpm { before: f32, after: f32 },
 
@@ -117,6 +123,9 @@ impl Operation {
             Operation::CreateInstrumentRegion { .. } => "CreateInstrumentRegion",
             Operation::DeleteInstrumentRegion { .. } => "DeleteInstrumentRegion",
             Operation::UpdateInstrumentRegion { .. } => "UpdateInstrumentRegion",
+            Operation::CreateTextNote { .. } => "CreateTextNote",
+            Operation::DeleteTextNote { .. } => "DeleteTextNote",
+            Operation::UpdateTextNote { .. } => "UpdateTextNote",
             Operation::SetBpm { .. } => "SetBpm",
             Operation::Batch(_) => "Batch",
         }
@@ -178,6 +187,11 @@ impl Operation {
             Operation::CreateInstrumentRegion { id, data } => Operation::DeleteInstrumentRegion { id: *id, data: data.clone() },
             Operation::DeleteInstrumentRegion { id, data } => Operation::CreateInstrumentRegion { id: *id, data: data.clone() },
             Operation::UpdateInstrumentRegion { id, before, after } => Operation::UpdateInstrumentRegion { id: *id, before: after.clone(), after: before.clone() },
+
+            // TextNotes
+            Operation::CreateTextNote { id, data } => Operation::DeleteTextNote { id: *id, data: data.clone() },
+            Operation::DeleteTextNote { id, data } => Operation::CreateTextNote { id: *id, data: data.clone() },
+            Operation::UpdateTextNote { id, before, after } => Operation::UpdateTextNote { id: *id, before: after.clone(), after: before.clone() },
 
             // BPM
             Operation::SetBpm { before, after } => Operation::SetBpm { before: *after, after: *before },
@@ -409,6 +423,19 @@ impl Operation {
                 }
             }
 
+            // --- TextNote ---
+            Operation::CreateTextNote { id, data } => {
+                app.text_notes.insert(*id, data.clone());
+            }
+            Operation::DeleteTextNote { id, .. } => {
+                app.text_notes.shift_remove(id);
+            }
+            Operation::UpdateTextNote { id, after, .. } => {
+                if let Some(tn) = app.text_notes.get_mut(id) {
+                    *tn = after.clone();
+                }
+            }
+
             // --- Global state ---
             Operation::SetBpm { before, after } => {
                 let scale = before / after;
@@ -490,6 +517,11 @@ impl App {
                         (HitTarget::MidiClip(id), EntityBeforeState::MidiClip(before)) => {
                             if let Some(after) = self.midi_clips.get(&id) {
                                 nudge_ops.push(Operation::UpdateMidiClip { id, before, after: after.clone() });
+                            }
+                        }
+                        (HitTarget::TextNote(id), EntityBeforeState::TextNote(before)) => {
+                            if let Some(after) = self.text_notes.get(&id) {
+                                nudge_ops.push(Operation::UpdateTextNote { id, before, after: after.clone() });
                             }
                         }
                         (HitTarget::InstrumentRegion(id), EntityBeforeState::InstrumentRegion(before)) => {
@@ -621,6 +653,7 @@ impl App {
             Operation::UpdateComponentInstance { id, .. } => return Some(vec![HitTarget::ComponentInstance(*id)]),
             Operation::UpdateMidiClip { id, .. } => return Some(vec![HitTarget::MidiClip(*id)]),
             Operation::UpdateInstrumentRegion { id, .. } => return Some(vec![HitTarget::InstrumentRegion(*id)]),
+            Operation::UpdateTextNote { id, .. } => return Some(vec![HitTarget::TextNote(*id)]),
             _ => {}
         }
         // Handle batch of update operations (arrow nudge)
@@ -637,6 +670,7 @@ impl App {
                     Operation::UpdateComponentInstance { id, .. } => targets.push(HitTarget::ComponentInstance(*id)),
                     Operation::UpdateMidiClip { id, .. } => targets.push(HitTarget::MidiClip(*id)),
                     Operation::UpdateInstrumentRegion { id, .. } => targets.push(HitTarget::InstrumentRegion(*id)),
+                    Operation::UpdateTextNote { id, .. } => targets.push(HitTarget::TextNote(*id)),
                     // PluginBlock uses Delete+Create pair for updates
                     Operation::DeletePluginBlock { id, .. } => targets.push(HitTarget::PluginBlock(*id)),
                     Operation::CreatePluginBlock { .. } => { /* paired with Delete above */ }

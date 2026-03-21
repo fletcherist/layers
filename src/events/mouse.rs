@@ -96,6 +96,7 @@ impl App {
                     &self.component_instances,
                     &self.midi_clips,
                     &self.instrument_regions,
+                    &self.text_notes,
                     self.editing_component,
                     world,
                     &self.camera,
@@ -865,6 +866,20 @@ impl App {
                                             self.selected.push(HitTarget::PluginBlock(*id));
                                             self.update_right_window();
                                         }
+                                        crate::layers::LayerNodeKind::TextNote => {
+                                            if let Some(tn) = self.text_notes.get(id) {
+                                                let (sw, sh, _) = self.screen_info();
+                                                let cx = tn.position[0] + tn.size[0] * 0.5;
+                                                let cy = tn.position[1] + tn.size[1] * 0.5;
+                                                self.camera.position = [
+                                                    cx - sw * 0.5 / self.camera.zoom,
+                                                    cy - sh * 0.5 / self.camera.zoom,
+                                                ];
+                                            }
+                                            self.selected.clear();
+                                            self.selected.push(HitTarget::TextNote(*id));
+                                            self.update_right_window();
+                                        }
                                     }
                                     self.mark_dirty();
                                 }
@@ -1051,6 +1066,17 @@ impl App {
                     }
                 }
 
+                // --- text note corner resize ---
+                for (&i, tn) in self.text_notes.iter() {
+                    if let Some((anchor, nwse)) = hit_test_corner_resize(tn.position, tn.size, world, self.camera.zoom) {
+                        let before = tn.clone();
+                        self.drag = DragState::ResizingTextNote { note_id: i, anchor, nwse, before };
+                        self.update_cursor();
+                        self.request_redraw();
+                        return;
+                    }
+                }
+
                 // --- fade handle drag (checked before edge resize: fade handle sits at top corners) ---
                 if let Some((wf_idx, is_fade_in)) =
                     hit_test_fade_handle(&self.waveforms, world, &self.camera)
@@ -1218,6 +1244,7 @@ impl App {
                     &self.component_instances,
                     &self.midi_clips,
                     &self.instrument_regions,
+                    &self.text_notes,
                     self.editing_component,
                     world,
                     &self.camera,
@@ -1291,6 +1318,23 @@ impl App {
                         }
                         self.request_redraw();
                         return;
+                    }
+                    if let Some(HitTarget::TextNote(idx)) = hit {
+                        self.enter_text_note_edit(idx);
+                        return;
+                    }
+                }
+
+                // Click outside editing text note commits edit
+                if let Some(ref edit) = self.editing_text_note {
+                    let note_id = edit.note_id;
+                    if let Some(tn) = self.text_notes.get(&note_id) {
+                        if !point_in_rect(world, tn.position, tn.size) {
+                            self.commit_text_note_edit();
+                            self.request_redraw();
+                        }
+                    } else {
+                        self.editing_text_note = None;
                     }
                 }
 
@@ -1520,6 +1564,7 @@ impl App {
                                 &self.component_instances,
                                 &self.midi_clips,
                                 &self.instrument_regions,
+                                &self.text_notes,
                                 None,
                                 world,
                                 &self.camera,
@@ -1864,6 +1909,22 @@ impl App {
                     return;
                 }
 
+                // --- finish resizing text note ---
+                if matches!(self.drag, DragState::ResizingTextNote { .. }) {
+                    if let DragState::ResizingTextNote { note_id, before, .. } =
+                        std::mem::replace(&mut self.drag, DragState::None)
+                    {
+                        if let Some(after) = self.text_notes.get(&note_id) {
+                            self.push_op(crate::operations::Operation::UpdateTextNote { id: note_id, before, after: after.clone() });
+                        }
+                        self.render_generation += 1;
+                        self.update_hover();
+                        self.update_cursor();
+                        self.request_redraw();
+                        return;
+                    }
+                }
+
                 // --- finish resizing export region ---
                 if matches!(self.drag, DragState::ResizingExportRegion { .. }) {
                     if let DragState::ResizingExportRegion { region_id, before, .. } =
@@ -2156,6 +2217,7 @@ impl App {
                             &self.component_instances,
                             &self.midi_clips,
                             &self.instrument_regions,
+                            &self.text_notes,
                             self.editing_component,
                             rp,
                             rs,

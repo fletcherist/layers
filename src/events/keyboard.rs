@@ -699,6 +699,137 @@ impl App {
                 }
             }
 
+            // --- text note editing input ---
+            if self.editing_text_note.is_some() {
+                match &event.logical_key {
+                    Key::Named(NamedKey::Escape) => {
+                        // Cancel editing — revert to before_text
+                        if let Some(edit) = self.editing_text_note.take() {
+                            if let Some(tn) = self.text_notes.get_mut(&edit.note_id) {
+                                tn.text = edit.before_text;
+                            }
+                        }
+                        self.render_generation += 1;
+                        self.request_redraw();
+                        return;
+                    }
+                    Key::Named(NamedKey::Enter) => {
+                        if self.cmd_held() {
+                            // Cmd+Enter: commit edit
+                            self.commit_text_note_edit();
+                            self.request_redraw();
+                            return;
+                        }
+                        // Regular Enter: insert newline
+                        if let Some(ref mut edit) = self.editing_text_note {
+                            edit.text.insert(edit.cursor, '\n');
+                            edit.cursor += 1;
+                            if let Some(tn) = self.text_notes.get_mut(&edit.note_id) {
+                                tn.text = edit.text.clone();
+                            }
+                        }
+                        self.render_generation += 1;
+                        self.request_redraw();
+                        return;
+                    }
+                    Key::Named(NamedKey::Backspace) => {
+                        if let Some(ref mut edit) = self.editing_text_note {
+                            if edit.cursor > 0 {
+                                edit.cursor -= 1;
+                                edit.text.remove(edit.cursor);
+                                if let Some(tn) = self.text_notes.get_mut(&edit.note_id) {
+                                    tn.text = edit.text.clone();
+                                }
+                            }
+                        }
+                        self.render_generation += 1;
+                        self.request_redraw();
+                        return;
+                    }
+                    Key::Named(NamedKey::Delete) => {
+                        if let Some(ref mut edit) = self.editing_text_note {
+                            if edit.cursor < edit.text.len() {
+                                edit.text.remove(edit.cursor);
+                                if let Some(tn) = self.text_notes.get_mut(&edit.note_id) {
+                                    tn.text = edit.text.clone();
+                                }
+                            }
+                        }
+                        self.render_generation += 1;
+                        self.request_redraw();
+                        return;
+                    }
+                    Key::Named(NamedKey::ArrowLeft) => {
+                        if let Some(ref mut edit) = self.editing_text_note {
+                            if edit.cursor > 0 { edit.cursor -= 1; }
+                        }
+                        self.request_redraw();
+                        return;
+                    }
+                    Key::Named(NamedKey::ArrowRight) => {
+                        if let Some(ref mut edit) = self.editing_text_note {
+                            if edit.cursor < edit.text.len() { edit.cursor += 1; }
+                        }
+                        self.request_redraw();
+                        return;
+                    }
+                    Key::Named(NamedKey::Home) => {
+                        if let Some(ref mut edit) = self.editing_text_note {
+                            edit.cursor = 0;
+                        }
+                        self.request_redraw();
+                        return;
+                    }
+                    Key::Named(NamedKey::End) => {
+                        if let Some(ref mut edit) = self.editing_text_note {
+                            edit.cursor = edit.text.len();
+                        }
+                        self.request_redraw();
+                        return;
+                    }
+                    Key::Named(NamedKey::Space) => {
+                        if let Some(ref mut edit) = self.editing_text_note {
+                            edit.text.insert(edit.cursor, ' ');
+                            edit.cursor += 1;
+                            if let Some(tn) = self.text_notes.get_mut(&edit.note_id) {
+                                tn.text = edit.text.clone();
+                            }
+                        }
+                        self.render_generation += 1;
+                        self.request_redraw();
+                        return;
+                    }
+                    Key::Character(ch) if self.cmd_held() => {
+                        match ch.as_ref() {
+                            "a" => {
+                                // Select all (no-op for simple cursor model, just move to end)
+                                if let Some(ref mut edit) = self.editing_text_note {
+                                    edit.cursor = edit.text.len();
+                                }
+                                self.request_redraw();
+                                return;
+                            }
+                            _ => {}
+                        }
+                    }
+                    Key::Character(ch) if !self.cmd_held() => {
+                        if let Some(ref mut edit) = self.editing_text_note {
+                            for c in ch.chars() {
+                                edit.text.insert(edit.cursor, c);
+                                edit.cursor += 1;
+                            }
+                            if let Some(tn) = self.text_notes.get_mut(&edit.note_id) {
+                                tn.text = edit.text.clone();
+                            }
+                        }
+                        self.render_generation += 1;
+                        self.request_redraw();
+                        return;
+                    }
+                    _ => {}
+                }
+            }
+
             // --- effect region name editing input ---
             if self.editing_effect_name.is_some() {
                 match &event.logical_key {

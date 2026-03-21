@@ -55,6 +55,7 @@ pub enum CommandAction {
     AddVolumeAutomation,
     AddPanAutomation,
     AddMidiClip,
+    AddTextNote,
     AddInstrument,
     SetMidiClipGridFixed(FixedGrid),
     SetMidiClipGridAdaptive(AdaptiveGridSize),
@@ -344,6 +345,13 @@ pub const COMMANDS: &[CommandDef] = &[
         shortcut: "",
         category: "Audio",
         action: CommandAction::AddMidiClip,
+        dev_only: false,
+    },
+    CommandDef {
+        name: "Add Text Note",
+        shortcut: "",
+        category: "Canvas",
+        action: CommandAction::AddTextNote,
         dev_only: false,
     },
     CommandDef {

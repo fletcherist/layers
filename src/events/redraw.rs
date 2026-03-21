@@ -73,6 +73,7 @@ impl App {
                     active_automation_param: self.active_automation_param,
                     editing_midi_clip: self.editing_midi_clip,
                     instrument_regions: &self.instrument_regions,
+                    text_notes: &self.text_notes,
                     midi_clips: &self.midi_clips,
                     selected_midi_notes: &self.selected_midi_notes,
                     midi_note_select_rect: self.midi_note_select_rect,
@@ -188,6 +189,8 @@ impl App {
                 },
                 self.remote_storage.is_some(),
                 self.right_window.as_ref(),
+                &self.text_notes,
+                self.editing_text_note.as_ref().map(|e| (e.note_id, e.cursor)),
             );
         }
         if self.toast_manager.has_active() {
