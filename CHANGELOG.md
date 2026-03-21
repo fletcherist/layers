@@ -1,3 +1,4 @@
+- 2026-03-21: feat: layer dots now render entity color — waveform, midi, plugin use stored color; instrument/effect use theme fallback (35.2k loc)
 - 2026-03-21: feat: add color field to FlatLayerRow, populated from entity (waveform/midi/plugin) during flatten_node (35.2k loc)
 - 2026-03-21: feat: layers panel — hierarchical browser with instruments, MIDI, audio, effects; expand/collapse, reorder, click-to-select (35.1k loc)
 - 2026-03-21: tests: add `instrument_region_id` to `MidiClip` / `StoredMidiClip` struct literals (34.3k loc)

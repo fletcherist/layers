@@ -57,7 +57,7 @@ pub enum EntryKind {
     PluginHeader,
     Plugin { unique_id: String, is_instrument: bool },
     ProjectInstrument { id: EntityId },
-    LayerNode { id: EntityId, kind: LayerNodeKind, has_children: bool, expanded: bool },
+    LayerNode { id: EntityId, kind: LayerNodeKind, has_children: bool, expanded: bool, color: [f32; 4] },
 }
 
 #[derive(Clone)]
@@ -231,6 +231,7 @@ impl SampleBrowser {
                             kind: row.kind,
                             has_children: row.has_children,
                             expanded: row.expanded,
+                            color: row.color,
                         },
                         depth: row.depth,
                     });
@@ -714,12 +715,10 @@ impl SampleBrowser {
                     let dot_x = cx + dot_offset;
                     let dot_y = y + (item_h - dot_sz) * 0.5;
                     let dot_color = match &entry.kind {
-                        EntryKind::LayerNode { kind, .. } => match kind {
+                        EntryKind::LayerNode { kind, color, .. } => match kind {
                             LayerNodeKind::Instrument => settings.theme.pill_instrument,
-                            LayerNodeKind::MidiClip => [0.55, 0.45, 0.85, 1.0],
-                            LayerNodeKind::Waveform => [0.35, 0.75, 0.55, 1.0],
                             LayerNodeKind::EffectRegion => settings.theme.pill_effect,
-                            LayerNodeKind::PluginBlock => settings.theme.pill_effect,
+                            _ => *color,
                         },
                         _ => settings.theme.pill_instrument,
                     };
