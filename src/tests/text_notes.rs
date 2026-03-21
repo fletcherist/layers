@@ -1,6 +1,5 @@
-use crate::entity_id::new_id;
 use crate::operations::Operation;
-use crate::text_note::TextNote;
+use crate::text_note::TextNoteEditState;
 use crate::{App, HitTarget};
 
 #[test]
@@ -62,6 +61,74 @@ fn update_text_note_via_edit() {
     // Undo should restore empty text
     app.undo_op();  // undo update
     assert_eq!(app.text_notes[&id].text, "");
+}
+
+#[test]
+fn text_note_cursor_arrow_up_down() {
+    let mut app = App::new_headless();
+    app.add_text_note();
+    let id = match app.selected[0] {
+        HitTarget::TextNote(id) => id,
+        _ => panic!("Expected TextNote"),
+    };
+
+    // Set up multi-line text: "abc\ndef\nghi"
+    let text = "abc\ndef\nghi".to_string();
+    app.text_notes.get_mut(&id).unwrap().text = text.clone();
+    app.editing_text_note = Some(TextNoteEditState {
+        note_id: id,
+        text: text.clone(),
+        before_text: String::new(),
+        cursor: 5, // on 'e' in second line (index: a=0,b=1,c=2,\n=3,d=4,e=5)
+    });
+
+    // Simulate ArrowUp: cursor at col 1 of line 1 -> should go to col 1 of line 0 = index 1 ('b')
+    {
+        let edit = app.editing_text_note.as_mut().unwrap();
+        let before = &edit.text[..edit.cursor];
+        if let Some(cur_line_start) = before.rfind('\n') {
+            let col = edit.cursor - cur_line_start - 1;
+            let prev_line_start = before[..cur_line_start].rfind('\n')
+                .map(|p| p + 1).unwrap_or(0);
+            let prev_line_len = cur_line_start - prev_line_start;
+            edit.cursor = prev_line_start + col.min(prev_line_len);
+        }
+    }
+    assert_eq!(app.editing_text_note.as_ref().unwrap().cursor, 1); // 'b'
+
+    // Simulate ArrowDown from cursor=1 (col 1 line 0) -> col 1 line 1 = index 5 ('e')
+    {
+        let edit = app.editing_text_note.as_mut().unwrap();
+        let before = &edit.text[..edit.cursor];
+        let cur_line_start = before.rfind('\n').map(|p| p + 1).unwrap_or(0);
+        let col = edit.cursor - cur_line_start;
+        if let Some(next_nl) = edit.text[edit.cursor..].find('\n') {
+            let next_line_start = edit.cursor + next_nl + 1;
+            let next_line_end = edit.text[next_line_start..].find('\n')
+                .map(|p| next_line_start + p)
+                .unwrap_or(edit.text.len());
+            let next_line_len = next_line_end - next_line_start;
+            edit.cursor = next_line_start + col.min(next_line_len);
+        }
+    }
+    assert_eq!(app.editing_text_note.as_ref().unwrap().cursor, 5); // 'e'
+
+    // ArrowDown again from cursor=5 (col 1 line 1) -> col 1 line 2 = index 9 ('h')
+    {
+        let edit = app.editing_text_note.as_mut().unwrap();
+        let before = &edit.text[..edit.cursor];
+        let cur_line_start = before.rfind('\n').map(|p| p + 1).unwrap_or(0);
+        let col = edit.cursor - cur_line_start;
+        if let Some(next_nl) = edit.text[edit.cursor..].find('\n') {
+            let next_line_start = edit.cursor + next_nl + 1;
+            let next_line_end = edit.text[next_line_start..].find('\n')
+                .map(|p| next_line_start + p)
+                .unwrap_or(edit.text.len());
+            let next_line_len = next_line_end - next_line_start;
+            edit.cursor = next_line_start + col.min(next_line_len);
+        }
+    }
+    assert_eq!(app.editing_text_note.as_ref().unwrap().cursor, 9); // 'h'
 }
 
 #[test]

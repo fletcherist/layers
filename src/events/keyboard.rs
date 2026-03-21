@@ -407,6 +407,7 @@ impl App {
                 Key::Named(NamedKey::ArrowLeft) | Key::Named(NamedKey::ArrowRight) |
                 Key::Named(NamedKey::ArrowUp) | Key::Named(NamedKey::ArrowDown))
                 && self.editing_midi_clip.is_none()
+                && self.editing_text_note.is_none()
                 && !self.selected.is_empty()
             {
                 let shift = self.modifiers.shift_key();
@@ -761,14 +762,63 @@ impl App {
                     }
                     Key::Named(NamedKey::ArrowLeft) => {
                         if let Some(ref mut edit) = self.editing_text_note {
-                            if edit.cursor > 0 { edit.cursor -= 1; }
+                            if edit.cursor > 0 {
+                                edit.cursor = edit.text[..edit.cursor]
+                                    .char_indices()
+                                    .next_back()
+                                    .map(|(i, _)| i)
+                                    .unwrap_or(0);
+                            }
                         }
                         self.request_redraw();
                         return;
                     }
                     Key::Named(NamedKey::ArrowRight) => {
                         if let Some(ref mut edit) = self.editing_text_note {
-                            if edit.cursor < edit.text.len() { edit.cursor += 1; }
+                            if edit.cursor < edit.text.len() {
+                                edit.cursor = edit.text[edit.cursor..]
+                                    .char_indices()
+                                    .nth(1)
+                                    .map(|(i, _)| edit.cursor + i)
+                                    .unwrap_or(edit.text.len());
+                            }
+                        }
+                        self.request_redraw();
+                        return;
+                    }
+                    Key::Named(NamedKey::ArrowUp) => {
+                        if let Some(ref mut edit) = self.editing_text_note {
+                            // Find start of current line and column offset
+                            let before = &edit.text[..edit.cursor];
+                            if let Some(cur_line_start) = before.rfind('\n') {
+                                let col = edit.cursor - cur_line_start - 1;
+                                // Find start of previous line
+                                let prev_line_start = before[..cur_line_start].rfind('\n')
+                                    .map(|p| p + 1).unwrap_or(0);
+                                let prev_line_len = cur_line_start - prev_line_start;
+                                edit.cursor = prev_line_start + col.min(prev_line_len);
+                            }
+                            // If on first line, do nothing
+                        }
+                        self.request_redraw();
+                        return;
+                    }
+                    Key::Named(NamedKey::ArrowDown) => {
+                        if let Some(ref mut edit) = self.editing_text_note {
+                            let before = &edit.text[..edit.cursor];
+                            let cur_line_start = before.rfind('\n')
+                                .map(|p| p + 1).unwrap_or(0);
+                            let col = edit.cursor - cur_line_start;
+                            // Find end of current line (next \n)
+                            if let Some(next_nl) = edit.text[edit.cursor..].find('\n') {
+                                let next_line_start = edit.cursor + next_nl + 1;
+                                let next_line_end = edit.text[next_line_start..].find('\n')
+                                    .map(|p| next_line_start + p)
+                                    .unwrap_or(edit.text.len());
+                                let next_line_len = next_line_end - next_line_start;
+                                edit.cursor = next_line_start + col.min(next_line_len);
+                            }
+                            // If on last line, do nothing
                         }
                         self.request_redraw();
                         return;

@@ -1,3 +1,5 @@
+- 2026-03-21: feat: up/down arrow keys move cursor between lines during text note editing (35.8k loc)
+- 2026-03-21: fix: arrow keys now move cursor instead of textbox during text note editing (35.7k loc)
 - 2026-03-21: feat: text notes — create, edit, move, resize, delete text note rectangles on the canvas with multiline editing, undo/redo, and persistence (35.7k loc)
 - 2026-03-21: feat: replace rack dependency with built-in vst3-gui scanner — removed rack crate, unified plugin scanning cross-platform (35.0k loc)
 - 2026-03-21: feat: vst3-gui cross-platform — split into common/mac/win, Windows HWND support, VST3 plugin GUI now works on both macOS and Windows (35.1k loc)
