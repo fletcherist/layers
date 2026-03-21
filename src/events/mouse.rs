@@ -757,7 +757,11 @@ impl App {
                                 self.sample_browser.active_category = cat;
                                 self.sample_browser.scroll_offset = 0.0;
                                 self.sample_browser.scroll_velocity = 0.0;
-                                self.sample_browser.rebuild_entries();
+                                if cat == ui::browser::BrowserCategory::Project {
+                                    self.refresh_project_browser_entries();
+                                } else {
+                                    self.sample_browser.rebuild_entries();
+                                }
                             }
                             self.request_redraw();
                             return;
@@ -793,6 +797,9 @@ impl App {
                                         is_instrument: *is_instrument,
                                     };
                                 }
+                                ui::browser::EntryKind::ProjectInstrument { id } => {
+                                    self.focus_instrument_region(*id);
+                                }
                             }
                         }
                         self.request_redraw();
@@ -811,6 +818,16 @@ impl App {
                             if let Some(engine) = &self.audio_engine {
                                 engine.set_metronome_enabled(self.settings.metronome_enabled);
                             }
+                        } else if TransportPanel::hit_computer_keyboard_button(
+                            self.mouse_pos, sw, sh, scale,
+                        ) {
+                            let was_armed = self.computer_keyboard_armed;
+                            self.computer_keyboard_armed = !self.computer_keyboard_armed;
+                            if was_armed && !self.computer_keyboard_armed {
+                                self.release_computer_keyboard_notes();
+                            }
+                            #[cfg(feature = "native")]
+                            self.sync_computer_keyboard_to_engine();
                         } else if TransportPanel::hit_record_button(self.mouse_pos, sw, sh, scale)
                         {
                             self.toggle_recording();
@@ -825,6 +842,11 @@ impl App {
                             } else {
                                 self.dragging_bpm = Some((self.bpm, self.mouse_pos[1]));
                                 self.editing_bpm.cancel();
+                            }
+                        } else if TransportPanel::hit_play_pause(self.mouse_pos, sw, sh, scale) {
+                            #[cfg(feature = "native")]
+                            if let Some(engine) = &self.audio_engine {
+                                engine.toggle_playback();
                             }
                         } else {
                             #[cfg(feature = "native")]

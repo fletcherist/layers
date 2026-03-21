@@ -670,6 +670,7 @@ impl Gpu {
         browser_drag_ghost: Option<(&str, [f32; 2])>,
         is_playing: bool,
         is_recording: bool,
+        computer_keyboard_armed: bool,
         playback_position: f64,
         export_regions: &indexmap::IndexMap<crate::entity_id::EntityId, ExportRegion>,
         effect_regions: &indexmap::IndexMap<crate::entity_id::EntityId, effects::EffectRegion>,
@@ -759,6 +760,7 @@ impl Gpu {
             is_playing,
             is_recording,
             settings.metronome_enabled,
+            computer_keyboard_armed,
         ));
 
         if let Some(p) = command_palette {

@@ -33,6 +33,7 @@ Layers is a spatial digital audio workstation (DAW) where you arrange audio clip
   - [Editing Automation Points](#editing-automation-points)
 - [Playback & Recording](#playback--recording)
   - [Transport Controls](#transport-controls)
+  - [Computer MIDI Keyboard](#computer-midi-keyboard)
   - [Metronome](#metronome)
   - [Recording Audio](#recording-audio)
 - [Regions](#regions)
@@ -55,7 +56,7 @@ Layers is a spatial digital audio workstation (DAW) where you arrange audio clip
 The Layers interface is made up of a few key areas:
 
 - **Canvas** — The large central workspace where you place and arrange audio clips, MIDI clips, instruments, effects, and regions. You can pan and zoom freely.
-- **Transport Panel** — Located at the bottom center. Contains play/pause, record, and metronome buttons, plus the BPM display.
+- **Transport Panel** — Located at the bottom center. Contains play/pause, record, metronome, optional computer MIDI keyboard, and the BPM display.
 - **Sample Browser** — A collapsible sidebar on the left for browsing audio files and VST3 plugins. Toggle it with `⌘B`.
 - **Properties Panel** — Appears on the right when you select a clip. Shows volume, pan, pitch, warp mode, and other clip-specific settings.
 - **Command Palette** — Press `⌘K` to search and run any command quickly.
@@ -278,8 +279,22 @@ The transport panel sits at the bottom center of the screen:
 | ● | Start / Stop recording | Click |
 | Metronome dot | Toggle metronome | Click |
 | BPM display | Set tempo | Click to drag, double-click to type |
+| Piano keys icon | Computer MIDI keyboard | Click to arm / disarm |
 
 Valid BPM range: 20–999.
+
+### Computer MIDI Keyboard
+
+When the piano-keys control in the transport is **on**, you can preview the **selected instrument** (a loaded VST3 in an instrument region) from the typing keyboard:
+
+| Keys | Action |
+|---|---|
+| **A S D F G H J K** | White keys (one octave, C through the next C) |
+| **W E T Y U** | Black keys (sharps in that octave) |
+| **Z** / **X** | Octave down / up |
+| **C** / **V** | Velocity down / up (without **⌘** held) |
+
+**Space** still toggles playback (it is not a sustain pedal). Use the **Project** tab in the sample browser to pick an instrument on the canvas: the view centers on it and it becomes the keyboard target when exactly one instrument region is implied by selection.
 
 ### Metronome
 
@@ -363,7 +378,7 @@ Open the sample browser with `⌘B`. It appears as a sidebar on the left side of
 - Scroll through files with the mouse wheel.
 - Resize the browser by dragging its right edge (150–600px).
 
-The browser also has an expandable **Plugins** section that lists available VST3 instruments and effects. Drag plugins onto the canvas to create plugin blocks or add them to effect regions.
+The sidebar categories include **Project** (instrument regions already on the canvas — click a row to focus and select that instrument), **Samples**, **Instruments**, and **Effects**. The plugin categories list available VST3 instruments and effects; drag plugins onto the canvas to create plugin blocks or add them to effect regions.
 
 Your sample library folders are saved globally and persist between sessions.
 

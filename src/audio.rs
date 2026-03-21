@@ -1,7 +1,10 @@
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+use std::collections::VecDeque;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
+
+use crate::entity_id::EntityId;
 use symphonia::core::audio::AudioBufferRef;
 use symphonia::core::io::MediaSourceStream;
 use symphonia::core::probe::Hint;
@@ -48,12 +51,32 @@ pub struct AudioEffectRegion {
 }
 
 pub struct AudioInstrumentRegion {
+    pub id: EntityId,
     pub x_start_px: f32,
     pub x_end_px: f32,
     pub y_start: f32,
     pub y_end: f32,
     pub gui: Arc<Mutex<Option<crate::effects::PluginGuiHandle>>>,
     pub midi_events: Vec<TimedMidiEvent>,
+}
+
+/// Live computer-keyboard preview MIDI (drained once per output callback).
+#[derive(Clone, Copy, Debug)]
+pub enum KeyboardPreviewEvent {
+    NoteOn {
+        target: EntityId,
+        note: u8,
+        velocity: u8,
+    },
+    NoteOff {
+        target: EntityId,
+        note: u8,
+    },
+}
+
+pub struct KeyboardPreviewState {
+    pub target: Option<EntityId>,
+    pub pending: VecDeque<KeyboardPreviewEvent>,
 }
 
 pub struct TimedMidiEvent {
@@ -78,6 +101,7 @@ pub struct AudioEngine {
     loop_end_bits: Arc<AtomicU64>,
     metronome_enabled: Arc<AtomicBool>,
     bpm_bits: Arc<AtomicU64>,
+    keyboard_preview: Arc<Mutex<KeyboardPreviewState>>,
 }
 
 fn store_f64(atomic: &AtomicU64, value: f64) {
@@ -161,12 +185,17 @@ impl AudioEngine {
         let loop_end_bits = Arc::new(AtomicU64::new(0.0f64.to_bits()));
         let metronome_enabled = Arc::new(AtomicBool::new(false));
         let bpm_bits = Arc::new(AtomicU64::new(120.0f64.to_bits()));
+        let keyboard_preview: Arc<Mutex<KeyboardPreviewState>> = Arc::new(Mutex::new(KeyboardPreviewState {
+            target: None,
+            pending: VecDeque::new(),
+        }));
 
         let p = playing.clone();
         let pos = position_bits.clone();
         let c = clips.clone();
         let er = effect_regions.clone();
         let inst_r = instrument_regions.clone();
+        let kb_preview = keyboard_preview.clone();
         let vol = master_volume.clone();
         let rms = rms_peak.clone();
         let lp_en = loop_enabled.clone();
@@ -198,6 +227,9 @@ impl AudioEngine {
                     // Send all-notes-off to every instrument on play→stop transition
                     if was_playing && !is_playing {
                         met_last_beat = -1;
+                        if let Ok(mut g) = kb_preview.try_lock() {
+                            g.pending.clear();
+                        }
                         if let Ok(inst_guard) = inst_r.try_lock() {
                             for region in inst_guard.iter() {
                                 if let Ok(gui_guard) = region.gui.try_lock() {
@@ -422,6 +454,12 @@ impl AudioEngine {
 
                     } // end if is_playing (clips + effects)
 
+                    let kb_batch: Vec<KeyboardPreviewEvent> = if let Ok(mut g) = kb_preview.try_lock() {
+                        g.pending.drain(..).collect()
+                    } else {
+                        Vec::new()
+                    };
+
                     // Process instrument regions (MIDI → VST3 → audio, additive)
                     // Always process — instruments need continuous process() for GUI keyboard preview
                     if let Ok(inst_guard) = inst_r.try_lock() {
@@ -451,6 +489,26 @@ impl AudioEngine {
                                                     } else {
                                                         gui.send_midi_note_off(ev.note, 0, 0, so);
                                                     }
+                                                }
+                                            }
+                                        }
+
+                                        if offset == 0 {
+                                            for ev in &kb_batch {
+                                                match *ev {
+                                                    KeyboardPreviewEvent::NoteOn {
+                                                        target,
+                                                        note,
+                                                        velocity,
+                                                    } if target == region.id => {
+                                                        gui.send_midi_note_on(note, velocity, 0, 0);
+                                                    }
+                                                    KeyboardPreviewEvent::NoteOff { target, note }
+                                                        if target == region.id =>
+                                                    {
+                                                        gui.send_midi_note_off(note, 0, 0, 0);
+                                                    }
+                                                    _ => {}
                                                 }
                                             }
                                         }
@@ -582,7 +640,31 @@ impl AudioEngine {
             loop_end_bits,
             metronome_enabled,
             bpm_bits,
+            keyboard_preview,
         })
+    }
+
+    pub fn set_keyboard_preview_target(&self, id: Option<EntityId>) {
+        if let Ok(mut g) = self.keyboard_preview.lock() {
+            g.target = id;
+        }
+    }
+
+    pub fn keyboard_preview_note_on(&self, target: EntityId, note: u8, velocity: u8) {
+        if let Ok(mut g) = self.keyboard_preview.lock() {
+            g.pending.push_back(KeyboardPreviewEvent::NoteOn {
+                target,
+                note,
+                velocity,
+            });
+        }
+    }
+
+    pub fn keyboard_preview_note_off(&self, target: EntityId, note: u8) {
+        if let Ok(mut g) = self.keyboard_preview.lock() {
+            g.pending
+                .push_back(KeyboardPreviewEvent::NoteOff { target, note });
+        }
     }
 
     pub fn toggle_playback(&self) {

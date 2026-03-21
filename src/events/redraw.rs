@@ -135,6 +135,8 @@ impl App {
             #[cfg(not(feature = "native"))]
             let is_recording = false;
 
+            let computer_keyboard_armed = self.computer_keyboard_armed;
+
             gpu.render(
                 &self.camera,
                 &self.cached_instances,
@@ -145,6 +147,7 @@ impl App {
                 drag_ghost,
                 is_playing,
                 is_recording,
+                computer_keyboard_armed,
                 playback_pos,
                 &self.export_regions,
                 &self.effect_regions,

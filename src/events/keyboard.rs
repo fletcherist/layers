@@ -3,6 +3,8 @@ use super::*;
 use winit::event::{ElementState, KeyEvent};
 use winit::keyboard::{Key, KeyCode, NamedKey, PhysicalKey};
 
+use crate::midi_keyboard;
+
 fn physical_key_to_char(key: &PhysicalKey) -> Option<&'static str> {
     match key {
         PhysicalKey::Code(code) => match code {
@@ -51,6 +53,11 @@ fn physical_key_to_char(key: &PhysicalKey) -> Option<&'static str> {
 
 impl App {
     pub(crate) fn handle_keyboard_input(&mut self, event: KeyEvent) {
+        #[cfg(feature = "native")]
+        if event.state == ElementState::Released {
+            self.handle_computer_midi_key_release(&event);
+            return;
+        }
         if event.state == ElementState::Pressed {
             println!("[KEY] pressed: {:?} super={} shift={}", event.logical_key, self.cmd_held(), self.modifiers.shift_key());
             if self.plugin_editor.is_some() {
@@ -1011,12 +1018,26 @@ impl App {
                 }
             }
 
+            #[cfg(feature = "native")]
+            {
+                self.sync_keyboard_instrument_from_selection();
+                self.sync_computer_keyboard_to_engine();
+                if self.try_computer_midi_keyboard(&event) {
+                    return;
+                }
+            }
+
             // --- global shortcuts ---
             match &event.logical_key {
                 Key::Named(NamedKey::Escape) => {
                     self.selected.clear();
                     self.update_right_window();
                     self.select_area = None;
+                    #[cfg(feature = "native")]
+                    {
+                        self.sync_keyboard_instrument_from_selection();
+                        self.sync_computer_keyboard_to_engine();
+                    }
                     self.request_redraw();
                 }
                 Key::Named(NamedKey::Space) => {
@@ -1151,6 +1172,7 @@ impl App {
                                 self.sample_browser.visible = !self.sample_browser.visible;
                                 #[cfg(feature = "native")]
                                 if self.sample_browser.visible {
+                                    self.refresh_project_browser_entries();
                                     self.ensure_plugins_scanned();
                                 }
                                 self.request_redraw();
@@ -1223,5 +1245,126 @@ impl App {
                 _ => {}
             }
         }
+    }
+
+    #[cfg(feature = "native")]
+    fn handle_computer_midi_key_release(&mut self, event: &KeyEvent) {
+        if !self.computer_keyboard_armed {
+            return;
+        }
+        let PhysicalKey::Code(code) = event.physical_key else {
+            return;
+        };
+        if let Some((target, note)) = self.midi_keyboard_held.remove(&code) {
+            if let Some(engine) = &self.audio_engine {
+                engine.keyboard_preview_note_off(target, note);
+            }
+            self.request_redraw();
+        }
+    }
+
+    #[cfg(feature = "native")]
+    fn try_computer_midi_keyboard(&mut self, event: &KeyEvent) -> bool {
+        if !self.computer_keyboard_armed || self.audio_engine.is_none() {
+            return false;
+        }
+        if !self.computer_midi_keyboard_guards_ok() {
+            return false;
+        }
+
+        let PhysicalKey::Code(code) = event.physical_key else {
+            return false;
+        };
+
+        if !self.cmd_held() {
+            match code {
+                KeyCode::KeyZ => {
+                    self.computer_keyboard_octave_offset = (self.computer_keyboard_octave_offset - 1)
+                        .clamp(-midi_keyboard::OCTAVE_OFFSET_MAX, midi_keyboard::OCTAVE_OFFSET_MAX);
+                    self.request_redraw();
+                    return true;
+                }
+                KeyCode::KeyX => {
+                    self.computer_keyboard_octave_offset = (self.computer_keyboard_octave_offset + 1)
+                        .clamp(-midi_keyboard::OCTAVE_OFFSET_MAX, midi_keyboard::OCTAVE_OFFSET_MAX);
+                    self.request_redraw();
+                    return true;
+                }
+                KeyCode::KeyC => {
+                    self.computer_keyboard_velocity = midi_keyboard::adjust_velocity(
+                        self.computer_keyboard_velocity,
+                        -(midi_keyboard::VELOCITY_STEP as i16),
+                    );
+                    self.request_redraw();
+                    return true;
+                }
+                KeyCode::KeyV => {
+                    self.computer_keyboard_velocity = midi_keyboard::adjust_velocity(
+                        self.computer_keyboard_velocity,
+                        midi_keyboard::VELOCITY_STEP as i16,
+                    );
+                    self.request_redraw();
+                    return true;
+                }
+                _ => {}
+            }
+        }
+
+        if self.cmd_held() {
+            return false;
+        }
+
+        if let Some(base) = midi_keyboard::piano_key_midi_before_octave(&event.physical_key) {
+            if self.midi_keyboard_held.contains_key(&code) {
+                return true;
+            }
+            let note = match midi_keyboard::with_octave_offset(base, self.computer_keyboard_octave_offset) {
+                Some(n) => n,
+                None => return true,
+            };
+            let Some(target) = self.keyboard_instrument_id else {
+                return true;
+            };
+            let can_send = self
+                .instrument_regions
+                .get(&target)
+                .map_or(false, |ir| ir.has_plugin());
+            if !can_send {
+                return true;
+            }
+            self.midi_keyboard_held.insert(code, (target, note));
+            if let Some(engine) = &self.audio_engine {
+                engine.keyboard_preview_note_on(target, note, self.computer_keyboard_velocity);
+            }
+            self.request_redraw();
+            return true;
+        }
+
+        false
+    }
+
+    #[cfg(feature = "native")]
+    fn computer_midi_keyboard_guards_ok(&self) -> bool {
+        self.command_palette.is_none()
+            && self.settings_window.is_none()
+            && self.plugin_editor.is_none()
+            && self.context_menu.is_none()
+            && self.editing_component.is_none()
+            && self.editing_midi_clip.is_none()
+            && !self.editing_bpm.is_editing()
+            && self.editing_effect_name.is_none()
+            && self.editing_waveform_name.is_none()
+            && !self
+                .right_window
+                .as_ref()
+                .map_or(false, |rw| rw.vol_entry.is_editing())
+            && !self
+                .right_window
+                .as_ref()
+                .map_or(false, |rw| rw.sample_bpm_entry.is_editing())
+            && !self
+                .right_window
+                .as_ref()
+                .map_or(false, |rw| rw.pitch_entry.is_editing())
     }
 }

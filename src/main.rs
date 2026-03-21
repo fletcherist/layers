@@ -10,6 +10,7 @@ mod grid;
 mod history;
 mod instruments;
 mod midi;
+mod midi_keyboard;
 mod network;
 mod operations;
 #[cfg(feature = "native")]
@@ -50,7 +51,7 @@ use regions::{
 };
 use ui::rendering::{build_instances, build_waveform_vertices, default_objects, RenderContext};
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::mpsc;
@@ -80,7 +81,7 @@ use ui::settings_window::{SettingsWindow, CATEGORIES};
 use storage::{default_base_path, ProjectState, Storage};
 use winit::{
     event_loop::EventLoop,
-    keyboard::ModifiersState,
+    keyboard::{KeyCode, ModifiersState},
     window::CursorIcon,
 };
 
@@ -569,6 +570,12 @@ struct App {
     last_rendered_camera_zoom: f32,
     last_rendered_hovered: Option<HitTarget>,
     last_rendered_selected_len: usize,
+    /// Computer keyboard → instrument preview (native audio only).
+    pub(crate) computer_keyboard_armed: bool,
+    pub(crate) computer_keyboard_octave_offset: i8,
+    pub(crate) computer_keyboard_velocity: u8,
+    pub(crate) keyboard_instrument_id: Option<EntityId>,
+    pub(crate) midi_keyboard_held: HashMap<KeyCode, (EntityId, u8)>,
 }
 
 impl App {
@@ -689,6 +696,11 @@ impl App {
             last_rendered_camera_zoom: f32::NAN,
             last_rendered_hovered: None,
             last_rendered_selected_len: 0,
+            computer_keyboard_armed: false,
+            computer_keyboard_octave_offset: 0,
+            computer_keyboard_velocity: midi_keyboard::DEFAULT_VELOCITY,
+            keyboard_instrument_id: None,
+            midi_keyboard_held: HashMap::new(),
         }
     }
 
@@ -706,6 +718,67 @@ impl App {
     fn mark_dirty(&mut self) {
         self.render_generation = self.render_generation.wrapping_add(1);
         self.project_dirty = true;
+        if self.sample_browser.visible {
+            self.refresh_project_browser_entries();
+        }
+    }
+
+    /// Refresh Project sidebar rows from `instrument_regions`.
+    pub(crate) fn refresh_project_browser_entries(&mut self) {
+        self.sample_browser.project_instruments = self
+            .instrument_regions
+            .iter()
+            .map(|(id, ir)| {
+                let label = if !ir.name.is_empty() && ir.name != "instrument" {
+                    ir.name.clone()
+                } else if !ir.plugin_name.is_empty() {
+                    ir.plugin_name.clone()
+                } else {
+                    format!("Instrument {}", id)
+                };
+                (*id, label)
+            })
+            .collect();
+        if self.sample_browser.active_category == ui::browser::BrowserCategory::Project {
+            self.sample_browser.rebuild_entries();
+        }
+    }
+
+    /// Center the camera on an instrument region and select it for computer-keyboard preview.
+    pub(crate) fn focus_instrument_region(&mut self, id: EntityId) {
+        let Some(ir) = self.instrument_regions.get(&id) else {
+            return;
+        };
+        let (sw, sh, _) = self.screen_info();
+        let cx = ir.position[0] + ir.size[0] * 0.5;
+        let cy = ir.position[1] + ir.size[1] * 0.5;
+        self.camera.position = [
+            cx - sw * 0.5 / self.camera.zoom,
+            cy - sh * 0.5 / self.camera.zoom,
+        ];
+        self.selected.clear();
+        self.selected.push(HitTarget::InstrumentRegion(id));
+        self.keyboard_instrument_id = Some(id);
+        self.update_right_window();
+        #[cfg(feature = "native")]
+        self.sync_computer_keyboard_to_engine();
+        self.mark_dirty();
+    }
+
+    #[cfg(feature = "native")]
+    pub(crate) fn release_computer_keyboard_notes(&mut self) {
+        if let Some(engine) = &self.audio_engine {
+            for (_, (target, note)) in self.midi_keyboard_held.drain() {
+                engine.keyboard_preview_note_off(target, note);
+            }
+        } else {
+            self.midi_keyboard_held.clear();
+        }
+    }
+
+    #[cfg(not(feature = "native"))]
+    pub(crate) fn release_computer_keyboard_notes(&mut self) {
+        self.midi_keyboard_held.clear();
     }
 
     /// Returns the standard clip height for the current BPM.
@@ -1359,6 +1432,11 @@ impl App {
             last_rendered_camera_zoom: f32::NAN,
             last_rendered_hovered: None,
             last_rendered_selected_len: 0,
+            computer_keyboard_armed: false,
+            computer_keyboard_octave_offset: 0,
+            computer_keyboard_velocity: midi_keyboard::DEFAULT_VELOCITY,
+            keyboard_instrument_id: None,
+            midi_keyboard_held: HashMap::new(),
         }
     }
 
@@ -2909,7 +2987,7 @@ impl App {
     fn sync_instrument_regions(&self) {
         if let Some(engine) = &self.audio_engine {
             let mut instrument_regions = Vec::new();
-            for ir in self.instrument_regions.values() {
+            for (&id, ir) in self.instrument_regions.iter() {
                 if !ir.has_plugin() {
                     continue;
                 }
@@ -2940,6 +3018,7 @@ impl App {
                 }
                 midi_events.sort_by(|a, b| a.time_secs.partial_cmp(&b.time_secs).unwrap());
                 instrument_regions.push(audio::AudioInstrumentRegion {
+                    id,
                     x_start_px: ir.position[0],
                     x_end_px: ir.position[0] + ir.size[0],
                     y_start: ir.position[1],
@@ -2949,6 +3028,48 @@ impl App {
                 });
             }
             engine.update_instrument_regions(instrument_regions);
+        }
+        self.sync_computer_keyboard_to_engine();
+    }
+
+    #[cfg(feature = "native")]
+    pub(crate) fn sync_keyboard_instrument_from_selection(&mut self) {
+        let irs: Vec<EntityId> = self
+            .selected
+            .iter()
+            .filter_map(|t| match t {
+                HitTarget::InstrumentRegion(id) => Some(*id),
+                _ => None,
+            })
+            .collect();
+        self.keyboard_instrument_id = if irs.len() == 1 && self.instrument_regions.contains_key(&irs[0]) {
+            Some(irs[0])
+        } else {
+            None
+        };
+    }
+
+    #[cfg(feature = "native")]
+    pub(crate) fn sync_computer_keyboard_to_engine(&self) {
+        let Some(engine) = &self.audio_engine else {
+            return;
+        };
+        if !self.computer_keyboard_armed {
+            engine.set_keyboard_preview_target(None);
+            return;
+        }
+        let Some(id) = self.keyboard_instrument_id else {
+            engine.set_keyboard_preview_target(None);
+            return;
+        };
+        if self
+            .instrument_regions
+            .get(&id)
+            .map_or(false, |ir| ir.has_plugin())
+        {
+            engine.set_keyboard_preview_target(Some(id));
+        } else {
+            engine.set_keyboard_preview_target(None);
         }
     }
 
@@ -4143,6 +4264,7 @@ impl App {
                 self.sample_browser.visible = !self.sample_browser.visible;
                 #[cfg(feature = "native")]
                 if self.sample_browser.visible {
+                    self.refresh_project_browser_entries();
                     self.ensure_plugins_scanned();
                 }
             }
@@ -5287,6 +5409,24 @@ impl App {
         let mc_ids: Vec<EntityId> = self.selected.iter().filter_map(|t| match t { HitTarget::MidiClip(i) => Some(*i), _ => None }).collect();
         let ir_ids: Vec<EntityId> = self.selected.iter().filter_map(|t| match t { HitTarget::InstrumentRegion(i) => Some(*i), _ => None }).collect();
 
+        #[cfg(feature = "native")]
+        if !ir_ids.is_empty() {
+            let removed_ids: HashSet<_> = ir_ids.iter().copied().collect();
+            if let Some(engine) = &self.audio_engine {
+                self.midi_keyboard_held.retain(|_, (target, note)| {
+                    if removed_ids.contains(target) {
+                        engine.keyboard_preview_note_off(*target, *note);
+                        false
+                    } else {
+                        true
+                    }
+                });
+            } else {
+                self.midi_keyboard_held
+                    .retain(|_, (target, _)| !removed_ids.contains(target));
+            }
+        }
+
         // Capture before removing
         for &id in &inst_ids {
             if let Some(d) = self.component_instances.get(&id) { del_ops.push(operations::Operation::DeleteComponentInstance { id, data: d.clone() }); }
@@ -5325,6 +5465,8 @@ impl App {
         self.selected.clear();
         #[cfg(feature = "native")]
         {
+            self.sync_keyboard_instrument_from_selection();
+            self.sync_computer_keyboard_to_engine();
             self.sync_audio_clips();
             self.sync_loop_region();
         }

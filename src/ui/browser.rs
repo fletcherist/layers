@@ -2,6 +2,7 @@ use std::collections::HashSet;
 use std::path::PathBuf;
 
 use crate::InstanceRaw;
+use crate::entity_id::EntityId;
 
 const DEFAULT_BROWSER_WIDTH: f32 = 480.0;
 const MIN_BROWSER_WIDTH: f32 = 240.0;
@@ -24,12 +25,14 @@ use crate::theme::{
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum BrowserCategory {
+    Project,
     Samples,
     Instruments,
     Effects,
 }
 
 pub const SIDEBAR_CATEGORIES: &[BrowserCategory] = &[
+    BrowserCategory::Project,
     BrowserCategory::Samples,
     BrowserCategory::Instruments,
     BrowserCategory::Effects,
@@ -38,6 +41,7 @@ pub const SIDEBAR_CATEGORIES: &[BrowserCategory] = &[
 impl BrowserCategory {
     pub fn label(self) -> &'static str {
         match self {
+            BrowserCategory::Project => "Project",
             BrowserCategory::Samples => "Samples",
             BrowserCategory::Instruments => "Instruments",
             BrowserCategory::Effects => "Effects",
@@ -51,6 +55,7 @@ pub enum EntryKind {
     File,
     PluginHeader,
     Plugin { unique_id: String, is_instrument: bool },
+    ProjectInstrument { id: EntityId },
 }
 
 #[derive(Clone)]
@@ -99,6 +104,8 @@ pub struct SampleBrowser {
     pub instruments_expanded: bool,
     pub active_category: BrowserCategory,
     pub hovered_sidebar: Option<usize>,
+    /// Canvas instrument regions for the Project tab (id, label).
+    pub project_instruments: Vec<(EntityId, String)>,
 }
 
 impl SampleBrowser {
@@ -127,6 +134,7 @@ impl SampleBrowser {
             instruments_expanded: true,
             active_category: BrowserCategory::Samples,
             hovered_sidebar: None,
+            project_instruments: Vec::new(),
         }
     }
 
@@ -211,6 +219,16 @@ impl SampleBrowser {
     pub fn rebuild_entries(&mut self) {
         self.entries.clear();
         match self.active_category {
+            BrowserCategory::Project => {
+                for (id, name) in &self.project_instruments {
+                    self.entries.push(BrowserEntry {
+                        path: PathBuf::new(),
+                        name: name.clone(),
+                        kind: EntryKind::ProjectInstrument { id: *id },
+                        depth: 0,
+                    });
+                }
+            }
             BrowserCategory::Samples => {
                 for root in &self.root_folders {
                     walk_dir(&mut self.entries, &self.expanded, root, 0);
@@ -626,6 +644,31 @@ impl SampleBrowser {
                         border_radius: dot_sz * 0.5,
                     });
                 }
+                EntryKind::ProjectInstrument { .. } => {
+                    out.push(InstanceRaw {
+                        position: [cx, y],
+                        size: [content_w, item_h],
+                        color: settings.theme.bg_plugin,
+                        border_radius: 0.0,
+                    });
+                    if self.hovered_entry == Some(i) {
+                        out.push(InstanceRaw {
+                            position: [cx, y],
+                            size: [content_w, item_h],
+                            color: HOVER_COLOR,
+                            border_radius: 0.0,
+                        });
+                    }
+                    let dot_sz = 5.0 * scale;
+                    let dot_x = cx + 12.0 * scale;
+                    let dot_y = y + (item_h - dot_sz) * 0.5;
+                    out.push(InstanceRaw {
+                        position: [dot_x, dot_y],
+                        size: [dot_sz, dot_sz],
+                        color: settings.theme.pill_instrument,
+                        border_radius: dot_sz * 0.5,
+                    });
+                }
                 EntryKind::Dir | EntryKind::File => {
                     // Hover
                     if self.hovered_entry == Some(i) {
@@ -814,6 +857,23 @@ impl SampleBrowser {
                         line_height: line_h,
                         max_width: w - text_x - 12.0 * scale,
                         color,
+                        weight: 400,
+                        bounds: None,
+                        center: false,
+                    });
+                }
+                EntryKind::ProjectInstrument { .. } => {
+                    let text_x = cx + 22.0 * scale;
+                    let font_sz = 12.0 * scale;
+                    let line_h = 16.0 * scale;
+                    out.push(TextEntry {
+                        text: entry.name.clone(),
+                        x: text_x,
+                        y: base_y + (item_h - line_h) * 0.5,
+                        font_size: font_sz,
+                        line_height: line_h,
+                        max_width: w - text_x - 12.0 * scale,
+                        color: [185, 180, 210, 255],
                         weight: 400,
                         bounds: None,
                         center: false,

@@ -3,6 +3,7 @@ use crate::grid;
 use crate::instruments;
 use crate::midi;
 use crate::settings::{GridMode, Settings};
+use crate::ui::palette::CommandAction;
 use crate::App;
 use crate::DragState;
 use crate::HitTarget;
@@ -339,4 +340,50 @@ fn test_undo_redo_instrument_region() {
 
     app.redo_op();
     assert_eq!(app.instrument_regions.len(), 1);
+}
+
+#[cfg(feature = "native")]
+#[test]
+fn test_computer_keyboard_state_and_project_browser() {
+    use crate::midi_keyboard;
+    use crate::ui::browser::BrowserCategory;
+
+    let mut app = App::new_headless();
+    app.add_instrument_area();
+    let ir_id = first_selected_ir(&app).unwrap();
+
+    app.sync_keyboard_instrument_from_selection();
+    assert_eq!(app.keyboard_instrument_id, Some(ir_id));
+
+    app.selected.clear();
+    app.sync_keyboard_instrument_from_selection();
+    assert_eq!(app.keyboard_instrument_id, None);
+
+    app.computer_keyboard_armed = true;
+    app.computer_keyboard_velocity = 72;
+    assert_eq!(midi_keyboard::adjust_velocity(100, -8), 92);
+
+    assert!(midi_keyboard::with_octave_offset(120, 1).is_none());
+    assert_eq!(midi_keyboard::with_octave_offset(60, 3), Some(96));
+
+    app.sample_browser.active_category = BrowserCategory::Project;
+    app.execute_command(CommandAction::ToggleBrowser);
+    assert_eq!(app.sample_browser.entries.len(), 1);
+
+    app.focus_instrument_region(ir_id);
+    assert!(app
+        .selected
+        .iter()
+        .any(|t| matches!(t, HitTarget::InstrumentRegion(id) if *id == ir_id)));
+
+    app.selected.clear();
+    app.sync_keyboard_instrument_from_selection();
+    app.sync_computer_keyboard_to_engine();
+    assert_eq!(app.keyboard_instrument_id, None);
+
+    app.add_instrument_area();
+    app.execute_command(CommandAction::ToggleBrowser);
+    app.execute_command(CommandAction::ToggleBrowser);
+    assert_eq!(app.sample_browser.active_category, BrowserCategory::Project);
+    assert_eq!(app.sample_browser.entries.len(), 2);
 }

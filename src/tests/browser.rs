@@ -145,16 +145,17 @@ fn test_hit_sidebar_returns_correct_category() {
     let scale = 1.0;
     let header_h = crate::ui::browser::HEADER_HEIGHT;
 
-    // Click first sidebar item (below header + section gap)
-    let pos_samples = [50.0, header_h + 20.0];
+    // Click sidebar items (below header + section gap)
+    let pos_project = [50.0, header_h + 20.0];
+    assert_eq!(browser.hit_sidebar(pos_project, scale), Some(BrowserCategory::Project));
+
+    let pos_samples = [50.0, header_h + 20.0 + 26.0];
     assert_eq!(browser.hit_sidebar(pos_samples, scale), Some(BrowserCategory::Samples));
 
-    // Click second sidebar item
-    let pos_instruments = [50.0, header_h + 20.0 + 26.0];
+    let pos_instruments = [50.0, header_h + 20.0 + 52.0];
     assert_eq!(browser.hit_sidebar(pos_instruments, scale), Some(BrowserCategory::Instruments));
 
-    // Click third sidebar item
-    let pos_effects = [50.0, header_h + 20.0 + 52.0];
+    let pos_effects = [50.0, header_h + 20.0 + 78.0];
     assert_eq!(browser.hit_sidebar(pos_effects, scale), Some(BrowserCategory::Effects));
 
     // Click in header — None

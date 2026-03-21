@@ -7,7 +7,7 @@ use crate::theme::{RECORD_ACTIVE, RECORD_DIM};
 // Transport Panel (bottom-center playback status)
 // ---------------------------------------------------------------------------
 
-pub(crate) const TRANSPORT_WIDTH: f32 = 240.0;
+pub(crate) const TRANSPORT_WIDTH: f32 = 280.0;
 const TRANSPORT_HEIGHT: f32 = 36.0;
 const TRANSPORT_BOTTOM_MARGIN: f32 = 32.0;
 
@@ -38,6 +38,7 @@ impl TransportPanel {
         is_playing: bool,
         is_recording: bool,
         metronome_enabled: bool,
+        computer_keyboard_armed: bool,
     ) -> Vec<InstanceRaw> {
         let mut out = Vec::new();
         let (pos, size) = Self::panel_rect(screen_w, screen_h, scale);
@@ -67,7 +68,26 @@ impl TransportPanel {
             border_radius: met_d * 0.5,
         });
 
-        let icon_x = pos[0] + 28.0 * scale;
+        // Computer keyboard (mini piano keys)
+        let kb_btn = 20.0 * scale;
+        let kb_x = pos[0] + 26.0 * scale;
+        let kb_y = icon_cy - kb_btn * 0.5;
+        let kb_on = computer_keyboard_armed;
+        let kb_alpha = if kb_on { 0.95 } else { 0.35 };
+        let key_w = 4.5 * scale;
+        let key_h = kb_btn * 0.72;
+        let key_gap = 1.0 * scale;
+        for k in 0..3usize {
+            let kx = kb_x + 3.0 * scale + (key_w + key_gap) * k as f32;
+            out.push(InstanceRaw {
+                position: [kx, kb_y + kb_btn * 0.14],
+                size: [key_w, key_h],
+                color: [1.0, 1.0, 1.0, kb_alpha],
+                border_radius: 0.8 * scale,
+            });
+        }
+
+        let icon_x = pos[0] + 52.0 * scale;
 
         if is_playing {
             let bar_w = 3.0 * scale;
@@ -146,10 +166,32 @@ impl TransportPanel {
         point_in_rect(pos, rp, rs)
     }
 
+    pub(crate) fn computer_keyboard_button_rect(
+        screen_w: f32,
+        screen_h: f32,
+        scale: f32,
+    ) -> ([f32; 2], [f32; 2]) {
+        let (pos, size) = Self::panel_rect(screen_w, screen_h, scale);
+        let btn_size = 20.0 * scale;
+        let btn_x = pos[0] + 26.0 * scale;
+        let btn_y = pos[1] + (size[1] - btn_size) * 0.5;
+        ([btn_x, btn_y], [btn_size, btn_size])
+    }
+
+    pub(crate) fn hit_computer_keyboard_button(
+        pos: [f32; 2],
+        screen_w: f32,
+        screen_h: f32,
+        scale: f32,
+    ) -> bool {
+        let (rp, rs) = Self::computer_keyboard_button_rect(screen_w, screen_h, scale);
+        point_in_rect(pos, rp, rs)
+    }
+
     pub(crate) fn play_pause_rect(screen_w: f32, screen_h: f32, scale: f32) -> ([f32; 2], [f32; 2]) {
         let (pos, size) = Self::panel_rect(screen_w, screen_h, scale);
         let btn_size = 24.0 * scale;
-        let btn_x = pos[0] + 24.0 * scale;
+        let btn_x = pos[0] + 50.0 * scale;
         let btn_y = pos[1] + (size[1] - btn_size) * 0.5;
         ([btn_x, btn_y], [btn_size, btn_size])
     }
@@ -199,7 +241,7 @@ impl TransportPanel {
         let time_str = crate::format_playback_time(playback_position);
         out.push(TextEntry {
             text: time_str,
-            x: tp_pos[0] + 50.0 * scale,
+            x: tp_pos[0] + 74.0 * scale,
             y: tp_pos[1] + (tp_size[1] - tline) * 0.5,
             font_size: tfont,
             line_height: tline,

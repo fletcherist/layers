@@ -822,6 +822,14 @@ impl App {
                 let text = if self.settings.metronome_enabled { "Metronome (On)" } else { "Metronome" };
                 let rect = TransportPanel::metronome_button_rect(sw, sh, scale);
                 self.tooltip.set_target("transport:metronome", text, rect);
+            } else if TransportPanel::hit_computer_keyboard_button(self.mouse_pos, sw, sh, scale) {
+                let text = if self.computer_keyboard_armed {
+                    "Computer MIDI keyboard (on) \u{2014} A row plays, Z/X octaves, C/V velocity"
+                } else {
+                    "Computer MIDI keyboard (off) \u{2014} click to preview the selected instrument"
+                };
+                let rect = TransportPanel::computer_keyboard_button_rect(sw, sh, scale);
+                self.tooltip.set_target("transport:computer_keys", text, rect);
             } else if TransportPanel::hit_play_pause(self.mouse_pos, sw, sh, scale) {
                 #[cfg(feature = "native")]
                 let is_playing = self.audio_engine.as_ref().map_or(false, |e| e.is_playing());
