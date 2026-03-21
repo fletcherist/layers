@@ -1,5 +1,6 @@
 use crate::App;
 use crate::settings::Settings;
+use crate::ui::browser::{BrowserCategory, SampleBrowser, PluginEntry, EntryKind};
 use std::path::PathBuf;
 use std::collections::HashSet;
 
@@ -97,4 +98,70 @@ fn test_browser_merge_global_and_project_folders() {
         }
     }
     assert_eq!(merged2.len(), 1);
+}
+
+#[test]
+fn test_category_switching_rebuilds_entries() {
+    let mut browser = SampleBrowser::new();
+    let effects = vec![PluginEntry {
+        unique_id: "fx1".into(),
+        name: "TestFX".into(),
+        manufacturer: "Test".into(),
+        is_instrument: false,
+    }];
+    let instruments = vec![PluginEntry {
+        unique_id: "inst1".into(),
+        name: "TestSynth".into(),
+        manufacturer: "Test".into(),
+        is_instrument: true,
+    }];
+    browser.set_plugins(effects, instruments);
+
+    // Default category is Samples — no entries (no folders added)
+    assert_eq!(browser.active_category, BrowserCategory::Samples);
+    assert!(browser.entries.is_empty());
+
+    // Switch to Instruments
+    browser.active_category = BrowserCategory::Instruments;
+    browser.rebuild_entries();
+    assert_eq!(browser.entries.len(), 1);
+    assert!(matches!(browser.entries[0].kind, EntryKind::Plugin { ref unique_id, is_instrument: true } if unique_id == "inst1"));
+
+    // Switch to Effects
+    browser.active_category = BrowserCategory::Effects;
+    browser.rebuild_entries();
+    assert_eq!(browser.entries.len(), 1);
+    assert!(matches!(browser.entries[0].kind, EntryKind::Plugin { ref unique_id, is_instrument: false } if unique_id == "fx1"));
+
+    // Switch back to Samples — empty again
+    browser.active_category = BrowserCategory::Samples;
+    browser.rebuild_entries();
+    assert!(browser.entries.is_empty());
+}
+
+#[test]
+fn test_hit_sidebar_returns_correct_category() {
+    let browser = SampleBrowser::new();
+    let scale = 1.0;
+    let header_h = crate::ui::browser::HEADER_HEIGHT;
+
+    // Click first sidebar item (below header + section gap)
+    let pos_samples = [50.0, header_h + 20.0];
+    assert_eq!(browser.hit_sidebar(pos_samples, scale), Some(BrowserCategory::Samples));
+
+    // Click second sidebar item
+    let pos_instruments = [50.0, header_h + 20.0 + 26.0];
+    assert_eq!(browser.hit_sidebar(pos_instruments, scale), Some(BrowserCategory::Instruments));
+
+    // Click third sidebar item
+    let pos_effects = [50.0, header_h + 20.0 + 52.0];
+    assert_eq!(browser.hit_sidebar(pos_effects, scale), Some(BrowserCategory::Effects));
+
+    // Click in header — None
+    let pos_header = [50.0, 5.0];
+    assert_eq!(browser.hit_sidebar(pos_header, scale), None);
+
+    // Click in content area (x > sidebar width) — None
+    let pos_content = [120.0, header_h + 20.0];
+    assert_eq!(browser.hit_sidebar(pos_content, scale), None);
 }

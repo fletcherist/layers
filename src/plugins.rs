@@ -28,7 +28,7 @@ impl App {
         }
         self.plugin_registry.ensure_scanned();
 
-        let entries: Vec<ui::browser::PluginEntry> = self
+        let effects: Vec<ui::browser::PluginEntry> = self
             .plugin_registry
             .plugins
             .iter()
@@ -36,9 +36,21 @@ impl App {
                 unique_id: e.info.unique_id.clone(),
                 name: e.info.name.clone(),
                 manufacturer: e.info.manufacturer.clone(),
+                is_instrument: false,
             })
             .collect();
-        self.sample_browser.set_plugins(entries);
+        let instruments: Vec<ui::browser::PluginEntry> = self
+            .plugin_registry
+            .instruments
+            .iter()
+            .map(|e| ui::browser::PluginEntry {
+                unique_id: e.info.unique_id.clone(),
+                name: e.info.name.clone(),
+                manufacturer: e.info.manufacturer.clone(),
+                is_instrument: true,
+            })
+            .collect();
+        self.sample_browser.set_plugins(effects, instruments);
 
         // Reload any saved plugin blocks that were waiting for the scanner.
         #[cfg(target_os = "macos")]

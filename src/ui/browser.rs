@@ -3,12 +3,15 @@ use std::path::PathBuf;
 
 use crate::InstanceRaw;
 
-const DEFAULT_BROWSER_WIDTH: f32 = 260.0;
-const MIN_BROWSER_WIDTH: f32 = 150.0;
-const MAX_BROWSER_WIDTH: f32 = 600.0;
+const DEFAULT_BROWSER_WIDTH: f32 = 480.0;
+const MIN_BROWSER_WIDTH: f32 = 240.0;
+const MAX_BROWSER_WIDTH: f32 = 700.0;
 const RESIZE_HANDLE_PX: f32 = 5.0;
 pub const ITEM_HEIGHT: f32 = 24.0;
 pub const HEADER_HEIGHT: f32 = 36.0;
+const SIDEBAR_WIDTH: f32 = 110.0;
+const SIDEBAR_ITEM_HEIGHT: f32 = 26.0;
+const SIDEBAR_SECTION_GAP: f32 = 18.0;
 const INDENT_PX: f32 = 16.0;
 const SCROLLBAR_WIDTH: f32 = 6.0;
 const ADD_BUTTON_SIZE: f32 = 20.0;
@@ -19,12 +22,35 @@ use crate::theme::{
     CHEVRON as CHEVRON_COLOR, ADD_BTN_NORMAL as ADD_BTN_COLOR, ADD_BTN_HOVER,
 };
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum BrowserCategory {
+    Samples,
+    Instruments,
+    Effects,
+}
+
+pub const SIDEBAR_CATEGORIES: &[BrowserCategory] = &[
+    BrowserCategory::Samples,
+    BrowserCategory::Instruments,
+    BrowserCategory::Effects,
+];
+
+impl BrowserCategory {
+    pub fn label(self) -> &'static str {
+        match self {
+            BrowserCategory::Samples => "Samples",
+            BrowserCategory::Instruments => "Instruments",
+            BrowserCategory::Effects => "Effects",
+        }
+    }
+}
+
 #[derive(Clone)]
 pub enum EntryKind {
     Dir,
     File,
     PluginHeader,
-    Plugin { unique_id: String },
+    Plugin { unique_id: String, is_instrument: bool },
 }
 
 #[derive(Clone)]
@@ -46,6 +72,7 @@ pub struct PluginEntry {
     pub unique_id: String,
     pub name: String,
     pub manufacturer: String,
+    pub is_instrument: bool,
 }
 
 pub struct SampleBrowser {
@@ -67,7 +94,11 @@ pub struct SampleBrowser {
     last_scroll_screen_h: f32,
     last_scroll_scale: f32,
     pub plugins: Vec<PluginEntry>,
+    pub instruments: Vec<PluginEntry>,
     pub plugins_expanded: bool,
+    pub instruments_expanded: bool,
+    pub active_category: BrowserCategory,
+    pub hovered_sidebar: Option<usize>,
 }
 
 impl SampleBrowser {
@@ -91,7 +122,11 @@ impl SampleBrowser {
             last_scroll_screen_h: 0.0,
             last_scroll_scale: 0.0,
             plugins: Vec::new(),
+            instruments: Vec::new(),
             plugins_expanded: true,
+            instruments_expanded: true,
+            active_category: BrowserCategory::Samples,
+            hovered_sidebar: None,
         }
     }
 
@@ -151,7 +186,11 @@ impl SampleBrowser {
                     self.rebuild_entries();
                 }
                 EntryKind::PluginHeader => {
-                    self.plugins_expanded = !self.plugins_expanded;
+                    if entry.name == "INSTRUMENTS" {
+                        self.instruments_expanded = !self.instruments_expanded;
+                    } else {
+                        self.plugins_expanded = !self.plugins_expanded;
+                    }
                     self.rebuild_entries();
                 }
                 _ => {}
@@ -163,31 +202,41 @@ impl SampleBrowser {
         self.expanded.contains(path)
     }
 
-    pub fn set_plugins(&mut self, plugins: Vec<PluginEntry>) {
-        self.plugins = plugins;
+    pub fn set_plugins(&mut self, effects: Vec<PluginEntry>, instruments: Vec<PluginEntry>) {
+        self.plugins = effects;
+        self.instruments = instruments;
         self.rebuild_entries();
     }
 
     pub fn rebuild_entries(&mut self) {
         self.entries.clear();
-        for root in &self.root_folders {
-            walk_dir(&mut self.entries, &self.expanded, root, 0);
-        }
-        // Append plugin section if we have plugins
-        if !self.plugins.is_empty() {
-            self.entries.push(BrowserEntry {
-                path: PathBuf::new(),
-                name: "VST PLUGINS".to_string(),
-                kind: EntryKind::PluginHeader,
-                depth: 0,
-            });
-            if self.plugins_expanded {
-                for i in 0..self.plugins.len() {
+        match self.active_category {
+            BrowserCategory::Samples => {
+                for root in &self.root_folders {
+                    walk_dir(&mut self.entries, &self.expanded, root, 0);
+                }
+            }
+            BrowserCategory::Instruments => {
+                for inst in &self.instruments {
                     self.entries.push(BrowserEntry {
                         path: PathBuf::new(),
-                        name: self.plugins[i].name.clone(),
+                        name: inst.name.clone(),
                         kind: EntryKind::Plugin {
-                            unique_id: self.plugins[i].unique_id.clone(),
+                            unique_id: inst.unique_id.clone(),
+                            is_instrument: true,
+                        },
+                        depth: 0,
+                    });
+                }
+            }
+            BrowserCategory::Effects => {
+                for plug in &self.plugins {
+                    self.entries.push(BrowserEntry {
+                        path: PathBuf::new(),
+                        name: plug.name.clone(),
+                        kind: EntryKind::Plugin {
+                            unique_id: plug.unique_id.clone(),
+                            is_instrument: false,
                         },
                         depth: 0,
                     });
@@ -196,6 +245,18 @@ impl SampleBrowser {
         }
         self.clamp_scroll();
         self.text_dirty = true;
+    }
+
+    fn sidebar_width(&self, scale: f32) -> f32 {
+        SIDEBAR_WIDTH * scale
+    }
+
+    fn content_x(&self, scale: f32) -> f32 {
+        self.sidebar_width(scale)
+    }
+
+    fn content_width(&self, scale: f32) -> f32 {
+        self.panel_width(scale) - self.sidebar_width(scale)
     }
 
     fn content_height(&self, scale: f32) -> f32 {
@@ -283,13 +344,19 @@ impl SampleBrowser {
     }
 
     pub fn hit_add_button(&self, pos: [f32; 2], scale: f32) -> bool {
+        if self.active_category != BrowserCategory::Samples {
+            return false;
+        }
         let (bp, bs) = self.add_button_rect(scale);
         pos[0] >= bp[0] && pos[0] <= bp[0] + bs[0] && pos[1] >= bp[1] && pos[1] <= bp[1] + bs[1]
     }
 
+    /// Returns which content-area entry the position is over, if any.
+    /// Only considers positions in the content area (right of sidebar).
     pub fn item_at(&self, pos: [f32; 2], _screen_h: f32, scale: f32) -> Option<usize> {
         let header_h = HEADER_HEIGHT * scale;
-        if pos[1] < header_h {
+        let cx = self.content_x(scale);
+        if pos[1] < header_h || pos[0] < cx {
             return None;
         }
         let y = pos[1] - header_h + self.scroll_offset;
@@ -301,10 +368,52 @@ impl SampleBrowser {
         }
     }
 
+    /// Returns which sidebar category was clicked, if any.
+    pub fn hit_sidebar(&self, pos: [f32; 2], scale: f32) -> Option<BrowserCategory> {
+        let header_h = HEADER_HEIGHT * scale;
+        let sb_w = self.sidebar_width(scale);
+        if pos[0] >= sb_w || pos[1] < header_h {
+            return None;
+        }
+        let y = pos[1] - header_h;
+        // "Library" label gap
+        let section_gap = SIDEBAR_SECTION_GAP * scale;
+        let item_h = SIDEBAR_ITEM_HEIGHT * scale;
+        let content_y = y - section_gap;
+        if content_y < 0.0 {
+            return None;
+        }
+        let idx = (content_y / item_h) as usize;
+        SIDEBAR_CATEGORIES.get(idx).copied()
+    }
+
+    /// Returns sidebar hover index (0-based into SIDEBAR_CATEGORIES).
+    pub fn sidebar_item_at(&self, pos: [f32; 2], scale: f32) -> Option<usize> {
+        let header_h = HEADER_HEIGHT * scale;
+        let sb_w = self.sidebar_width(scale);
+        if pos[0] >= sb_w || pos[1] < header_h {
+            return None;
+        }
+        let y = pos[1] - header_h;
+        let section_gap = SIDEBAR_SECTION_GAP * scale;
+        let item_h = SIDEBAR_ITEM_HEIGHT * scale;
+        let content_y = y - section_gap;
+        if content_y < 0.0 {
+            return None;
+        }
+        let idx = (content_y / item_h) as usize;
+        if idx < SIDEBAR_CATEGORIES.len() {
+            Some(idx)
+        } else {
+            None
+        }
+    }
+
     pub fn update_hover(&mut self, pos: [f32; 2], screen_h: f32, scale: f32) {
         self.resize_hovered = self.hit_resize_handle(pos, scale);
         self.add_button_hovered = self.hit_add_button(pos, scale);
-        self.hovered_entry = if self.resize_hovered {
+        self.hovered_sidebar = self.sidebar_item_at(pos, scale);
+        self.hovered_entry = if self.resize_hovered || self.hovered_sidebar.is_some() {
             None
         } else {
             self.item_at(pos, screen_h, scale)
@@ -315,8 +424,11 @@ impl SampleBrowser {
         let mut out = Vec::new();
         let w = self.panel_width(scale);
         let header_h = HEADER_HEIGHT * scale;
+        let sb_w = self.sidebar_width(scale);
+        let cx = self.content_x(scale);
         let item_h = ITEM_HEIGHT * scale;
 
+        // --- Full panel background ---
         out.push(InstanceRaw {
             position: [0.0, 0.0],
             size: [w, screen_h],
@@ -324,13 +436,13 @@ impl SampleBrowser {
             border_radius: 0.0,
         });
 
+        // --- Header ---
         out.push(InstanceRaw {
             position: [0.0, 0.0],
             size: [w, header_h],
             color: settings.theme.bg_surface,
             border_radius: 0.0,
         });
-
         // Separator under header
         out.push(InstanceRaw {
             position: [0.0, header_h - 1.0 * scale],
@@ -339,31 +451,89 @@ impl SampleBrowser {
             border_radius: 0.0,
         });
 
-        // "+" add folder button
-        let (bp, bs) = self.add_button_rect(scale);
-        let btn_color = if self.add_button_hovered {
-            ADD_BTN_HOVER
-        } else {
-            ADD_BTN_COLOR
-        };
-        // Horizontal bar of the +
-        let bar_h = 2.0 * scale;
-        let bar_w = bs[0] * 0.6;
+        // "+" add folder button — only on Samples category
+        if self.active_category == BrowserCategory::Samples {
+            let (bp, bs) = self.add_button_rect(scale);
+            let btn_color = if self.add_button_hovered {
+                ADD_BTN_HOVER
+            } else {
+                ADD_BTN_COLOR
+            };
+            let bar_h = 2.0 * scale;
+            let bar_w = bs[0] * 0.6;
+            out.push(InstanceRaw {
+                position: [bp[0] + (bs[0] - bar_w) * 0.5, bp[1] + (bs[1] - bar_h) * 0.5],
+                size: [bar_w, bar_h],
+                color: btn_color,
+                border_radius: 0.0,
+            });
+            out.push(InstanceRaw {
+                position: [bp[0] + (bs[0] - bar_h) * 0.5, bp[1] + (bs[1] - bar_w) * 0.5],
+                size: [bar_h, bar_w],
+                color: btn_color,
+                border_radius: 0.0,
+            });
+        }
+
+        // --- Sidebar background (slightly darker) ---
         out.push(InstanceRaw {
-            position: [bp[0] + (bs[0] - bar_w) * 0.5, bp[1] + (bs[1] - bar_h) * 0.5],
-            size: [bar_w, bar_h],
-            color: btn_color,
-            border_radius: 0.0,
-        });
-        // Vertical bar of the +
-        out.push(InstanceRaw {
-            position: [bp[0] + (bs[0] - bar_h) * 0.5, bp[1] + (bs[1] - bar_w) * 0.5],
-            size: [bar_h, bar_w],
-            color: btn_color,
+            position: [0.0, header_h],
+            size: [sb_w, screen_h - header_h],
+            color: [
+                settings.theme.bg_base[0] * 0.9,
+                settings.theme.bg_base[1] * 0.9,
+                settings.theme.bg_base[2] * 0.9,
+                1.0,
+            ],
             border_radius: 0.0,
         });
 
-        // Right edge separator
+        // --- Sidebar items ---
+        let sb_item_h = SIDEBAR_ITEM_HEIGHT * scale;
+        let section_gap = SIDEBAR_SECTION_GAP * scale;
+
+        for (i, cat) in SIDEBAR_CATEGORIES.iter().enumerate() {
+            let y = header_h + section_gap + i as f32 * sb_item_h;
+
+            // Active highlight
+            if *cat == self.active_category {
+                out.push(InstanceRaw {
+                    position: [0.0, y],
+                    size: [sb_w, sb_item_h],
+                    color: [
+                        settings.theme.accent[0],
+                        settings.theme.accent[1],
+                        settings.theme.accent[2],
+                        0.12,
+                    ],
+                    border_radius: 0.0,
+                });
+                // Left accent bar
+                out.push(InstanceRaw {
+                    position: [0.0, y],
+                    size: [2.5 * scale, sb_item_h],
+                    color: settings.theme.accent,
+                    border_radius: 0.0,
+                });
+            } else if self.hovered_sidebar == Some(i) {
+                out.push(InstanceRaw {
+                    position: [0.0, y],
+                    size: [sb_w, sb_item_h],
+                    color: HOVER_COLOR,
+                    border_radius: 0.0,
+                });
+            }
+        }
+
+        // --- Vertical separator between sidebar and content ---
+        out.push(InstanceRaw {
+            position: [sb_w - 1.0 * scale, header_h],
+            size: [1.0 * scale, screen_h - header_h],
+            color: [1.0, 1.0, 1.0, 0.07],
+            border_radius: 0.0,
+        });
+
+        // --- Right edge separator ---
         out.push(InstanceRaw {
             position: [w - 1.0 * scale, 0.0],
             size: [1.0 * scale, screen_h],
@@ -371,10 +541,12 @@ impl SampleBrowser {
             border_radius: 0.0,
         });
 
+        // --- Content area items ---
         let visible_h = self.visible_height(screen_h, scale);
         let first_visible = (self.scroll_offset / item_h) as usize;
         let last_visible = ((self.scroll_offset + visible_h) / item_h).ceil() as usize;
         let last_visible = last_visible.min(self.entries.len());
+        let content_w = self.content_width(scale);
 
         for i in first_visible..last_visible {
             let entry = &self.entries[i];
@@ -388,24 +560,22 @@ impl SampleBrowser {
                 EntryKind::PluginHeader => {
                     // Section separator
                     out.push(InstanceRaw {
-                        position: [0.0, y],
-                        size: [w, 1.0 * scale],
+                        position: [cx, y],
+                        size: [content_w, 1.0 * scale],
                         color: [1.0, 1.0, 1.0, 0.07],
                         border_radius: 0.0,
                     });
-
                     // Section header background
                     out.push(InstanceRaw {
-                        position: [0.0, y],
-                        size: [w, item_h],
+                        position: [cx, y],
+                        size: [content_w, item_h],
                         color: settings.theme.bg_plugin_header,
                         border_radius: 0.0,
                     });
-
-                    // FX badge
+                    // Badge
                     let badge_w = 18.0 * scale;
                     let badge_h = 12.0 * scale;
-                    let badge_x = 8.0 * scale;
+                    let badge_x = cx + 8.0 * scale;
                     let badge_y = y + (item_h - badge_h) * 0.5;
                     out.push(InstanceRaw {
                         position: [badge_x, badge_y],
@@ -413,53 +583,55 @@ impl SampleBrowser {
                         color: settings.theme.accent_muted,
                         border_radius: 2.0 * scale,
                     });
-
-                    // Hover highlight
+                    // Hover
                     if self.hovered_entry == Some(i) {
                         out.push(InstanceRaw {
-                            position: [0.0, y],
-                            size: [w, item_h],
+                            position: [cx, y],
+                            size: [content_w, item_h],
                             color: HOVER_COLOR,
                             border_radius: 0.0,
                         });
                     }
                 }
-                EntryKind::Plugin { .. } => {
-                    // Plugin section background
+                EntryKind::Plugin { is_instrument, .. } => {
+                    // Plugin row background
                     out.push(InstanceRaw {
-                        position: [0.0, y],
-                        size: [w, item_h],
+                        position: [cx, y],
+                        size: [content_w, item_h],
                         color: settings.theme.bg_plugin,
                         border_radius: 0.0,
                     });
-
-                    // Hover highlight
+                    // Hover
                     if self.hovered_entry == Some(i) {
                         out.push(InstanceRaw {
-                            position: [0.0, y],
-                            size: [w, item_h],
+                            position: [cx, y],
+                            size: [content_w, item_h],
                             color: HOVER_COLOR,
                             border_radius: 0.0,
                         });
                     }
-
                     // Category dot
                     let dot_sz = 5.0 * scale;
-                    let dot_x = 12.0 * scale;
+                    let dot_x = cx + 12.0 * scale;
                     let dot_y = y + (item_h - dot_sz) * 0.5;
+                    let dot_color = if *is_instrument {
+                        settings.theme.pill_instrument
+                    } else {
+                        settings.theme.pill_effect
+                    };
                     out.push(InstanceRaw {
                         position: [dot_x, dot_y],
                         size: [dot_sz, dot_sz],
-                        color: settings.theme.category_dot,
+                        color: dot_color,
                         border_radius: dot_sz * 0.5,
                     });
                 }
                 EntryKind::Dir | EntryKind::File => {
-                    // Hover highlight
+                    // Hover
                     if self.hovered_entry == Some(i) {
                         out.push(InstanceRaw {
-                            position: [0.0, y],
-                            size: [w, item_h],
+                            position: [cx, y],
+                            size: [content_w, item_h],
                             color: HOVER_COLOR,
                             border_radius: 0.0,
                         });
@@ -470,37 +642,35 @@ impl SampleBrowser {
                     // Chevron for directories
                     if entry.is_dir() {
                         let chev_sz = 6.0 * scale;
-                        let cx = indent + chev_sz * 0.5;
+                        let chev_x = cx + indent + chev_sz * 0.5;
                         let cy = y + item_h * 0.5;
 
                         if self.is_expanded(&entry.path) {
-                            // Down-pointing chevron (two small bars forming a V)
                             let bar_w = chev_sz * 0.7;
                             let bar_h = 1.5 * scale;
                             out.push(InstanceRaw {
-                                position: [cx - bar_w * 0.5, cy - bar_h],
+                                position: [chev_x - bar_w * 0.5, cy - bar_h],
                                 size: [bar_w, bar_h],
                                 color: CHEVRON_COLOR,
                                 border_radius: 0.0,
                             });
                             out.push(InstanceRaw {
-                                position: [cx - bar_w * 0.25, cy],
+                                position: [chev_x - bar_w * 0.25, cy],
                                 size: [bar_w * 0.5, bar_h],
                                 color: CHEVRON_COLOR,
                                 border_radius: 0.0,
                             });
                         } else {
-                            // Right-pointing chevron
                             let bar_w = 1.5 * scale;
                             let bar_h = chev_sz * 0.7;
                             out.push(InstanceRaw {
-                                position: [cx - bar_w, cy - bar_h * 0.5],
+                                position: [chev_x - bar_w, cy - bar_h * 0.5],
                                 size: [bar_w, bar_h],
                                 color: CHEVRON_COLOR,
                                 border_radius: 0.0,
                             });
                             out.push(InstanceRaw {
-                                position: [cx, cy - bar_h * 0.25],
+                                position: [chev_x, cy - bar_h * 0.25],
                                 size: [bar_w, bar_h * 0.5],
                                 color: CHEVRON_COLOR,
                                 border_radius: 0.0,
@@ -511,7 +681,7 @@ impl SampleBrowser {
             }
         }
 
-        // Scrollbar
+        // --- Scrollbar (in content area) ---
         let content_h = self.content_height(scale);
         if content_h > visible_h {
             let sb_x = w - SCROLLBAR_WIDTH * scale - 2.0 * scale;
@@ -562,11 +732,13 @@ impl SampleBrowser {
         let mut out = Vec::new();
         let w = self.panel_width(scale);
         let header_h = HEADER_HEIGHT * scale;
+        let sb_w = self.sidebar_width(scale);
+        let cx = self.content_x(scale);
         let item_h = ITEM_HEIGHT * scale;
 
-        // Header entries use bounds = Some([0,0,0,0]) as a marker (no scroll applied)
+        // --- Header title ---
         out.push(TextEntry {
-            text: "EXPLORER".to_string(),
+            text: "BROWSER".to_string(),
             x: 12.0 * scale,
             y: (header_h - 14.0 * scale) * 0.5,
             font_size: 11.0 * scale,
@@ -578,14 +750,43 @@ impl SampleBrowser {
             center: false,
         });
 
+        // --- Sidebar category labels (fixed, not scrolled) ---
+        let sb_item_h = SIDEBAR_ITEM_HEIGHT * scale;
+        let section_gap = SIDEBAR_SECTION_GAP * scale;
+        let font_sz = 12.0 * scale;
+        let line_h = 15.0 * scale;
+
+        for (i, cat) in SIDEBAR_CATEGORIES.iter().enumerate() {
+            let y = header_h + section_gap + i as f32 * sb_item_h;
+            let is_active = *cat == self.active_category;
+            let color = if is_active {
+                [230, 230, 240, 255]
+            } else {
+                [160, 160, 170, 200]
+            };
+            out.push(TextEntry {
+                text: cat.label().to_string(),
+                x: 12.0 * scale,
+                y: y + (sb_item_h - line_h) * 0.5,
+                font_size: font_sz,
+                line_height: line_h,
+                max_width: sb_w - 16.0 * scale,
+                color,
+                weight: if is_active { 600 } else { 400 },
+                bounds: Some([0.0, 0.0, 0.0, 0.0]),
+                center: false,
+            });
+        }
+
+        // --- Content area entries ---
         for (i, entry) in self.entries.iter().enumerate() {
             let base_y = header_h + i as f32 * item_h;
 
             match &entry.kind {
                 EntryKind::PluginHeader => {
                     out.push(TextEntry {
-                        text: "VST PLUGINS".to_string(),
-                        x: 30.0 * scale,
+                        text: entry.name.clone(),
+                        x: cx + 30.0 * scale,
                         y: base_y + (item_h - 12.0 * scale) * 0.5,
                         font_size: 10.0 * scale,
                         line_height: 12.0 * scale,
@@ -593,13 +794,18 @@ impl SampleBrowser {
                         color: [140, 160, 200, 200],
                         weight: 600,
                         bounds: None,
-                center: false,
+                        center: false,
                     });
                 }
-                EntryKind::Plugin { .. } => {
-                    let text_x = 22.0 * scale;
+                EntryKind::Plugin { is_instrument, .. } => {
+                    let text_x = cx + 22.0 * scale;
                     let font_sz = 12.0 * scale;
                     let line_h = 16.0 * scale;
+                    let color = if *is_instrument {
+                        [185, 180, 210, 255]
+                    } else {
+                        [170, 190, 220, 255]
+                    };
                     out.push(TextEntry {
                         text: entry.name.clone(),
                         x: text_x,
@@ -607,15 +813,15 @@ impl SampleBrowser {
                         font_size: font_sz,
                         line_height: line_h,
                         max_width: w - text_x - 12.0 * scale,
-                        color: [170, 190, 220, 255],
+                        color,
                         weight: 400,
                         bounds: None,
-                center: false,
+                        center: false,
                     });
                 }
                 EntryKind::Dir | EntryKind::File => {
                     let indent = entry.depth as f32 * INDENT_PX * scale + 8.0 * scale;
-                    let text_x = indent + 18.0 * scale;
+                    let text_x = cx + indent + 18.0 * scale;
                     let font_sz = 13.0 * scale;
                     let line_h = 18.0 * scale;
 
@@ -635,7 +841,7 @@ impl SampleBrowser {
                         color,
                         weight,
                         bounds: None,
-                center: false,
+                        center: false,
                     });
                 }
             }

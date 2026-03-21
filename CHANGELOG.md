@@ -1,3 +1,4 @@
+- 2026-03-21: feat: browser sidebar — Ableton-style category sidebar (Samples/Instruments/Effects), instrument drag creates InstrumentRegion+MidiClip (33.6k loc)
 - docs: user guide — comprehensive end-user documentation in docs/user-guide.md (33.4k loc)
 - fix: metronome now plays on negative side of the grid (33.4k loc)
 - feat: transport tooltips — general tooltip system with 300ms delay, hints for metronome/play/record/BPM (33.4k loc)

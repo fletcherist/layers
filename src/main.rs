@@ -186,6 +186,7 @@ enum DragState {
     DraggingPlugin {
         plugin_id: String,
         plugin_name: String,
+        is_instrument: bool,
     },
     ResizingBrowser,
     ResizingExportRegion {
@@ -898,10 +899,10 @@ impl App {
                     .unwrap_or_else(|| state.name.clone());
                 let folders: Vec<PathBuf> =
                     state.browser_folders.iter().map(PathBuf::from).collect();
-                let bw = if state.browser_width > 0.0 {
+                let bw = if state.browser_width >= 480.0 {
                     state.browser_width
                 } else {
-                    260.0
+                    480.0
                 };
                 let expanded: HashSet<PathBuf> =
                     state.browser_expanded.iter().map(PathBuf::from).collect();
@@ -1960,10 +1961,10 @@ impl App {
                 state.browser_expanded.iter().map(PathBuf::from).collect();
             let mut b =
                 ui::browser::SampleBrowser::from_state(folders, expanded, state.browser_visible);
-            b.width = if state.browser_width > 0.0 {
+            b.width = if state.browser_width >= 480.0 {
                 state.browser_width
             } else {
-                260.0
+                480.0
             };
             b
         } else {

@@ -752,6 +752,15 @@ impl App {
                             self.update_cursor();
                             self.request_redraw();
                             return;
+                        } else if let Some(cat) = self.sample_browser.hit_sidebar(self.mouse_pos, scale) {
+                            if cat != self.sample_browser.active_category {
+                                self.sample_browser.active_category = cat;
+                                self.sample_browser.scroll_offset = 0.0;
+                                self.sample_browser.scroll_velocity = 0.0;
+                                self.sample_browser.rebuild_entries();
+                            }
+                            self.request_redraw();
+                            return;
                         } else if self.sample_browser.hit_add_button(self.mouse_pos, scale)
                         {
                             #[cfg(feature = "native")]
@@ -777,10 +786,11 @@ impl App {
                                         };
                                     }
                                 }
-                                ui::browser::EntryKind::Plugin { unique_id } => {
+                                ui::browser::EntryKind::Plugin { unique_id, is_instrument } => {
                                     self.drag = DragState::DraggingPlugin {
                                         plugin_id: unique_id.clone(),
                                         plugin_name: entry.name.clone(),
+                                        is_instrument: *is_instrument,
                                     };
                                 }
                             }
@@ -1846,6 +1856,7 @@ impl App {
                 if let DragState::DraggingPlugin {
                     ref plugin_id,
                     ref plugin_name,
+                    is_instrument,
                 } = self.drag
                 {
                     let plugin_id = plugin_id.clone();
@@ -1854,20 +1865,17 @@ impl App {
                     let in_browser = self.sample_browser.visible
                         && self.sample_browser.contains(self.mouse_pos, sh, scale);
                     if !in_browser {
-                        let world = self.camera.screen_to_world(self.mouse_pos);
-                        let _hit_er = self
-                            .effect_regions
-                            .iter()
-                            .rev()
-                            .find(|(_, er)| point_in_rect(world, er.position, er.size))
-                            .map(|(&id, _)| id);
-
-                        self.add_plugin_block(world, &plugin_id, &plugin_name);
-                        if let Some(&pb_id) = self.plugin_blocks.keys().last() {
-                            let snap = self.plugin_blocks[&pb_id].snapshot();
-                            self.push_op(crate::operations::Operation::CreatePluginBlock { id: pb_id, data: snap });
-                            self.selected.clear();
-                            self.selected.push(HitTarget::PluginBlock(pb_id));
+                        if is_instrument {
+                            self.add_instrument(&plugin_id, &plugin_name);
+                        } else {
+                            let world = self.camera.screen_to_world(self.mouse_pos);
+                            self.add_plugin_block(world, &plugin_id, &plugin_name);
+                            if let Some(&pb_id) = self.plugin_blocks.keys().last() {
+                                let snap = self.plugin_blocks[&pb_id].snapshot();
+                                self.push_op(crate::operations::Operation::CreatePluginBlock { id: pb_id, data: snap });
+                                self.selected.clear();
+                                self.selected.push(HitTarget::PluginBlock(pb_id));
+                            }
                         }
                     }
                     self.drag = DragState::None;
