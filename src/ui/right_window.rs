@@ -1047,6 +1047,16 @@ impl RightWindow {
             border_radius: 0.0,
         });
 
+        // "Add Effect" button (shown even when no chain/no slots)
+        let slot_count_now = chain.map(|c| c.slots.len()).unwrap_or(0);
+        let (abp, abs) = Self::add_effect_button_rect(slot_count_now, screen_w, screen_h, scale);
+        out.push(InstanceRaw {
+            position: abp,
+            size: abs,
+            color: [0.15, 0.15, 0.18, 0.8],
+            border_radius: 4.0 * scale,
+        });
+
         let Some(chain) = chain else { return out; };
 
         for (i, slot) in chain.slots.iter().enumerate() {
@@ -1087,16 +1097,7 @@ impl RightWindow {
                 border_radius: bs[0] * 0.5,
             });
 
-            // Delete button (small X area)
-            let (dp, ds) = Self::effect_slot_delete_rect(i, screen_w, screen_h, scale);
-            let mut dp_adj = dp;
-            if dragging_slot_idx == Some(i) { dp_adj[1] += drag_offset_y; }
-            out.push(InstanceRaw {
-                position: dp_adj,
-                size: ds,
-                color: [0.5, 0.3, 0.3, 0.5],
-                border_radius: 2.0 * scale,
-            });
+            // Delete icon is rendered via get_effect_chain_icon_entries
         }
 
         out
@@ -1177,20 +1178,7 @@ impl RightWindow {
                 center: false,
             });
 
-            // "×" delete button text
-            let (dp, ds) = Self::effect_slot_delete_rect(i, screen_w, screen_h, scale);
-            out.push(TextEntry {
-                text: "×".to_string(),
-                x: dp[0],
-                y: dp[1] + (ds[1] - val_line) * 0.5,
-                font_size: val_font,
-                line_height: val_line,
-                max_width: ds[0],
-                color: [180, 140, 140, 180],
-                weight: 400,
-                bounds: None,
-                center: false,
-            });
+            // Delete icon is rendered via get_effect_chain_icon_entries
         }
 
         out
@@ -1211,6 +1199,46 @@ impl RightWindow {
         let (dp, ds) = Self::detach_button_rect(screen_w, screen_h, scale);
         pos[0] >= dp[0] && pos[0] <= dp[0] + ds[0]
             && pos[1] >= dp[1] && pos[1] <= dp[1] + ds[1]
+    }
+
+    /// Build icon entries for the effect chain section (delete icons + add button icon).
+    pub fn get_effect_chain_icon_entries(
+        &self,
+        chain: Option<&crate::effects::EffectChain>,
+        screen_w: f32,
+        screen_h: f32,
+        scale: f32,
+    ) -> Vec<crate::gpu::IconEntry> {
+        let mut out = Vec::new();
+
+        let slot_count = chain.map(|c| c.slots.len()).unwrap_or(0);
+
+        if let Some(chain) = chain {
+            for (i, _slot) in chain.slots.iter().enumerate() {
+                let (dp, ds) = Self::effect_slot_delete_rect(i, screen_w, screen_h, scale);
+                let icon_size = ds[1]; // fill the delete rect height
+                out.push(crate::gpu::IconEntry {
+                    codepoint: crate::icons::CLOSE,
+                    x: dp[0],
+                    y: dp[1],
+                    size: icon_size,
+                    color: [200, 160, 160, 220],
+                });
+            }
+        }
+
+        // "Add Effect" button icon
+        let (bp, bs) = Self::add_effect_button_rect(slot_count, screen_w, screen_h, scale);
+        let icon_size = 14.0 * scale;
+        out.push(crate::gpu::IconEntry {
+            codepoint: crate::icons::ADD,
+            x: bp[0] + (bs[0] - icon_size) * 0.5,
+            y: bp[1] + (bs[1] - icon_size) * 0.5,
+            size: icon_size,
+            color: [160, 180, 220, 180],
+        });
+
+        out
     }
 
     /// Hit test: which effect slot index is at this screen position?
@@ -1238,5 +1266,23 @@ impl RightWindow {
         let (dp, ds) = Self::effect_slot_delete_rect(idx, screen_w, screen_h, scale);
         pos[0] >= dp[0] && pos[0] <= dp[0] + ds[0]
             && pos[1] >= dp[1] && pos[1] <= dp[1] + ds[1]
+    }
+
+    /// Rectangle for the "Add Effect" button below all effect slots.
+    pub fn add_effect_button_rect(slot_count: usize, screen_w: f32, screen_h: f32, scale: f32) -> ([f32; 2], [f32; 2]) {
+        let (pp, ps) = Self::panel_rect(screen_w, screen_h, scale);
+        let top = Self::effect_chain_top(screen_w, screen_h, scale);
+        let slots_height = 20.0 * scale
+            + slot_count as f32 * (EFFECT_SLOT_HEIGHT + EFFECT_SLOT_GAP) * scale;
+        let margin = 8.0 * scale;
+        let btn_y = top + slots_height + 4.0 * scale;
+        ([pp[0] + margin, btn_y], [ps[0] - margin * 2.0, EFFECT_ADD_BUTTON_H * scale])
+    }
+
+    /// Hit test: is pos on the "Add Effect" button?
+    pub fn hit_test_add_effect_button(&self, pos: [f32; 2], slot_count: usize, screen_w: f32, screen_h: f32, scale: f32) -> bool {
+        let (bp, bs) = Self::add_effect_button_rect(slot_count, screen_w, screen_h, scale);
+        pos[0] >= bp[0] && pos[0] <= bp[0] + bs[0]
+            && pos[1] >= bp[1] && pos[1] <= bp[1] + bs[1]
     }
 }

@@ -27,6 +27,7 @@ Layers is a spatial digital audio workstation (DAW) where you arrange audio clip
 - [Instruments & Effects](#instruments--effects)
   - [Loading VST3 Instruments](#loading-vst3-instruments)
   - [Effect Regions](#effect-regions)
+  - [Per-Sample Effect Chains](#per-sample-effect-chains)
   - [Plugin Management](#plugin-management)
 - [Automation](#automation)
   - [Volume & Pan Automation](#volume--pan-automation)
@@ -35,6 +36,7 @@ Layers is a spatial digital audio workstation (DAW) where you arrange audio clip
   - [Transport Controls](#transport-controls)
   - [Computer MIDI Keyboard](#computer-midi-keyboard)
   - [Metronome](#metronome)
+  - [Input Monitoring](#input-monitoring)
   - [Recording Audio](#recording-audio)
 - [Regions](#regions)
   - [Loop Regions](#loop-regions)
@@ -234,11 +236,21 @@ Effect regions are shown with an "FX" badge and can be renamed with `⌘R`.
 
 > **Tip:** This spatial approach means you can apply effects to specific sections of your arrangement just by positioning the region — no routing needed.
 
+### Per-Sample Effect Chains
+
+Every audio clip has its own effect chain, separate from spatial effect regions. With a clip selected, look for the **Effect Chain** section at the top of the Properties Panel:
+
+- **Add a plugin** — Drag a VST3 from the **Effects** category in the browser onto the clip, or click the **Add Plugin** button in the Properties Panel.
+- **Bypass** — Click the bypass button on a slot to temporarily disable that plugin.
+- **Delete** — Click the delete button to remove a plugin from the chain.
+- **Reorder** — Drag a plugin slot to change the processing order.
+- **Shared chains** — If multiple clips reference the same effect chain, editing one affects all. Use **Detach** to create an independent copy for just that clip.
+
 ### Plugin Management
 
-- **Open plugin GUI** — Double-click a plugin block.
+- **Open plugin GUI** — Double-click a plugin block (in an effect region or instrument region).
 - **Bypass** — Toggle bypass on a plugin to temporarily disable it.
-- **Remove** — Delete the plugin block from the canvas.
+- **Remove** — Delete the plugin block.
 - Plugin state (parameters, presets) is saved with the project.
 
 ---
@@ -279,9 +291,10 @@ The transport panel sits at the bottom center of the screen:
 |---|---|---|
 | ▶ / ❚❚ | Play / Pause | `Space` |
 | ● | Start / Stop recording | Click |
-| Metronome dot | Toggle metronome | Click |
+| Metronome icon | Toggle metronome | Click |
 | BPM display | Set tempo | Click to drag, double-click to type |
-| Piano keys icon | Computer MIDI keyboard | Click to arm / disarm |
+| Keyboard icon | Computer MIDI keyboard | Click to arm / disarm |
+| Headphones icon | Toggle input monitoring | Click |
 
 Valid BPM range: 20–999.
 
@@ -306,6 +319,12 @@ Click the metronome button in the transport panel to toggle it on (indicated by 
 - **Other beats**: Lower-pitched click (800 Hz)
 
 The metronome only sounds during playback.
+
+### Input Monitoring
+
+Click the **headphones icon** in the transport panel to enable input monitoring. When active, your microphone input is routed directly to the output so you can hear yourself in real time. If you are positioned inside an effect region, the signal is also processed through that region's plugin chain.
+
+Input monitoring works independently of recording — you can monitor without recording.
 
 ### Recording Audio
 
@@ -340,6 +359,21 @@ Render regions define a section of your arrangement to export as an audio file.
 - **Resize** — Drag edges to set what gets exported.
 
 Clicking Render opens a file dialog where you choose the output location. The rendered file is a 48 kHz, 32-bit float WAV that includes all audio processing — volume, pan, fades, warp, automation, and effects.
+
+---
+
+## Text Notes
+
+Text notes are free-form text boxes you can place anywhere on the canvas — useful for labelling sections, leaving reminders, or annotating your arrangement.
+
+- **Create** — Right-click on the canvas and choose **Add Text Note** from the context menu.
+- **Edit** — Click a text note to select it, then start typing. Notes support multi-line text; press `Enter` to add a new line.
+- **Navigate** — Use `Left`/`Right` arrow keys to move the cursor, `Up`/`Down` to jump between lines, and `Home`/`End` to jump to the beginning or end of a line.
+- **Move** — Drag the note to reposition it on the canvas.
+- **Delete** — Select the note and press `Delete` or `Backspace`.
+- **Style** — Each text note has a customizable background color, font size, and border radius, set from the context menu.
+
+Text note content and position are saved with the project.
 
 ---
 
@@ -382,7 +416,7 @@ Open the sample browser with `⌘B`. It appears as a sidebar on the left side of
 
 The sidebar has four categories:
 
-- **Layers** — A Figma-style hierarchical view of everything on your canvas: instruments with their nested MIDI clips, audio clips (waveforms), and effect regions with nested plugin blocks. Click any row to select the entity and center the canvas on it. Click the chevron (or the row itself for parent items) to expand or collapse children. Use `⌘[` / `⌘]` to reorder items up and down in the list. Layer order and expand/collapse state are saved with the project.
+- **Layers** — A Figma-style hierarchical view of everything on your canvas: instruments with their nested MIDI clips, audio clips (waveforms), effect regions with nested plugin blocks, and text notes. Click any row to select the entity and center the canvas on it. Click the chevron (or the row itself for parent items) to expand or collapse children. Use `⌘[` / `⌘]` to reorder items up and down in the list. **Double-click a row** (or press `⌘R`) to rename it inline — type a new name and press `Enter` to confirm, or `Escape` to cancel. Press `⌘Delete` while renaming to clear the text at once. **Right-click a row** to rename or delete it. Layer order and expand/collapse state are saved with the project.
 - **Samples** — Audio file browser with expandable folders.
 - **Instruments** — Available VST3 instrument plugins.
 - **Effects** — Available VST3 effect plugins.
@@ -402,6 +436,7 @@ Open Settings with `⌘,` (Cmd+Comma).
 - **Driver** — Select your audio driver / host API.
 - **Input Device** — Choose your recording input.
 - **Output Device** — Choose your playback output.
+- **Buffer Size** — Set the audio buffer (32–2048 samples). Smaller values reduce latency; larger values improve stability. Changing this restarts the audio engine.
 
 ### Grid
 
@@ -481,7 +516,8 @@ Open Settings with `⌘,` (Cmd+Comma).
 |---|---|
 | `⌘E` | Split clip at playhead |
 | `⌘L` | Add loop region to clip |
-| `⌘R` | Rename selected item |
+| `⌘R` | Rename selected clip or effect region |
+| `⌘Delete` | Clear text while in rename mode |
 | `⇧⌘A` | Add folder to sample browser |
 | `0` | Toggle clip or loop region enabled/disabled |
 | Arrow keys | Nudge selection by grid step |

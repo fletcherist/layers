@@ -936,6 +936,21 @@ impl Gpu {
                     bounds,
                 ));
             }
+            // Effect chain icon entries (delete icons)
+            let chain_for_icons = match &right_window_effect_chain {
+                Some((c, _, _)) => Some(*c),
+                None => None,
+            };
+            for ie in rw.get_effect_chain_icon_entries(chain_for_icons, w, h, scale) {
+                let buf = shape_icon_entry(&mut self.font_system, &ie);
+                text_buffers.push(buf);
+                text_meta.push((
+                    ie.x,
+                    ie.y,
+                    TextColor::rgba(ie.color[0], ie.color[1], ie.color[2], ie.color[3]),
+                    full_bounds,
+                ));
+            }
         }
 
         // Transport panel text (rendered before menus so menus appear on top)

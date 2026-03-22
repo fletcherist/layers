@@ -10,3 +10,4 @@ pub const KEYBOARD: &str = "\u{E312}";
 pub const CLOSE: &str = "\u{E5CD}";
 pub const LOCK: &str = "\u{E897}";
 pub const SEARCH: &str = "\u{E8B6}";
+pub const ADD: &str = "\u{E145}";

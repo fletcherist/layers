@@ -751,6 +751,15 @@ impl App {
                                 self.request_redraw();
                                 return;
                             }
+
+                            // "Add Effect" button — switch browser to Effects tab
+                            if rw.hit_test_add_effect_button(self.mouse_pos, slot_count, sw, sh, scale) {
+                                self.sample_browser.active_category = ui::browser::BrowserCategory::Effects;
+                                self.sample_browser.rebuild_entries();
+                                self.sample_browser.visible = true;
+                                self.request_redraw();
+                                return;
+                            }
                         }
 
                         // Click inside panel but not on knob - don't propagate
