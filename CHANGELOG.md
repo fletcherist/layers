@@ -1,3 +1,4 @@
+- 2026-03-22: feat: adaptive text colors via text_primary/secondary/dim in RuntimeTheme + Light theme preset (38.4k loc)
 - 2026-03-22: fix: browser text clips+dims behind command palette, reusing settings window overlay technique (38.3k loc)
 - 2026-03-22: feat: move browser search bar to second row below header, freeing header for logo/project name (38.3k loc)
 - 2026-03-22: fix: dim browser text alpha behind settings window backdrop overlay (38.3k loc)

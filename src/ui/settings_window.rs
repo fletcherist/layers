@@ -24,7 +24,7 @@ const DROPDOWN_HEIGHT: f32 = 28.0;
 const DROPDOWN_RIGHT_PAD: f32 = 24.0;
 const DROPDOWN_ITEM_HEIGHT: f32 = 26.0;
 const AUDIO_DROPDOWN_COUNT: usize = 3;
-const THEME_PRESETS: &[&str] = &["Default", "Ableton"];
+const THEME_PRESETS: &[&str] = &["Default", "Ableton", "Light"];
 
 #[derive(Clone, Copy, PartialEq)]
 pub enum SettingsCategory {
@@ -786,14 +786,14 @@ impl SettingsWindow {
                 if idx < THEME_PRESETS.len() {
                     let chosen = THEME_PRESETS[idx];
                     settings.theme_preset = chosen.to_string();
-                    settings.theme = if chosen == "Ableton" {
-                        crate::theme::RuntimeTheme::from_preset_ableton()
-                    } else {
-                        crate::theme::RuntimeTheme::from_hue_with_settings(
+                    settings.theme = match chosen {
+                        "Ableton" => crate::theme::RuntimeTheme::from_preset_ableton(),
+                        "Light"   => crate::theme::RuntimeTheme::from_preset_light(settings.primary_hue),
+                        _         => crate::theme::RuntimeTheme::from_hue_with_settings(
                             settings.primary_hue,
                             settings.color_intensity,
                             settings.brightness,
-                        )
+                        ),
                     };
                     self.open_dropdown = None;
                     return true;
@@ -1246,7 +1246,7 @@ impl SettingsWindow {
             y: wp[1] - title_line - 6.0 * scale,
             font_size: title_font,
             line_height: title_line,
-            color: [210, 210, 218, 255],
+            color: crate::theme::RuntimeTheme::text_u8(settings.theme.text_primary, 255),
             weight: 600,
                 max_width: 300.0 * scale,
                 bounds: None,
@@ -1262,9 +1262,9 @@ impl SettingsWindow {
             let y = top + i as f32 * item_h + (item_h - cat_line) * 0.5;
             let is_active = *cat == self.active_category;
             let color = if is_active {
-                [240, 240, 245, 255]
+                crate::theme::RuntimeTheme::text_u8(settings.theme.text_primary, 255)
             } else {
-                [170, 170, 180, 255]
+                crate::theme::RuntimeTheme::text_u8(settings.theme.text_secondary, 255)
             };
             out.push(TextEntry {
                 text: cat.label().to_string(),
@@ -1292,7 +1292,7 @@ impl SettingsWindow {
                     y: wp[1] + (SECTION_HEADER_HEIGHT * scale - section_line) * 0.5,
                     font_size: section_font,
                     line_height: section_line,
-                    color: [140, 140, 150, 200],
+                    color: crate::theme::RuntimeTheme::text_u8(settings.theme.text_dim, 200),
                     weight: 600,
                 max_width: 300.0 * scale,
                 bounds: None,
@@ -1315,7 +1315,7 @@ impl SettingsWindow {
                     y: theme_row_y + (ROW_HEIGHT * scale - label_line) * 0.5,
                     font_size: label_font,
                     line_height: label_line,
-                    color: [210, 210, 218, 255],
+                    color: crate::theme::RuntimeTheme::text_u8(settings.theme.text_primary, 255),
                     weight: 400,
                 max_width: 300.0 * scale,
                 bounds: None,
@@ -1328,7 +1328,7 @@ impl SettingsWindow {
                     y: dp[1] + (ds[1] - dd_line) * 0.5,
                     font_size: dd_font,
                     line_height: dd_line,
-                    color: [210, 210, 218, 255],
+                    color: crate::theme::RuntimeTheme::text_u8(settings.theme.text_primary, 255),
                     weight: 400,
                 max_width: 300.0 * scale,
                 bounds: None,
@@ -1348,7 +1348,7 @@ impl SettingsWindow {
                             y: iy + (item_h - dd_line) * 0.5,
                             font_size: dd_font,
                             line_height: dd_line,
-                            color: if is_selected { [240, 240, 255, 255] } else { [200, 200, 210, 255] },
+                            color: if is_selected { crate::theme::RuntimeTheme::text_u8(settings.theme.text_primary, 255) } else { crate::theme::RuntimeTheme::text_u8(settings.theme.text_secondary, 255) },
                             weight: if is_selected { 600 } else { 400 },
                             max_width: 300.0 * scale,
                             bounds: None,
@@ -1370,7 +1370,7 @@ impl SettingsWindow {
                             y: row_y + (ROW_HEIGHT * scale - label_line) * 0.5,
                             font_size: label_font,
                             line_height: label_line,
-                            color: [210, 210, 218, 255],
+                            color: crate::theme::RuntimeTheme::text_u8(settings.theme.text_primary, 255),
                             weight: 400,
                 max_width: 300.0 * scale,
                 bounds: None,
@@ -1389,7 +1389,7 @@ impl SettingsWindow {
                             y: row_y + (ROW_HEIGHT * scale - value_line) * 0.5,
                             font_size: value_font,
                             line_height: value_line,
-                            color: [170, 170, 180, 255],
+                            color: crate::theme::RuntimeTheme::text_u8(settings.theme.text_secondary, 255),
                             weight: 400,
                 max_width: 300.0 * scale,
                 bounds: None,
@@ -1405,7 +1405,7 @@ impl SettingsWindow {
                     y: wp[1] + (SECTION_HEADER_HEIGHT * scale - section_line) * 0.5,
                     font_size: section_font,
                     line_height: section_line,
-                    color: [140, 140, 150, 200],
+                    color: crate::theme::RuntimeTheme::text_u8(settings.theme.text_dim, 200),
                     weight: 600,
                 max_width: 300.0 * scale,
                 bounds: None,
@@ -1428,7 +1428,7 @@ impl SettingsWindow {
                         y: row_y + (ROW_HEIGHT * scale - label_line) * 0.5,
                         font_size: label_font,
                         line_height: label_line,
-                        color: [210, 210, 218, 255],
+                        color: crate::theme::RuntimeTheme::text_u8(settings.theme.text_primary, 255),
                         weight: 400,
                 max_width: 300.0 * scale,
                 bounds: None,
@@ -1443,7 +1443,7 @@ impl SettingsWindow {
                         y: dp[1] + (ds[1] - dd_line) * 0.5,
                         font_size: dd_font,
                         line_height: dd_line,
-                        color: [210, 210, 218, 255],
+                        color: crate::theme::RuntimeTheme::text_u8(settings.theme.text_primary, 255),
                         weight: 400,
                 max_width: 300.0 * scale,
                 bounds: None,
@@ -1462,7 +1462,7 @@ impl SettingsWindow {
                         y: row_y + (ROW_HEIGHT * scale - label_line) * 0.5,
                         font_size: label_font,
                         line_height: label_line,
-                        color: [210, 210, 218, 255],
+                        color: crate::theme::RuntimeTheme::text_u8(settings.theme.text_primary, 255),
                         weight: 400,
                         max_width: 300.0 * scale,
                         bounds: None,
@@ -1477,7 +1477,7 @@ impl SettingsWindow {
                         y: dp4[1] + (ds4[1] - dd_line) * 0.5,
                         font_size: dd_font,
                         line_height: dd_line,
-                        color: [210, 210, 218, 255],
+                        color: crate::theme::RuntimeTheme::text_u8(settings.theme.text_primary, 255),
                         weight: 400,
                         max_width: 300.0 * scale,
                         bounds: None,
@@ -1496,7 +1496,7 @@ impl SettingsWindow {
                         y: row_y + (ROW_HEIGHT * scale - label_line) * 0.5,
                         font_size: label_font,
                         line_height: label_line,
-                        color: [210, 210, 218, 255],
+                        color: crate::theme::RuntimeTheme::text_u8(settings.theme.text_primary, 255),
                         weight: 400,
                 max_width: 300.0 * scale,
                 bounds: None,
@@ -1511,7 +1511,7 @@ impl SettingsWindow {
                         y: dp3[1] + (ds3[1] - dd_line) * 0.5,
                         font_size: dd_font,
                         line_height: dd_line,
-                        color: [210, 210, 218, 255],
+                        color: crate::theme::RuntimeTheme::text_u8(settings.theme.text_primary, 255),
                         weight: 400,
                 max_width: 300.0 * scale,
                 bounds: None,
@@ -1544,9 +1544,9 @@ impl SettingsWindow {
                                 font_size: dd_font,
                                 line_height: dd_line,
                                 color: if is_selected {
-                                    [240, 240, 255, 255]
+                                    crate::theme::RuntimeTheme::text_u8(settings.theme.text_primary, 255)
                                 } else {
-                                    [200, 200, 210, 255]
+                                    crate::theme::RuntimeTheme::text_u8(settings.theme.text_secondary, 255)
                                 },
                                 weight: if is_selected { 600 } else { 400 },
                                 max_width: 300.0 * scale,
@@ -1572,9 +1572,9 @@ impl SettingsWindow {
                                 font_size: dd_font,
                                 line_height: dd_line,
                                 color: if is_selected {
-                                    [240, 240, 255, 255]
+                                    crate::theme::RuntimeTheme::text_u8(settings.theme.text_primary, 255)
                                 } else {
-                                    [200, 200, 210, 255]
+                                    crate::theme::RuntimeTheme::text_u8(settings.theme.text_secondary, 255)
                                 },
                                 weight: if is_selected { 600 } else { 400 },
                                 max_width: 300.0 * scale,
@@ -1592,7 +1592,7 @@ impl SettingsWindow {
                     y: wp[1] + (SECTION_HEADER_HEIGHT * scale - section_line) * 0.5,
                     font_size: section_font,
                     line_height: section_line,
-                    color: [140, 140, 150, 200],
+                    color: crate::theme::RuntimeTheme::text_u8(settings.theme.text_dim, 200),
                     weight: 600,
                 max_width: 300.0 * scale,
                 bounds: None,
@@ -1611,7 +1611,7 @@ impl SettingsWindow {
                     y: row_y + (ROW_HEIGHT * scale - label_line) * 0.5,
                     font_size: label_font,
                     line_height: label_line,
-                    color: [210, 210, 218, 255],
+                    color: crate::theme::RuntimeTheme::text_u8(settings.theme.text_primary, 255),
                     weight: 400,
                 max_width: 300.0 * scale,
                 bounds: None,
@@ -1626,7 +1626,7 @@ impl SettingsWindow {
                     y: dp[1] + (ds[1] - dd_line) * 0.5,
                     font_size: dd_font,
                     line_height: dd_line,
-                    color: [210, 210, 218, 255],
+                    color: crate::theme::RuntimeTheme::text_u8(settings.theme.text_primary, 255),
                     weight: 400,
                 max_width: 300.0 * scale,
                 bounds: None,
@@ -1641,7 +1641,7 @@ impl SettingsWindow {
                     y: build_row_y + (ROW_HEIGHT * scale - label_line) * 0.5,
                     font_size: label_font,
                     line_height: label_line,
-                    color: [210, 210, 218, 255],
+                    color: crate::theme::RuntimeTheme::text_u8(settings.theme.text_primary, 255),
                     weight: 400,
                 max_width: 300.0 * scale,
                 bounds: None,
@@ -1656,7 +1656,7 @@ impl SettingsWindow {
                     y: build_row_y + (ROW_HEIGHT * scale - dd_line) * 0.5,
                     font_size: dd_font,
                     line_height: dd_line,
-                    color: [140, 140, 150, 200],
+                    color: crate::theme::RuntimeTheme::text_u8(settings.theme.text_dim, 200),
                     weight: 400,
                 max_width: 300.0 * scale,
                 bounds: None,
@@ -1680,9 +1680,9 @@ impl SettingsWindow {
                             font_size: dd_font,
                             line_height: dd_line,
                             color: if is_selected {
-                                [240, 240, 255, 255]
+                                crate::theme::RuntimeTheme::text_u8(settings.theme.text_primary, 255)
                             } else {
-                                [200, 200, 210, 255]
+                                crate::theme::RuntimeTheme::text_u8(settings.theme.text_secondary, 255)
                             },
                             weight: if is_selected { 600 } else { 400 },
                             max_width: 300.0 * scale,

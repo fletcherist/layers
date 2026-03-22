@@ -91,7 +91,7 @@ impl App {
             }
 
             if self.sample_browser.visible {
-                self.sample_browser.get_text_entries(h, gpu.scale_factor);
+                self.sample_browser.get_text_entries(&self.settings.theme, h, gpu.scale_factor);
             }
             let browser_ref = if self.sample_browser.visible {
                 Some(&self.sample_browser)

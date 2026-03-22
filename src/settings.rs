@@ -278,10 +278,10 @@ impl Settings {
             match std::fs::read_to_string(&path) {
                 Ok(json) => {
                     let mut s: Settings = serde_json::from_str(&json).unwrap_or_default();
-                    s.theme = if s.theme_preset == "Ableton" {
-                        crate::theme::RuntimeTheme::from_preset_ableton()
-                    } else {
-                        crate::theme::RuntimeTheme::from_hue_with_settings(s.primary_hue, s.color_intensity, s.brightness)
+                    s.theme = match s.theme_preset.as_str() {
+                        "Ableton" => crate::theme::RuntimeTheme::from_preset_ableton(),
+                        "Light"   => crate::theme::RuntimeTheme::from_preset_light(s.primary_hue),
+                        _         => crate::theme::RuntimeTheme::from_hue_with_settings(s.primary_hue, s.color_intensity, s.brightness),
                     };
                     s
                 }

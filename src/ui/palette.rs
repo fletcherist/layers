@@ -1147,7 +1147,7 @@ impl CommandPalette {
         out
     }
 
-    pub fn get_text_entries(&self, screen_w: f32, screen_h: f32, scale: f32) -> Vec<TextEntry> {
+    pub fn get_text_entries(&self, theme: &crate::theme::RuntimeTheme, screen_w: f32, screen_h: f32, scale: f32) -> Vec<TextEntry> {
         let mut out = Vec::new();
         let (ppos, _psize) = self.palette_rect(screen_w, screen_h, scale);
         let margin = PALETTE_PADDING * scale;
@@ -1155,14 +1155,14 @@ impl CommandPalette {
 
         // Search input text (or placeholder)
         let (display_text, search_color) = match self.mode {
-            PaletteMode::VolumeFader => ("Master Volume", [235, 235, 240, 255]),
+            PaletteMode::VolumeFader => ("Master Volume", crate::theme::RuntimeTheme::text_u8(theme.text_primary, 255)),
             PaletteMode::PluginPicker | PaletteMode::InstrumentPicker if self.search_text.is_empty() => {
-                ("Search plugins...", [140, 140, 150, 160])
+                ("Search plugins...", crate::theme::RuntimeTheme::text_u8(theme.text_dim, 160))
             }
             _ if self.search_text.is_empty() => {
-                ("Search", [140, 140, 150, 160])
+                ("Search", crate::theme::RuntimeTheme::text_u8(theme.text_dim, 160))
             }
-            _ => (self.search_text.as_str(), [235, 235, 240, 255]),
+            _ => (self.search_text.as_str(), crate::theme::RuntimeTheme::text_u8(theme.text_primary, 255)),
         };
         let sfont = 15.0 * scale;
         let sline = 22.0 * scale;
@@ -1197,7 +1197,7 @@ impl CommandPalette {
                     font_size: label_font,
                     line_height: label_line,
                     max_width: PALETTE_WIDTH * scale - margin * 2.0,
-                    color: [200, 200, 210, 220],
+                    color: crate::theme::RuntimeTheme::text_u8(theme.text_secondary, 220),
                     weight: 400,
                     bounds: None,
                 center: false,
@@ -1218,7 +1218,7 @@ impl CommandPalette {
                     font_size: small_font,
                     line_height: small_line,
                     max_width: PALETTE_WIDTH * scale - margin * 2.0,
-                    color: [140, 140, 150, 180],
+                    color: crate::theme::RuntimeTheme::text_u8(theme.text_dim, 180),
                     weight: 400,
                     bounds: None,
                 center: false,
@@ -1243,7 +1243,7 @@ impl CommandPalette {
                                 font_size: sect_font,
                                 line_height: sect_line,
                                 max_width: PALETTE_WIDTH * scale - margin * 4.0,
-                                color: [120, 140, 170, 200],
+                                color: crate::theme::RuntimeTheme::text_u8(theme.text_dim, 200),
                                 weight: 400,
                                 bounds: None,
                 center: false,
@@ -1260,7 +1260,7 @@ impl CommandPalette {
                                 font_size: ifont,
                                 line_height: iline,
                                 max_width: PALETTE_WIDTH * scale * 0.65,
-                                color: [215, 215, 222, 255],
+                                color: crate::theme::RuntimeTheme::text_u8(theme.text_primary, 255),
                                 weight: 400,
                                 bounds: None,
                 center: false,
@@ -1274,7 +1274,7 @@ impl CommandPalette {
                                     font_size: shortcut_font,
                                     line_height: shortcut_line,
                                     max_width: 80.0 * scale,
-                                    color: [120, 120, 135, 180],
+                                    color: crate::theme::RuntimeTheme::text_u8(theme.text_dim, 180),
                                     weight: 400,
                                     bounds: None,
                 center: false,
@@ -1294,7 +1294,7 @@ impl CommandPalette {
                                 font_size: ifont,
                                 line_height: iline,
                                 max_width: PALETTE_WIDTH * scale * 0.55,
-                                color: [215, 215, 222, 255],
+                                color: crate::theme::RuntimeTheme::text_u8(theme.text_primary, 255),
                                 weight: 400,
                                 bounds: None,
                 center: false,
@@ -1349,7 +1349,7 @@ impl CommandPalette {
                             font_size: ifont,
                             line_height: iline,
                             max_width: PALETTE_WIDTH * scale * 0.65,
-                            color: [215, 215, 222, 255],
+                            color: crate::theme::RuntimeTheme::text_u8(theme.text_primary, 255),
                             weight: 400,
                             bounds: None,
                 center: false,
@@ -1364,7 +1364,7 @@ impl CommandPalette {
                                 font_size: mfont,
                                 line_height: mline,
                                 max_width: 140.0 * scale,
-                                color: [120, 120, 135, 180],
+                                color: crate::theme::RuntimeTheme::text_u8(theme.text_dim, 180),
                                 weight: 400,
                                 bounds: None,
                 center: false,

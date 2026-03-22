@@ -99,6 +99,7 @@ pub struct SampleBrowser {
     pub text_generation: u64,
     cached_screen_h: f32,
     cached_scale: f32,
+    cached_text_primary_r: f32,
     last_scroll_screen_h: f32,
     last_scroll_scale: f32,
     pub plugins: Vec<PluginEntry>,
@@ -135,6 +136,7 @@ impl SampleBrowser {
             text_generation: 0,
             cached_screen_h: 0.0,
             cached_scale: 0.0,
+            cached_text_primary_r: -1.0,
             last_scroll_screen_h: 0.0,
             last_scroll_scale: 0.0,
             plugins: Vec::new(),
@@ -951,21 +953,23 @@ impl SampleBrowser {
         out
     }
 
-    pub fn get_text_entries(&mut self, screen_h: f32, scale: f32) -> &[TextEntry] {
+    pub fn get_text_entries(&mut self, theme: &crate::theme::RuntimeTheme, screen_h: f32, scale: f32) -> &[TextEntry] {
         if self.text_dirty
             || (self.cached_screen_h - screen_h).abs() > 0.5
             || (self.cached_scale - scale).abs() > 0.001
+            || (self.cached_text_primary_r - theme.text_primary[0]).abs() > 0.001
         {
-            self.cached_text = self.build_text_entries(screen_h, scale);
+            self.cached_text = self.build_text_entries(theme, screen_h, scale);
             self.cached_screen_h = screen_h;
             self.cached_scale = scale;
+            self.cached_text_primary_r = theme.text_primary[0];
             self.text_dirty = false;
             self.text_generation += 1;
         }
         &self.cached_text
     }
 
-    fn build_text_entries(&self, _screen_h: f32, scale: f32) -> Vec<TextEntry> {
+    fn build_text_entries(&self, theme: &crate::theme::RuntimeTheme, _screen_h: f32, scale: f32) -> Vec<TextEntry> {
         let mut out = Vec::new();
         let w = self.panel_width(scale);
         let header_h = HEADER_HEIGHT * scale;
@@ -991,9 +995,9 @@ impl SampleBrowser {
             let text_y = row_y + (search_bar_h - line_h) * 0.5;
             let (text, color) = if self.search_focused || !self.search_query.is_empty() {
                 let display = format!("{}|", self.search_query);
-                (display, [220u8, 220, 230, 255])
+                (display, crate::theme::RuntimeTheme::text_u8(theme.text_primary, 255))
             } else {
-                ("Search...".to_string(), [120u8, 120, 130, 160])
+                ("Search...".to_string(), crate::theme::RuntimeTheme::text_u8(theme.text_dim, 160))
             };
             out.push(TextEntry {
                 text,
@@ -1021,9 +1025,9 @@ impl SampleBrowser {
             let y = ct + section_gap + i as f32 * sb_item_h;
             let is_active = *cat == self.active_category;
             let color = if is_active {
-                [230, 230, 240, 255]
+                crate::theme::RuntimeTheme::text_u8(theme.text_primary, 255)
             } else {
-                [160, 160, 170, 200]
+                crate::theme::RuntimeTheme::text_u8(theme.text_secondary, 200)
             };
             out.push(TextEntry {
                 text: cat.label().to_string(),
@@ -1052,7 +1056,7 @@ impl SampleBrowser {
                         font_size: 10.0 * scale,
                         line_height: 12.0 * scale,
                         max_width: w * 0.6,
-                        color: [140, 160, 200, 200],
+                        color: crate::theme::RuntimeTheme::text_u8(theme.text_dim, 200),
                         weight: 600,
                         bounds: None,
                         center: false,
@@ -1132,9 +1136,9 @@ impl SampleBrowser {
                     let line_h = 18.0 * scale;
 
                     let (color, weight) = if entry.is_dir() {
-                        ([210, 210, 218, 255], 400u16)
+                        (crate::theme::RuntimeTheme::text_u8(theme.text_primary, 255), 400u16)
                     } else {
-                        ([170, 170, 180, 255], 400u16)
+                        (crate::theme::RuntimeTheme::text_u8(theme.text_secondary, 255), 400u16)
                     };
 
                     out.push(TextEntry {

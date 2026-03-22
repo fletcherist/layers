@@ -81,7 +81,7 @@ impl TooltipState {
         }]
     }
 
-    pub(crate) fn build_text_entries(&self, scale: f32) -> Vec<TextEntry> {
+    pub(crate) fn build_text_entries(&self, scale: f32, theme: &crate::theme::RuntimeTheme) -> Vec<TextEntry> {
         if !self.visible || self.current_target.is_none() {
             return Vec::new();
         }
@@ -107,7 +107,7 @@ impl TooltipState {
             font_size,
             line_height,
             max_width: pill_w,
-            color: TOOLTIP_TEXT_COLOR,
+            color: crate::theme::RuntimeTheme::text_u8(theme.text_primary, 240),
             weight: 400,
             bounds: None,
             center: false,

@@ -160,6 +160,11 @@ pub fn with_alpha(c: [f32; 4], a: f32) -> [f32; 4] {
     [c[0], c[1], c[2], a]
 }
 
+/// Perceived brightness using Rec. 601 coefficients (input is linear sRGB 0–1).
+pub fn perceived_brightness(c: [f32; 4]) -> f32 {
+    0.299 * c[0] + 0.587 * c[1] + 0.114 * c[2]
+}
+
 // ---------------------------------------------------------------------------
 // Runtime theme (hue-parameterized)
 // ---------------------------------------------------------------------------
@@ -248,6 +253,9 @@ pub struct RuntimeTheme {
     pub category_dot: [f32; 4],
     pub pill_instrument: [f32; 4],
     pub pill_effect: [f32; 4],
+    pub text_primary:   [f32; 4],
+    pub text_secondary: [f32; 4],
+    pub text_dim:       [f32; 4],
 }
 
 impl RuntimeTheme {
@@ -260,8 +268,13 @@ impl RuntimeTheme {
         };
         let accent = c(h, 1.0, 0.625, 1.0);
         let ch = wrap_hue(h + OFFSET_COMPONENT);
+        let bg_base = c(h, 0.12, 0.125, 1.0);
+        let is_light = perceived_brightness(bg_base) > 0.45;
+        let text_primary   = if is_light { [0.08, 0.08, 0.10, 1.0] } else { [0.87, 0.87, 0.92, 1.0] };
+        let text_secondary = if is_light { [0.30, 0.30, 0.36, 1.0] } else { [0.62, 0.62, 0.68, 1.0] };
+        let text_dim       = if is_light { [0.52, 0.52, 0.56, 1.0] } else { [0.40, 0.40, 0.45, 1.0] };
         Self {
-            bg_base:          c(h, 0.12, 0.125, 1.0),
+            bg_base,
             bg_surface:       c(h, 0.12, 0.145, 1.0),
             bg_menu:          c(h, 0.10, 0.165, 1.0),
             bg_overlay:       c(h, 0.10, 0.155, 0.98),
@@ -313,6 +326,9 @@ impl RuntimeTheme {
             category_dot:      c(h, 0.65, 0.580, 0.70),
             pill_instrument:   c(wrap_hue(h + 60.0), 0.65, 0.520, 0.85),
             pill_effect:       c(h, 0.65, 0.520, 0.85),
+            text_primary,
+            text_secondary,
+            text_dim,
         }
     }
 
@@ -382,7 +398,85 @@ impl RuntimeTheme {
             category_dot:    [ac[0], ac[1], ac[2], 0.70],
             pill_instrument: [0.60, 0.30, 0.90, 0.85],
             pill_effect:     [ac[0], ac[1], ac[2], 0.85],
+            text_primary:   [0.87, 0.87, 0.82, 1.0],
+            text_secondary: [0.62, 0.62, 0.58, 1.0],
+            text_dim:       [0.40, 0.40, 0.38, 1.0],
         }
+    }
+
+    /// Generate a light theme from a hue. Backgrounds are near-white; text is near-black.
+    pub fn from_preset_light(h: f32) -> Self {
+        let c_bg  = |hue: f32, s: f32, l: f32, a: f32| hsl(hue, s * 0.35, l, a);
+        let c_acc = |hue: f32, s: f32, l: f32, a: f32| hsl(hue, s, l, a);
+        let ch = wrap_hue(h + OFFSET_COMPONENT);
+        let accent = c_acc(h, 1.0, 0.38, 1.0);
+        let bg_base = c_bg(h, 0.12, 0.93, 1.0);
+        let text_primary:   [f32; 4] = [0.08, 0.08, 0.10, 1.0];
+        let text_secondary: [f32; 4] = [0.30, 0.30, 0.36, 1.0];
+        let text_dim:       [f32; 4] = [0.52, 0.52, 0.56, 1.0];
+        Self {
+            bg_base,
+            bg_surface:       c_bg(h, 0.12, 0.905, 1.0),
+            bg_menu:          c_bg(h, 0.10, 0.885, 1.0),
+            bg_overlay:       c_bg(h, 0.10, 0.890, 0.98),
+            bg_elevated:      c_bg(h, 0.14, 0.870, 1.0),
+            bg_input:         c_bg(h, 0.14, 0.880, 1.0),
+            bg_dropdown:      c_bg(h, 0.12, 0.885, 1.0),
+            bg_panel:         c_bg(h, 0.10, 0.905, 0.88),
+            bg_window:        c_bg(h, 0.13, 0.895, 0.98),
+            bg_sidebar:       c_bg(h, 0.12, 0.915, 1.0),
+            bg_window_header: c_bg(h, 0.16, 0.875, 1.0),
+            bg_plugin:        c_bg(h, 0.20, 0.935, 1.0),
+            bg_plugin_header: c_bg(h, 0.22, 0.920, 1.0),
+            accent,
+            accent_muted:     c_acc(h, 0.70, 0.40, 0.70),
+            accent_faint:     c_acc(h, 1.00, 0.40, 0.12),
+            selection:        c_acc(h, 0.65, 0.42, 0.25),
+            border_subtle:    c_bg(h, 0.15, 0.70, 0.35),
+            item_hover:       [0.0, 0.0, 0.0, 0.05],
+            item_active:      c_acc(h, 0.50, 0.40, 0.15),
+            option_highlight: c_acc(h, 0.50, 0.38, 0.18),
+            pill_active:      c_acc(h, 0.65, 0.38, 0.90),
+            pill_inactive:    c_bg(h, 0.15, 0.70, 0.50),
+            slider_fill:      c_acc(h, 0.65, 0.42, 0.85),
+            knob_inactive:    c_bg(h, 0.20, 0.65, 0.60),
+            drop_zone_fill:   c_acc(h, 0.65, 0.42, 0.10),
+            drop_zone_border: c_acc(h, 0.65, 0.42, 0.60),
+            select_rect_fill: c_acc(h, 0.65, 0.42, 0.08),
+            select_rect_border: c_acc(h, 0.60, 0.42, 0.50),
+            select_outline:   c_acc(h, 0.65, 0.42, 0.70),
+            loop_fill_color:  c_acc(h, 0.80, 0.42, 0.08),
+            loop_border_color: c_acc(h, 0.75, 0.42, 0.50),
+            loop_badge_color: c_acc(h, 0.75, 0.38, 0.85),
+            export_fill_color:        c_acc(wrap_hue(h + 150.0), 0.70, 0.40, 0.10),
+            export_border_color:      c_acc(wrap_hue(h + 150.0), 0.75, 0.42, 0.50),
+            export_render_pill_color: c_acc(wrap_hue(h + 150.0), 0.65, 0.38, 0.85),
+            component_border_color:   c_acc(ch, 0.75, 0.40, 0.50),
+            component_fill_color:     c_acc(ch, 0.75, 0.40, 0.08),
+            component_badge_color:    c_acc(ch, 0.75, 0.40, 0.70),
+            instance_fill_color:      c_acc(ch, 0.75, 0.40, 0.06),
+            instance_border_color:    c_acc(ch, 0.75, 0.40, 0.30),
+            lock_icon_color:          c_acc(ch, 0.75, 0.40, 0.60),
+            effect_border_color:      c_acc(h, 0.65, 0.40, 0.50),
+            effect_active_border:     c_acc(h, 0.70, 0.42, 0.70),
+            plugin_block_default_color: c_acc(h, 0.65, 0.40, 0.70),
+            instrument_border_color:  c_acc(wrap_hue(h + 60.0), 0.65, 0.42, 0.50),
+            instrument_active_border: c_acc(wrap_hue(h + 60.0), 0.70, 0.44, 0.70),
+            midi_clip_default_color:  c_acc(wrap_hue(h + 60.0), 0.65, 0.42, 0.70),
+            playhead:         c_acc(wrap_hue(h + 160.0), 0.70, 0.40, 0.90),
+            category_dot:     c_acc(h, 0.65, 0.42, 0.70),
+            pill_instrument:  c_acc(wrap_hue(h + 60.0), 0.65, 0.38, 0.85),
+            pill_effect:      c_acc(h, 0.65, 0.38, 0.85),
+            text_primary,
+            text_secondary,
+            text_dim,
+        }
+    }
+
+    /// Convert a theme [f32;4] text color to [u8;4] with a given alpha override (0–255).
+    #[inline]
+    pub fn text_u8(base: [f32; 4], alpha: u8) -> [u8; 4] {
+        [(base[0] * 255.0) as u8, (base[1] * 255.0) as u8, (base[2] * 255.0) as u8, alpha]
     }
 }
 

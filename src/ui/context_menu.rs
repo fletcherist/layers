@@ -769,7 +769,7 @@ impl ContextMenu {
         out
     }
 
-    pub fn get_text_entries(&self, screen_w: f32, screen_h: f32, scale: f32) -> Vec<TextEntry> {
+    pub fn get_text_entries(&self, theme: &crate::theme::RuntimeTheme, screen_w: f32, screen_h: f32, scale: f32) -> Vec<TextEntry> {
         let mut out = Vec::new();
         let (mpos, _msize) = self.menu_rect(screen_w, screen_h, scale);
         let pad = CTX_MENU_PADDING * scale;
@@ -796,7 +796,7 @@ impl ContextMenu {
                         font_size: label_font,
                         line_height: label_line,
                         max_width: CTX_MENU_WIDTH * scale * 0.55,
-                        color: [220, 220, 228, 255],
+                        color: crate::theme::RuntimeTheme::text_u8(theme.text_primary, 255),
                         weight: 400,
                         bounds: None,
                 center: false,
@@ -810,7 +810,7 @@ impl ContextMenu {
                             font_size: shortcut_font,
                             line_height: shortcut_line,
                             max_width: 60.0 * scale,
-                            color: [160, 160, 175, 220],
+                            color: crate::theme::RuntimeTheme::text_u8(theme.text_secondary, 220),
                             weight: 400,
                             bounds: None,
                 center: false,
@@ -830,7 +830,7 @@ impl ContextMenu {
                         font_size: section_font,
                         line_height: section_line,
                         max_width: CTX_MENU_WIDTH * scale * 0.8,
-                        color: [150, 150, 160, 200],
+                        color: crate::theme::RuntimeTheme::text_u8(theme.text_secondary, 200),
                         weight: 400,
                         bounds: None,
                 center: false,
@@ -856,7 +856,7 @@ impl ContextMenu {
                             font_size: pill_font,
                             line_height: pill_line,
                             max_width: pw,
-                            color: [220, 220, 230, alpha],
+                            color: crate::theme::RuntimeTheme::text_u8(theme.text_primary, alpha),
                             weight: 400,
                             bounds: None,
                 center: false,

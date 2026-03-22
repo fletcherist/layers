@@ -221,6 +221,7 @@ impl TransportPanel {
     }
 
     pub(crate) fn get_text_entries(
+        theme: &crate::theme::RuntimeTheme,
         screen_w: f32,
         screen_h: f32,
         scale: f32,
@@ -242,7 +243,7 @@ impl TransportPanel {
             font_size: tfont,
             line_height: tline,
             max_width: TRANSPORT_WIDTH * scale * 0.6,
-            color: [220, 220, 230, 220],
+            color: crate::theme::RuntimeTheme::text_u8(theme.text_primary, 220),
             weight: 400,
             bounds: None,
                 center: false,
@@ -265,7 +266,7 @@ impl TransportPanel {
             font_size: tfont,
             line_height: tline,
             max_width: bpm_max_width,
-            color: [220, 220, 230, alpha],
+            color: crate::theme::RuntimeTheme::text_u8(theme.text_primary, alpha),
             weight: 400,
             bounds: None,
                 center: false,
