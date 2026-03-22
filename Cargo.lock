@@ -3259,7 +3259,6 @@ dependencies = [
  "log",
  "muda",
  "pollster",
- "rack",
  "rfd",
  "serde",
  "serde_json",
@@ -4896,17 +4895,6 @@ name = "r-efi"
 version = "6.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f8dcc9c7d52a811697d2151c701e0d08956f92b0e24136cf4cf27b57a6a0d9bf"
-
-[[package]]
-name = "rack"
-version = "0.4.8"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8d1d89b77015d5c6ab562082c502ad12798cb8e5333ae7b015c7a9f57757836e"
-dependencies = [
- "cmake",
- "smallvec",
- "thiserror 2.0.18",
-]
 
 [[package]]
 name = "radium"

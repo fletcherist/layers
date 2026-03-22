@@ -6,9 +6,6 @@
 
 use std::path::Path;
 
-// Force-link rack to get VST3 SDK symbols that vst3-gui needs
-extern crate rack;
-
 struct TestRunner {
     passed: usize,
     failed: usize,

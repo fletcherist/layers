@@ -14,17 +14,34 @@ fn main() {
     let dst = cmake::Config::new("cpp")
         .define("CMAKE_BUILD_TYPE", "Release")
         .define("VST3_SDK_PATH", sdk_path_abs.to_str().unwrap())
+        .profile("Release")
         .build();
 
     println!("cargo:rustc-link-search=native={}/lib", dst.display());
     println!("cargo:rustc-link-lib=static=vst3_gui");
-    println!("cargo:rustc-link-lib=c++");
-    println!("cargo:rustc-link-lib=framework=AppKit");
-    println!("cargo:rustc-link-lib=framework=Cocoa");
-    println!("cargo:rustc-link-lib=framework=CoreFoundation");
 
-    println!("cargo:rerun-if-changed=cpp/src/vst3_gui.mm");
+    // Platform-specific linking
+    let target_os = env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
+    match target_os.as_str() {
+        "macos" => {
+            println!("cargo:rustc-link-lib=c++");
+            println!("cargo:rustc-link-lib=framework=AppKit");
+            println!("cargo:rustc-link-lib=framework=Cocoa");
+            println!("cargo:rustc-link-lib=framework=CoreFoundation");
+        }
+        "windows" => {
+            println!("cargo:rustc-link-lib=ole32");
+            println!("cargo:rustc-link-lib=user32");
+        }
+        _ => {}
+    }
+
+    // Rerun if any source changes
+    println!("cargo:rerun-if-changed=cpp/src/vst3_gui_common.cpp");
+    println!("cargo:rerun-if-changed=cpp/src/vst3_gui_mac.mm");
+    println!("cargo:rerun-if-changed=cpp/src/vst3_gui_win.cpp");
     println!("cargo:rerun-if-changed=cpp/include/vst3_gui.h");
+    println!("cargo:rerun-if-changed=cpp/include/vst3_gui_internal.h");
     println!("cargo:rerun-if-changed=cpp/CMakeLists.txt");
 }
 

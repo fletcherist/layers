@@ -11,7 +11,7 @@ typedef struct Vst3GuiHandle Vst3GuiHandle;
 // Returns NULL if plugin has no GUI or loading fails.
 Vst3GuiHandle* vst3_gui_open(const char* vst3_path, const char* uid, const char* title);
 
-// Open plugin without GUI window (no NSWindow/NSView, works from any thread).
+// Open plugin without GUI window (no native window, works from any thread).
 // For audio processing, state, and parameters only. Call vst3_gui_open to get a window later.
 Vst3GuiHandle* vst3_gui_open_headless(const char* vst3_path, const char* uid);
 
@@ -68,6 +68,27 @@ int vst3_gui_send_midi(Vst3GuiHandle* handle,
 // Query audio bus channel counts (valid after setup_processing).
 int vst3_gui_get_audio_input_channels(Vst3GuiHandle* handle);
 int vst3_gui_get_audio_output_channels(Vst3GuiHandle* handle);
+
+// --- Plugin scanning ---
+
+// Opaque scan result handle.
+typedef struct Vst3ScanResult Vst3ScanResult;
+
+// Scan for installed VST3 plugins. Returns NULL on failure.
+Vst3ScanResult* vst3_gui_scan(void);
+
+// Number of plugins found.
+int vst3_gui_scan_count(const Vst3ScanResult* result);
+
+// Access fields of the i-th plugin. Returns "" if index is out of range.
+const char* vst3_gui_scan_get_name(const Vst3ScanResult* result, int index);
+const char* vst3_gui_scan_get_vendor(const Vst3ScanResult* result, int index);
+const char* vst3_gui_scan_get_uid(const Vst3ScanResult* result, int index);
+const char* vst3_gui_scan_get_path(const Vst3ScanResult* result, int index);
+const char* vst3_gui_scan_get_subcategories(const Vst3ScanResult* result, int index);
+
+// Free scan result.
+void vst3_gui_scan_free(Vst3ScanResult* result);
 
 #ifdef __cplusplus
 }

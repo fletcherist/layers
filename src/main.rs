@@ -2162,7 +2162,7 @@ impl App {
         self.context_menu = None;
 
         // If plugins are already scanned, open vst3-gui instances for restored plugin blocks
-        #[cfg(target_os = "macos")]
+        #[cfg(any(target_os = "macos", target_os = "windows"))]
         if self.plugin_registry.is_scanned() {
             for (_pb_id, pb) in &mut self.plugin_blocks {
                 let has_gui = pb.gui.lock().ok().map_or(false, |g| g.is_some());
