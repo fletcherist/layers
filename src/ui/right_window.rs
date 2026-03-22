@@ -342,7 +342,7 @@ impl RightWindow {
         out.push(InstanceRaw {
             position: [cx - kr, cy - kr],
             size: [kr * 2.0, kr * 2.0],
-            color: [0.18, 0.18, 0.22, 1.0],
+            color: theme.bg_elevated,
             border_radius: kr,
         });
 
@@ -376,7 +376,7 @@ impl RightWindow {
         out.push(InstanceRaw {
             position: [cx + idx - ind_r, cy + idy - ind_r],
             size: [ind_r * 2.0, ind_r * 2.0],
-            color: [1.0, 1.0, 1.0, 0.95],
+            color: crate::theme::with_alpha(theme.text_primary, 0.95),
             border_radius: ind_r,
         });
     }
@@ -389,7 +389,7 @@ impl RightWindow {
         out.push(InstanceRaw {
             position: [pp[0], pp[1]],
             size: [1.0 * scale, ps[1]],
-            color: [1.0, 1.0, 1.0, 0.06],
+            color: settings.theme.border_subtle,
             border_radius: 0.0,
         });
 
@@ -413,7 +413,7 @@ impl RightWindow {
         out.push(InstanceRaw {
             position: [pp[0] + 1.0 * scale, pp[1] + HEADER_HEIGHT * scale],
             size: [ps[0] - 1.0 * scale, 1.0 * scale],
-            color: [1.0, 1.0, 1.0, 0.06],
+            color: settings.theme.border_subtle,
             border_radius: 0.0,
         });
 
@@ -428,7 +428,7 @@ impl RightWindow {
         out.push(InstanceRaw {
             position: track_pos,
             size: track_size,
-            color: [0.2, 0.2, 0.25, 1.0],
+            color: settings.theme.bg_elevated,
             border_radius: FADER_TRACK_W * 0.5 * scale,
         });
 
@@ -492,7 +492,7 @@ impl RightWindow {
             out.push(InstanceRaw {
                 position: [tick_x, ty - 0.5 * scale],
                 size: [tick_w * scale, 1.0 * scale],
-                color: [0.6, 0.6, 0.65, 0.7],
+                color: crate::theme::with_alpha(settings.theme.text_secondary, 0.7),
                 border_radius: 0.0,
             });
         }
@@ -528,7 +528,7 @@ impl RightWindow {
 
         // Reverse button
         let (rev_pos, rev_size) = Self::reverse_button_rect(screen_w, screen_h, scale);
-        let rev_color = if self.is_reversed { settings.theme.accent } else { [0.2, 0.2, 0.25, 1.0] };
+        let rev_color = if self.is_reversed { settings.theme.accent } else { settings.theme.bg_elevated };
         out.push(InstanceRaw {
             position: rev_pos,
             size: rev_size,
@@ -539,7 +539,7 @@ impl RightWindow {
         // Warp toggle button
         let (btn_pos, btn_size) = Self::warp_mode_button_rect(screen_w, screen_h, scale);
         let warp_on = self.warp_mode != WarpMode::Off;
-        let btn_color = if warp_on { settings.theme.accent } else { [0.2, 0.2, 0.25, 1.0] };
+        let btn_color = if warp_on { settings.theme.accent } else { settings.theme.bg_elevated };
         out.push(InstanceRaw {
             position: btn_pos,
             size: btn_size,
@@ -553,7 +553,7 @@ impl RightWindow {
             out.push(InstanceRaw {
                 position: sel_pos,
                 size: sel_size,
-                color: [0.16, 0.16, 0.20, 1.0],
+                color: settings.theme.bg_dropdown,
                 border_radius: 4.0 * scale,
             });
         }
@@ -1044,7 +1044,7 @@ impl RightWindow {
         out.push(InstanceRaw {
             position: [pp[0] + 8.0 * scale, top - 6.0 * scale],
             size: [ps[0] - 16.0 * scale, 1.0 * scale],
-            color: [1.0, 1.0, 1.0, 0.06],
+            color: settings.theme.border_subtle,
             border_radius: 0.0,
         });
 
@@ -1054,7 +1054,7 @@ impl RightWindow {
         out.push(InstanceRaw {
             position: abp,
             size: abs,
-            color: [0.15, 0.15, 0.18, 0.8],
+            color: crate::theme::with_alpha(settings.theme.bg_elevated, 0.85),
             border_radius: 4.0 * scale,
         });
 
@@ -1068,7 +1068,7 @@ impl RightWindow {
                 out.push(InstanceRaw {
                     position: sp,
                     size: ss,
-                    color: [0.14, 0.14, 0.17, 0.35],
+                    color: crate::theme::with_alpha(settings.theme.bg_surface, 0.35),
                     border_radius: 4.0 * scale,
                 });
 
@@ -1078,14 +1078,14 @@ impl RightWindow {
                 out.push(InstanceRaw {
                     position: fp,
                     size: ss,
-                    color: [0.26, 0.26, 0.32, 1.0],
+                    color: settings.theme.bg_menu,
                     border_radius: 4.0 * scale,
                 });
 
                 // Bypass dot on floating copy
                 let (bp, bs) = Self::effect_slot_bypass_rect(i, screen_w, screen_h, scale);
                 let bypass_color = if slot.bypass {
-                    [0.4, 0.4, 0.45, 0.6]
+                    crate::theme::with_alpha(settings.theme.text_dim, 0.6)
                 } else {
                     settings.theme.accent
                 };
@@ -1100,11 +1100,11 @@ impl RightWindow {
             } else {
                 // Highlight target slot under cursor
                 let bg_color = if hover_slot_idx == Some(i) && dragging_slot_idx.is_some() {
-                    [0.22, 0.24, 0.32, 1.0]
+                    settings.theme.item_active
                 } else if slot.bypass {
-                    [0.14, 0.14, 0.17, 0.8]
+                    crate::theme::with_alpha(settings.theme.bg_surface, 0.9)
                 } else {
-                    [0.18, 0.18, 0.22, 1.0]
+                    settings.theme.bg_elevated
                 };
                 out.push(InstanceRaw {
                     position: sp,
@@ -1116,7 +1116,7 @@ impl RightWindow {
                 // Bypass indicator dot
                 let (bp, bs) = Self::effect_slot_bypass_rect(i, screen_w, screen_h, scale);
                 let bypass_color = if slot.bypass {
-                    [0.4, 0.4, 0.45, 0.6]
+                    crate::theme::with_alpha(settings.theme.text_dim, 0.6)
                 } else {
                     settings.theme.accent
                 };
