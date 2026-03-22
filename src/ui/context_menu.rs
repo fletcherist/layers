@@ -1,4 +1,5 @@
 use crate::gpu::TextEntry;
+use crate::layers::LayerNodeKind;
 use crate::settings::{AdaptiveGridSize, FixedGrid, GridMode, Settings};
 use crate::ui::palette::CommandAction;
 use crate::InstanceRaw;
@@ -31,6 +32,7 @@ pub enum MenuContext {
     ComponentDef,
     ComponentInstance,
     BrowserEntry,
+    LayerNode { kind: LayerNodeKind },
     MidiClipEdit {
         grid_mode: GridMode,
         triplet_grid: bool,
@@ -464,6 +466,37 @@ impl ContextMenu {
                 action: CommandAction::RevealInFinder,
                 checked: false,
             })],
+            MenuContext::LayerNode { kind } => {
+                let mut entries = vec![];
+                match kind {
+                    LayerNodeKind::Waveform => {
+                        entries.push(ContextMenuEntry::Item(ContextMenuItem {
+                            label: "Rename",
+                            shortcut: "",
+                            action: CommandAction::RenameSample,
+                            checked: false,
+                        }));
+                        entries.push(ContextMenuEntry::Separator);
+                    }
+                    LayerNodeKind::EffectRegion => {
+                        entries.push(ContextMenuEntry::Item(ContextMenuItem {
+                            label: "Rename",
+                            shortcut: "",
+                            action: CommandAction::RenameEffectRegion,
+                            checked: false,
+                        }));
+                        entries.push(ContextMenuEntry::Separator);
+                    }
+                    _ => {}
+                }
+                entries.push(ContextMenuEntry::Item(ContextMenuItem {
+                    label: "Delete",
+                    shortcut: "⌫",
+                    action: CommandAction::Delete,
+                    checked: false,
+                }));
+                entries
+            }
             MenuContext::WarpModeSelect { current } => {
                 use crate::ui::waveform::WarpMode;
                 vec![

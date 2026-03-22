@@ -772,6 +772,7 @@ impl App {
                                 wf.audio = Arc::new(new_audio);
                                 let after = self.waveforms[&idx].clone();
                                 self.push_op(crate::operations::Operation::UpdateWaveform { id: idx, before, after });
+                                self.mark_dirty();
                             }
                         }
                         self.request_redraw();

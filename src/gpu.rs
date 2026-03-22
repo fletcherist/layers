@@ -331,6 +331,23 @@ fn shape_text_entry(font_system: &mut FontSystem, entry: &TextEntry) -> TextBuff
     buf
 }
 
+pub(crate) struct IconEntry {
+    pub codepoint: &'static str,
+    pub x: f32,
+    pub y: f32,
+    pub size: f32,
+    pub color: [u8; 4],
+}
+
+fn shape_icon_entry(font_system: &mut FontSystem, entry: &IconEntry) -> TextBuffer {
+    let mut buf = TextBuffer::new(font_system, Metrics::new(entry.size, entry.size));
+    buf.set_size(font_system, Some(entry.size * 2.0), Some(entry.size * 2.0));
+    let attrs = Attrs::new().family(Family::Name("Material Icons"));
+    buf.set_text(font_system, entry.codepoint, attrs, Shaping::Advanced);
+    buf.shape_until_scroll(font_system, false);
+    buf
+}
+
 impl Gpu {
     pub(crate) async fn new(window: Arc<Window>) -> Self {
         let size = window.inner_size();
@@ -597,14 +614,20 @@ impl Gpu {
 
         // --- glyphon text rendering ---
         #[cfg(target_arch = "wasm32")]
-        let font_system = {
+        let mut font_system = {
             let font_data = include_bytes!("../assets/Inter-Regular.ttf");
             FontSystem::new_with_fonts(std::iter::once(glyphon::fontdb::Source::Binary(
                 std::sync::Arc::new(font_data.as_slice()),
             )))
         };
         #[cfg(not(target_arch = "wasm32"))]
-        let font_system = FontSystem::new();
+        let mut font_system = FontSystem::new();
+        // Load icon fonts on all platforms
+        {
+            let icons_data = include_bytes!("../assets/MaterialIcons-Regular.ttf");
+            font_system.db_mut().load_font_data(icons_data.to_vec());
+        }
+        let font_system = font_system;
         let swash_cache = SwashCache::new();
         let cache = glyphon::Cache::new(&device);
         let mut text_atlas = TextAtlas::new(&device, &queue, &cache, surface_format);
@@ -899,6 +922,21 @@ impl Gpu {
                 te.x,
                 te.y,
                 TextColor::rgba(te.color[0], te.color[1], te.color[2], te.color[3]),
+                full_bounds,
+            ));
+        }
+        // Transport panel icon glyphs
+        for ie in TransportPanel::get_icon_entries(
+            settings, w, h, scale,
+            is_playing, is_recording,
+            settings.metronome_enabled, computer_keyboard_armed, input_monitoring,
+        ) {
+            let buf = shape_icon_entry(&mut self.font_system, &ie);
+            text_buffers.push(buf);
+            text_meta.push((
+                ie.x,
+                ie.y,
+                TextColor::rgba(ie.color[0], ie.color[1], ie.color[2], ie.color[3]),
                 full_bounds,
             ));
         }

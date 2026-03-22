@@ -1,7 +1,8 @@
 use crate::InstanceRaw;
-use crate::gpu::TextEntry;
+use crate::gpu::{IconEntry, TextEntry};
 use crate::ui::hit_testing::point_in_rect;
 use crate::theme::{RECORD_ACTIVE, RECORD_DIM};
+use crate::icons;
 
 // ---------------------------------------------------------------------------
 // Transport Panel (bottom-center playback status)
@@ -48,11 +49,11 @@ impl TransportPanel {
         screen_w: f32,
         screen_h: f32,
         scale: f32,
-        is_playing: bool,
+        _is_playing: bool,
         is_recording: bool,
-        metronome_enabled: bool,
-        computer_keyboard_armed: bool,
-        input_monitoring: bool,
+        _metronome_enabled: bool,
+        _computer_keyboard_armed: bool,
+        _input_monitoring: bool,
     ) -> Vec<InstanceRaw> {
         let mut out = Vec::new();
         let (pos, size) = Self::panel_rect(screen_w, screen_h, scale);
@@ -65,127 +66,13 @@ impl TransportPanel {
             border_radius: size[1] * 0.5,
         });
 
-        // metronome dot
-        let met_d = 8.0 * scale;
-        let icon_cy = pos[1] + size[1] * 0.5;
-        let met_x = pos[0] + 10.0 * scale;
-        let met_y = icon_cy - met_d * 0.5;
-        let met_color = if metronome_enabled {
-            settings.theme.accent
-        } else {
-            [1.0, 1.0, 1.0, 0.25]
-        };
-        out.push(InstanceRaw {
-            position: [met_x, met_y],
-            size: [met_d, met_d],
-            color: met_color,
-            border_radius: met_d * 0.5,
-        });
-
-        // Computer keyboard (mini piano keys)
-        let kb_btn = 20.0 * scale;
-        let kb_x = pos[0] + 26.0 * scale;
-        let kb_y = icon_cy - kb_btn * 0.5;
-        let kb_on = computer_keyboard_armed;
-        let kb_alpha = if kb_on { 0.95 } else { 0.35 };
-        let key_w = 4.5 * scale;
-        let key_h = kb_btn * 0.72;
-        let key_gap = 1.0 * scale;
-        for k in 0..3usize {
-            let kx = kb_x + 3.0 * scale + (key_w + key_gap) * k as f32;
-            out.push(InstanceRaw {
-                position: [kx, kb_y + kb_btn * 0.14],
-                size: [key_w, key_h],
-                color: [1.0, 1.0, 1.0, kb_alpha],
-                border_radius: 0.8 * scale,
-            });
-        }
-
-        let icon_x = pos[0] + 52.0 * scale;
-
-        if is_playing {
-            let bar_w = 3.0 * scale;
-            let bar_h = 12.0 * scale;
-            let gap = 4.0 * scale;
-            out.push(InstanceRaw {
-                position: [icon_x, icon_cy - bar_h * 0.5],
-                size: [bar_w, bar_h],
-                color: [1.0, 1.0, 1.0, 0.9],
-                border_radius: 1.0 * scale,
-            });
-            out.push(InstanceRaw {
-                position: [icon_x + bar_w + gap, icon_cy - bar_h * 0.5],
-                size: [bar_w, bar_h],
-                color: [1.0, 1.0, 1.0, 0.9],
-                border_radius: 1.0 * scale,
-            });
-        } else {
-            let tri_w = 10.0 * scale;
-            let tri_h = 12.0 * scale;
-            let steps = (tri_h * 3.0).ceil() as usize;
-            let step_h = tri_h / steps as f32;
-            let min_w = 1.5 * scale;
-            for i in 0..steps {
-                let t = (i as f32 + 0.5) / steps as f32;
-                let w = (tri_w * (1.0 - (2.0 * t - 1.0).abs())).max(min_w);
-                let sy = icon_cy - tri_h * 0.5 + i as f32 * step_h;
-                out.push(InstanceRaw {
-                    position: [icon_x, sy],
-                    size: [w, step_h + 0.5],
-                    color: [1.0, 1.0, 1.0, 0.9],
-                    border_radius: min_w * 0.5,
-                });
-            }
-        }
-
-        // input monitor headphone icon
-        {
-            let (mon_pos, mon_size) = Self::monitor_button_rect(screen_w, screen_h, scale);
-            let mon_color = if input_monitoring {
-                [0.3, 0.85, 0.5, 0.95]
-            } else {
-                [1.0, 1.0, 1.0, 0.30]
-            };
-            let cx = mon_pos[0] + mon_size[0] * 0.5;
-            let cy = mon_pos[1] + mon_size[1] * 0.5;
-
-            // Headband (thin horizontal bar at top)
-            let band_w = 10.0 * scale;
-            let band_h = 2.0 * scale;
-            out.push(InstanceRaw {
-                position: [cx - band_w * 0.5, cy - 5.0 * scale],
-                size: [band_w, band_h],
-                color: mon_color,
-                border_radius: band_h * 0.5,
-            });
-
-            // Left ear cup
-            let cup_w = 3.5 * scale;
-            let cup_h = 7.0 * scale;
-            out.push(InstanceRaw {
-                position: [cx - band_w * 0.5 - cup_w * 0.25, cy - 3.0 * scale],
-                size: [cup_w, cup_h],
-                color: mon_color,
-                border_radius: 1.5 * scale,
-            });
-
-            // Right ear cup
-            out.push(InstanceRaw {
-                position: [cx + band_w * 0.5 - cup_w * 0.75, cy - 3.0 * scale],
-                size: [cup_w, cup_h],
-                color: mon_color,
-                border_radius: 1.5 * scale,
-            });
-        }
-
-        // record button: red circle (brighter when recording)
+        // record button: red circle / stop square (keep as geometry for semantic color)
         let (rbtn_pos, rbtn_size) = Self::record_button_rect(screen_w, screen_h, scale);
         let dot_diameter = 12.0 * scale;
         let dot_x = rbtn_pos[0] + (rbtn_size[0] - dot_diameter) * 0.5;
         let dot_y = rbtn_pos[1] + (rbtn_size[1] - dot_diameter) * 0.5;
 
         if is_recording {
-            // stop icon: rounded red square
             let sq = 10.0 * scale;
             let sq_x = rbtn_pos[0] + (rbtn_size[0] - sq) * 0.5;
             let sq_y = rbtn_pos[1] + (rbtn_size[1] - sq) * 0.5;
@@ -203,6 +90,60 @@ impl TransportPanel {
                 border_radius: dot_diameter * 0.5,
             });
         }
+
+        out
+    }
+
+    pub(crate) fn get_icon_entries(
+        settings: &crate::settings::Settings,
+        screen_w: f32,
+        screen_h: f32,
+        scale: f32,
+        is_playing: bool,
+        _is_recording: bool,
+        metronome_enabled: bool,
+        computer_keyboard_armed: bool,
+        input_monitoring: bool,
+    ) -> Vec<IconEntry> {
+        let mut out = Vec::new();
+
+        fn center_icon(btn_pos: [f32; 2], btn_size: [f32; 2], icon_size: f32) -> (f32, f32) {
+            let x = btn_pos[0] + (btn_size[0] - icon_size) * 0.5;
+            let y = btn_pos[1] + (btn_size[1] - icon_size) * 0.5;
+            (x, y)
+        }
+
+        let small_icon = 16.0 * scale;
+        let play_icon = 20.0 * scale;
+
+        // Metronome (timer icon)
+        let (met_pos, met_size) = Self::metronome_button_rect(screen_w, screen_h, scale);
+        let (mx, my) = center_icon(met_pos, met_size, small_icon);
+        let acc = settings.theme.accent;
+        let met_color = if metronome_enabled {
+            [(acc[0] * 255.0) as u8, (acc[1] * 255.0) as u8, (acc[2] * 255.0) as u8, (acc[3] * 255.0) as u8]
+        } else {
+            [255, 255, 255, 64]
+        };
+        out.push(IconEntry { codepoint: icons::TIMER, x: mx, y: my, size: small_icon, color: met_color });
+
+        // Computer keyboard armed (keyboard icon)
+        let (kb_pos, kb_size) = Self::computer_keyboard_button_rect(screen_w, screen_h, scale);
+        let (kx, ky) = center_icon(kb_pos, kb_size, small_icon);
+        let kb_alpha = if computer_keyboard_armed { 242 } else { 89 };
+        out.push(IconEntry { codepoint: icons::KEYBOARD, x: kx, y: ky, size: small_icon, color: [255, 255, 255, kb_alpha] });
+
+        // Play / Pause
+        let (pp_pos, pp_size) = Self::play_pause_rect(screen_w, screen_h, scale);
+        let (px, py) = center_icon(pp_pos, pp_size, play_icon);
+        let play_codepoint = if is_playing { icons::PAUSE } else { icons::PLAY_ARROW };
+        out.push(IconEntry { codepoint: play_codepoint, x: px, y: py, size: play_icon, color: [255, 255, 255, 230] });
+
+        // Input monitor (headphones icon)
+        let (mon_pos, mon_size) = Self::monitor_button_rect(screen_w, screen_h, scale);
+        let (hx, hy) = center_icon(mon_pos, mon_size, small_icon);
+        let mon_color = if input_monitoring { [77, 217, 128, 242] } else { [255, 255, 255, 77] };
+        out.push(IconEntry { codepoint: icons::HEADPHONES, x: hx, y: hy, size: small_icon, color: mon_color });
 
         out
     }

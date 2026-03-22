@@ -176,8 +176,9 @@ fn flatten_node(
             }).unwrap_or_else(|| "MIDI".to_string())
         }
         LayerNodeKind::Waveform => {
-            waveforms.get(&node.entity_id).map(|wf| wf.filename.clone())
-                .unwrap_or_else(|| "Audio".to_string())
+            waveforms.get(&node.entity_id).map(|wf| {
+                if !wf.audio.filename.is_empty() { wf.audio.filename.clone() } else { wf.filename.clone() }
+            }).unwrap_or_else(|| "Audio".to_string())
         }
         LayerNodeKind::EffectRegion => {
             effect_regions.get(&node.entity_id).map(|er| er.name.clone())

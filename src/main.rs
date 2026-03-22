@@ -7,6 +7,7 @@ mod entity_id;
 mod events;
 mod gpu;
 mod grid;
+mod icons;
 mod history;
 mod instruments;
 mod layers;

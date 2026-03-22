@@ -1,3 +1,8 @@
+- 2026-03-22: fix: layers panel waveform name now syncs with canvas name (reads audio.filename, refreshes on rename commit) (35.4k loc)
+- 2026-03-22: feat: right-click rename (waveforms + effect regions) and delete on layer nodes in layers panel (35.4k loc)
+- 2026-03-22: feat: right-click delete on layer nodes (instruments, samples, effects, plugin blocks) in layers panel (35.4k loc)
+- 2026-03-22: feat: add Tabler Icons font, use tabler metronome icon; IconEntry now carries font_family for mixed icon fonts (35.4k loc)
+- 2026-03-22: feat: replace geometric transport icons with Material Icons font via glyphon — timer, keyboard, play/pause, headphones rendered as icon glyphs (35.4k loc)
 - 2026-03-22: feat: input monitoring — headphone toggle in transport routes mic to output, with effect processing when recording in effect regions (35.4k loc)
 - 2026-03-22: feat: shift+scroll pans canvas horizontally (35.0k loc)
 - 2026-03-21: feat: layer dots now render entity color — waveform, midi, plugin use stored color; instrument/effect use theme fallback (35.0k loc)

@@ -56,10 +56,27 @@ impl App {
                             self.sample_browser.item_at(self.mouse_pos, sh, scale)
                         {
                             let entry = &self.sample_browser.entries[idx];
-                            self.browser_context_path = Some(entry.path.clone());
+                            let menu_ctx = match &entry.kind {
+                                ui::browser::EntryKind::LayerNode { id, kind, .. } => {
+                                    self.selected.clear();
+                                    let target = match kind {
+                                        crate::layers::LayerNodeKind::Waveform => HitTarget::Waveform(*id),
+                                        crate::layers::LayerNodeKind::Instrument => HitTarget::InstrumentRegion(*id),
+                                        crate::layers::LayerNodeKind::EffectRegion => HitTarget::EffectRegion(*id),
+                                        crate::layers::LayerNodeKind::PluginBlock => HitTarget::PluginBlock(*id),
+                                        crate::layers::LayerNodeKind::MidiClip => HitTarget::MidiClip(*id),
+                                    };
+                                    self.selected.push(target);
+                                    MenuContext::LayerNode { kind: *kind }
+                                }
+                                _ => {
+                                    self.browser_context_path = Some(entry.path.clone());
+                                    MenuContext::BrowserEntry
+                                }
+                            };
                             self.context_menu = Some(ContextMenu::new(
                                 self.mouse_pos,
-                                MenuContext::BrowserEntry,
+                                menu_ctx,
                                 &self.settings,
                             ));
                             self.request_redraw();
