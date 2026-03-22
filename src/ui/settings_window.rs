@@ -1,4 +1,4 @@
-use crate::settings::Settings;
+use crate::settings::{Settings, BUFFER_SIZE_OPTIONS};
 #[cfg(feature = "native")]
 use crate::settings::{available_driver_types, available_input_devices, available_output_devices};
 use crate::InstanceRaw;
@@ -97,6 +97,7 @@ pub struct SettingsWindow {
     pub cached_driver_types: Vec<String>,
     pub cached_input_devices: Vec<String>,
     pub cached_output_devices: Vec<String>,
+    pub cached_buffer_sizes: Vec<String>,
 }
 
 impl SettingsWindow {
@@ -118,6 +119,7 @@ impl SettingsWindow {
             cached_output_devices: available_output_devices(),
             #[cfg(not(feature = "native"))]
             cached_output_devices: vec!["No Device".to_string()],
+            cached_buffer_sizes: BUFFER_SIZE_OPTIONS.iter().map(|s| s.to_string()).collect(),
         }
     }
 
@@ -287,6 +289,7 @@ impl SettingsWindow {
             0 => &self.cached_driver_types,
             1 => &self.cached_input_devices,
             2 => &self.cached_output_devices,
+            4 => &self.cached_buffer_sizes,
             _ => &[],
         }
     }
@@ -305,6 +308,7 @@ impl SettingsWindow {
             0 => settings.audio_driver_type = value,
             1 => settings.audio_input_device = value,
             2 => settings.audio_output_device = value,
+            4 => { settings.buffer_size = value.parse().unwrap_or(512); }
             _ => {}
         }
     }
@@ -410,6 +414,23 @@ impl SettingsWindow {
                     self.open_dropdown = None;
                 } else {
                     self.open_dropdown = Some(3);
+                }
+                return true;
+            }
+        }
+
+        // Row 4 (Buffer Size) — handled via generic dropdown_options(4), but button needs special hit test
+        {
+            let (dp, ds) = self.dropdown_rect(4, screen_w, screen_h, scale);
+            if mouse[0] >= dp[0]
+                && mouse[0] <= dp[0] + ds[0]
+                && mouse[1] >= dp[1]
+                && mouse[1] <= dp[1] + ds[1]
+            {
+                if self.open_dropdown == Some(4) {
+                    self.open_dropdown = None;
+                } else {
+                    self.open_dropdown = Some(4);
                 }
                 return true;
             }
@@ -904,6 +925,47 @@ impl SettingsWindow {
             });
         }
 
+        // Row 4: Buffer Size dropdown
+        {
+            let (dp, ds) = self.dropdown_rect(4, screen_w, screen_h, scale);
+
+            // Separator above row 4
+            let row_top = wp[1] + SECTION_HEADER_HEIGHT * scale + 4.0 * ROW_HEIGHT * scale;
+            out.push(InstanceRaw {
+                position: [content_x + 16.0 * scale, row_top - 0.5 * scale],
+                size: [content_w - 32.0 * scale, 1.0 * scale],
+                color: [1.0, 1.0, 1.0, 0.04],
+                border_radius: 0.0,
+            });
+
+            // Dropdown border
+            out.push(InstanceRaw {
+                position: [dp[0] - 1.0, dp[1] - 1.0],
+                size: [ds[0] + 2.0, ds[1] + 2.0],
+                color: t.bg_window_header,
+                border_radius: dd_br + 1.0,
+            });
+
+            // Dropdown background
+            out.push(InstanceRaw {
+                position: dp,
+                size: ds,
+                color: t.bg_input,
+                border_radius: dd_br,
+            });
+
+            // Arrow indicator
+            let arrow_size = 6.0 * scale;
+            let arrow_x = dp[0] + ds[0] - 14.0 * scale;
+            let arrow_y = dp[1] + (ds[1] - arrow_size) * 0.5;
+            out.push(InstanceRaw {
+                position: [arrow_x, arrow_y],
+                size: [arrow_size, arrow_size],
+                color: [1.0, 1.0, 1.0, 0.3],
+                border_radius: arrow_size * 0.5,
+            });
+        }
+
         // Open dropdown popup
         if let Some(dd_idx) = self.open_dropdown {
             let options = self.dropdown_options(dd_idx);
@@ -938,7 +1000,13 @@ impl SettingsWindow {
                     border_radius: popup_br,
                 });
 
-                let current = Self::dropdown_current(settings, dd_idx);
+                let current_buf;
+                let current = if dd_idx == 4 {
+                    current_buf = settings.buffer_size.to_string();
+                    current_buf.as_str()
+                } else {
+                    Self::dropdown_current(settings, dd_idx)
+                };
                 for (j, opt) in options.iter().enumerate() {
                     let iy = popup_y + j as f32 * item_h;
                     if opt == current {
@@ -1383,6 +1451,40 @@ impl SettingsWindow {
                     });
                 }
 
+                // Row 4: Buffer Size
+                {
+                    let row_y = wp[1]
+                        + SECTION_HEADER_HEIGHT * scale
+                        + 4.0 * ROW_HEIGHT * scale;
+                    out.push(TextEntry {
+                        text: "Buffer Size".to_string(),
+                        x: content_x + ROW_LABEL_X * scale,
+                        y: row_y + (ROW_HEIGHT * scale - label_line) * 0.5,
+                        font_size: label_font,
+                        line_height: label_line,
+                        color: [210, 210, 218, 255],
+                        weight: 400,
+                        max_width: 300.0 * scale,
+                        bounds: None,
+                        center: false,
+                    });
+
+                    let current_text = settings.buffer_size.to_string();
+                    let (dp4, ds4) = self.dropdown_rect(4, screen_w, screen_h, scale);
+                    out.push(TextEntry {
+                        text: current_text,
+                        x: dp4[0] + 10.0 * scale,
+                        y: dp4[1] + (ds4[1] - dd_line) * 0.5,
+                        font_size: dd_font,
+                        line_height: dd_line,
+                        color: [210, 210, 218, 255],
+                        weight: 400,
+                        max_width: 300.0 * scale,
+                        bounds: None,
+                        center: false,
+                    });
+                }
+
                 // Row 3: Auto Clip Fades
                 {
                     let row_y = wp[1]
@@ -1424,7 +1526,13 @@ impl SettingsWindow {
                         let (dp, ds) = self.dropdown_rect(dd_idx, screen_w, screen_h, scale);
                         let item_h = DROPDOWN_ITEM_HEIGHT * scale;
                         let popup_y = dp[1] + ds[1] + 2.0 * scale;
-                        let current = Self::dropdown_current(settings, dd_idx);
+                        let current_buf;
+                        let current = if dd_idx == 4 {
+                            current_buf = settings.buffer_size.to_string();
+                            current_buf.as_str()
+                        } else {
+                            Self::dropdown_current(settings, dd_idx)
+                        };
 
                         for (j, opt) in options.iter().enumerate() {
                             let iy = popup_y + j as f32 * item_h;

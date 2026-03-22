@@ -108,6 +108,8 @@ pub struct SampleBrowser {
     pub hovered_sidebar: Option<usize>,
     /// Flattened layer tree rows for the Layers tab.
     pub layer_rows: Vec<FlatLayerRow>,
+    /// Inline rename state for a layer row: (entity_id, kind, current_text).
+    pub editing_browser_name: Option<(crate::entity_id::EntityId, LayerNodeKind, String)>,
 }
 
 impl SampleBrowser {
@@ -137,6 +139,7 @@ impl SampleBrowser {
             active_category: BrowserCategory::Samples,
             hovered_sidebar: None,
             layer_rows: Vec::new(),
+            editing_browser_name: None,
         }
     }
 
@@ -446,7 +449,7 @@ impl SampleBrowser {
         };
     }
 
-    pub fn build_instances(&self, settings: &crate::settings::Settings, _screen_w: f32, screen_h: f32, scale: f32) -> Vec<InstanceRaw> {
+    pub fn build_instances(&self, settings: &crate::settings::Settings, _screen_w: f32, screen_h: f32, scale: f32, selected_ids: &std::collections::HashSet<crate::entity_id::EntityId>) -> Vec<InstanceRaw> {
         let mut out = Vec::new();
         let w = self.panel_width(scale);
         let header_h = HEADER_HEIGHT * scale;
@@ -660,6 +663,20 @@ impl SampleBrowser {
                         color: settings.theme.bg_plugin,
                         border_radius: 0.0,
                     });
+                    let entry_entity_id = match &entry.kind {
+                        EntryKind::LayerNode { id, .. } => Some(*id),
+                        EntryKind::ProjectInstrument { id } => Some(*id),
+                        _ => None,
+                    };
+                    if entry_entity_id.map_or(false, |id| selected_ids.contains(&id)) {
+                        let a = settings.theme.accent;
+                        out.push(InstanceRaw {
+                            position: [cx, y],
+                            size: [content_w, item_h],
+                            color: [a[0], a[1], a[2], 0.22],
+                            border_radius: 0.0,
+                        });
+                    }
                     if self.hovered_entry == Some(i) {
                         out.push(InstanceRaw {
                             position: [cx, y],
@@ -945,14 +962,25 @@ impl SampleBrowser {
                         },
                         _ => [185, 180, 210, 255],
                     };
+                    let entry_id = match &entry.kind {
+                        EntryKind::LayerNode { id, .. } => Some(*id),
+                        EntryKind::ProjectInstrument { id } => Some(*id),
+                        _ => None,
+                    };
+                    let (display_text, display_color) = match (entry_id, &self.editing_browser_name) {
+                        (Some(eid), Some((edit_id, _, text))) if eid == *edit_id => {
+                            (format!("{}|", text), [255u8, 255, 255, 255])
+                        }
+                        _ => (entry.name.clone(), color),
+                    };
                     out.push(TextEntry {
-                        text: entry.name.clone(),
+                        text: display_text,
                         x: text_x,
                         y: base_y + (item_h - line_h) * 0.5,
                         font_size: font_sz,
                         line_height: line_h,
                         max_width: w - text_x - 12.0 * scale,
-                        color,
+                        color: display_color,
                         weight: 400,
                         bounds: None,
                         center: false,

@@ -18,7 +18,8 @@ const FADER_TRACK_HEIGHT: f32 = 160.0;
 const FADER_TOP_OFFSET: f32 = 32.0;
 
 const PAN_KNOB_Y_OFFSET: f32 = 264.0;
-const PITCH_KNOB_Y_OFFSET: f32 = 348.0;
+const REVERSE_BUTTON_Y_OFFSET: f32 = 326.0;
+const PITCH_KNOB_Y_OFFSET: f32 = 368.0;
 
 
 pub struct VolFaderLayout {
@@ -82,6 +83,7 @@ pub struct RightWindow {
     pub warp_mode: WarpMode,
     pub sample_bpm: f32,
     pub pitch_semitones: f32,
+    pub is_reversed: bool,
     pub vol_dragging: bool,
     pub pan_dragging: bool,
     pub sample_bpm_dragging: bool,
@@ -128,6 +130,15 @@ impl RightWindow {
         let (pp, ps) = Self::panel_rect(screen_w, screen_h, scale);
         let cx = pp[0] + ps[0] * 0.5;
         let y = pp[1] + HEADER_HEIGHT * scale + PITCH_KNOB_Y_OFFSET * scale;
+        let w = 80.0 * scale;
+        let h = 24.0 * scale;
+        ([cx - w * 0.5, y - h * 0.5], [w, h])
+    }
+
+    fn reverse_button_rect(screen_w: f32, screen_h: f32, scale: f32) -> ([f32; 2], [f32; 2]) {
+        let (pp, ps) = Self::panel_rect(screen_w, screen_h, scale);
+        let cx = pp[0] + ps[0] * 0.5;
+        let y = pp[1] + HEADER_HEIGHT * scale + REVERSE_BUTTON_Y_OFFSET * scale;
         let w = 80.0 * scale;
         let h = 24.0 * scale;
         ([cx - w * 0.5, y - h * 0.5], [w, h])
@@ -184,6 +195,12 @@ impl RightWindow {
         let dx = pos[0] - layout.center[0];
         let dy = pos[1] - layout.center[1];
         dx * dx + dy * dy <= r * r
+    }
+
+    pub fn hit_test_reverse_button(&self, pos: [f32; 2], screen_w: f32, screen_h: f32, scale: f32) -> bool {
+        let (rp, rs) = Self::reverse_button_rect(screen_w, screen_h, scale);
+        pos[0] >= rp[0] && pos[0] <= rp[0] + rs[0]
+            && pos[1] >= rp[1] && pos[1] <= rp[1] + rs[1]
     }
 
     pub fn hit_test_warp_mode_button(&self, pos: [f32; 2], screen_w: f32, screen_h: f32, scale: f32) -> bool {
@@ -503,6 +520,16 @@ impl RightWindow {
             out.push(InstanceRaw { position: [x1 - thick, y1 - bracket_len], size: [thick, bracket_len], color, border_radius: 0.0 });
         }
 
+        // Reverse button
+        let (rev_pos, rev_size) = Self::reverse_button_rect(screen_w, screen_h, scale);
+        let rev_color = if self.is_reversed { settings.theme.accent } else { [0.2, 0.2, 0.25, 1.0] };
+        out.push(InstanceRaw {
+            position: rev_pos,
+            size: rev_size,
+            color: rev_color,
+            border_radius: 4.0 * scale,
+        });
+
         // Warp toggle button
         let (btn_pos, btn_size) = Self::warp_mode_button_rect(screen_w, screen_h, scale);
         let warp_on = self.warp_mode != WarpMode::Off;
@@ -819,6 +846,21 @@ impl RightWindow {
             weight: 400,
             bounds: None,
             center: true,
+        });
+
+        // Reverse button text
+        let (rev_pos, rev_size) = Self::reverse_button_rect(screen_w, screen_h, scale);
+        out.push(TextEntry {
+            text: "Reverse".to_string(),
+            x: rev_pos[0],
+            y: rev_pos[1] + (rev_size[1] - val_line) * 0.5,
+            font_size: val_font,
+            line_height: val_line,
+            max_width: rev_size[0],
+            color: [220, 220, 230, 240],
+            weight: 400,
+            bounds: None,
+            center: false,
         });
 
         // WARP label

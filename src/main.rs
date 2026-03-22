@@ -553,6 +553,8 @@ struct App {
     bpm_drag_overlap_snapshots: IndexMap<EntityId, WaveformView>,
     bpm_drag_overlap_temp_splits: Vec<EntityId>,
     last_click_time: TimeInstant,
+    last_browser_click_time: TimeInstant,
+    last_browser_click_idx: Option<usize>,
     last_vol_text_click_time: TimeInstant,
     last_vol_knob_click_time: TimeInstant,
     last_pan_knob_click_time: TimeInstant,
@@ -682,6 +684,8 @@ impl App {
             bpm_drag_overlap_snapshots: IndexMap::new(),
             bpm_drag_overlap_temp_splits: Vec::new(),
             last_click_time: TimeInstant::now(),
+            last_browser_click_time: TimeInstant::now(),
+            last_browser_click_idx: None,
             last_vol_text_click_time: TimeInstant::now(),
             last_vol_knob_click_time: TimeInstant::now(),
             last_pan_knob_click_time: TimeInstant::now(),
@@ -1042,6 +1046,7 @@ impl App {
                         warp_mode: ui::waveform::WarpMode::Off,
                         sample_bpm: if state.bpm > 0.0 { state.bpm } else { DEFAULT_BPM },
                         pitch_semitones: 0.0,
+                        is_reversed: false,
                         disabled: sw.disabled,
                         sample_offset_px: sw.sample_offset_px,
                         automation: AutomationData::from_stored(&sw.automation_volume, &sw.automation_pan),
@@ -1192,7 +1197,7 @@ impl App {
         } else {
             Some(settings.audio_output_device.as_str())
         };
-        let audio_engine = AudioEngine::new_with_device(device_name);
+        let audio_engine = AudioEngine::new_with_device(device_name, settings.buffer_size as usize);
         if let Some(ref engine) = audio_engine {
             let actual = engine.device_name();
             if settings.audio_output_device != actual {
@@ -1456,6 +1461,8 @@ impl App {
             bpm_drag_overlap_snapshots: IndexMap::new(),
             bpm_drag_overlap_temp_splits: Vec::new(),
             last_click_time: TimeInstant::now(),
+            last_browser_click_time: TimeInstant::now(),
+            last_browser_click_idx: None,
             last_vol_text_click_time: TimeInstant::now(),
             last_vol_knob_click_time: TimeInstant::now(),
             last_pan_knob_click_time: TimeInstant::now(),
@@ -1986,6 +1993,7 @@ impl App {
                 warp_mode: ui::waveform::WarpMode::Off,
                 sample_bpm: self.bpm,
                 pitch_semitones: 0.0,
+                is_reversed: false,
                 disabled: sw.disabled,
                 sample_offset_px: sw.sample_offset_px,
                 automation: AutomationData::from_stored(&sw.automation_volume, &sw.automation_pan),
@@ -2223,7 +2231,7 @@ impl App {
                     if !path.is_empty() {
                         if let Some(gui) = vst3_gui::Vst3Gui::open(&path, &pb.plugin_id, &pb.plugin_name) {
                             gui.hide();
-                            gui.setup_processing(48000.0, 512);
+                            gui.setup_processing(48000.0, self.settings.buffer_size as i32);
                             if let Some(state) = &pb.pending_state {
                                 gui.set_state(state);
                                 println!("  Restored plugin state ({} bytes)", state.len());
@@ -2828,6 +2836,7 @@ impl App {
                     warp_mode: wf.warp_mode,
                     sample_bpm: wf.sample_bpm,
                     pitch_semitones: wf.pitch_semitones,
+                    is_reversed: wf.is_reversed,
                     vol_dragging: false,
                     pan_dragging: false,
                     sample_bpm_dragging: false,
@@ -3405,6 +3414,7 @@ impl App {
                 warp_mode: ui::waveform::WarpMode::Off,
                 sample_bpm: self.bpm,
                 pitch_semitones: 0.0,
+                is_reversed: false,
                 disabled: false,
                 sample_offset_px: 0.0,
                 automation: AutomationData::new(),
@@ -4745,7 +4755,9 @@ impl App {
                             sample_rate: old.sample_rate,
                             filename: old.filename.clone(),
                         });
-                        self.waveforms.get_mut(&wf_id).unwrap().audio = new_audio;
+                        let wf_mut = self.waveforms.get_mut(&wf_id).unwrap();
+                        wf_mut.audio = new_audio;
+                        wf_mut.is_reversed = !wf_mut.is_reversed;
 
                         let after = self.waveforms[&wf_id].clone();
                         self.push_op(operations::Operation::UpdateWaveform { id: wf_id, before, after });
@@ -4827,6 +4839,7 @@ impl App {
                             if let Some(wf) = self.waveforms.get_mut(&i) { wf.color = color; }
                         }
                     }
+                    self.mark_dirty();
                 }
             }
             CommandAction::MoveLayerUp => {
@@ -5015,6 +5028,7 @@ impl App {
             warp_mode: ui::waveform::WarpMode::Off,
             sample_bpm: self.bpm,
             pitch_semitones: 0.0,
+            is_reversed: false,
             disabled: false,
             sample_offset_px: 0.0,
             automation: AutomationData::new(),
@@ -5049,6 +5063,7 @@ impl App {
             warp_mode: ui::waveform::WarpMode::Off,
             sample_bpm: self.bpm,
             pitch_semitones: 0.0,
+            is_reversed: false,
             disabled: false,
             sample_offset_px: 0.0,
             automation: AutomationData::new(),
@@ -5847,6 +5862,7 @@ impl App {
             warp_mode: ui::waveform::WarpMode::Off,
             sample_bpm: self.bpm,
             pitch_semitones: 0.0,
+            is_reversed: false,
             disabled: true, // disabled until loaded
             sample_offset_px: 0.0,
             automation: AutomationData::new(),
@@ -5899,6 +5915,7 @@ impl App {
                 warp_mode: ui::waveform::WarpMode::Off,
                 sample_bpm: project_bpm,
                 pitch_semitones: 0.0,
+                is_reversed: false,
                 disabled: false,
                 sample_offset_px: 0.0,
                 automation: AutomationData::new(),

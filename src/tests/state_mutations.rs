@@ -31,6 +31,7 @@ fn make_waveform(x: f32, y: f32) -> WaveformView {
         warp_mode: WarpMode::Off,
         sample_bpm: 120.0,
         pitch_semitones: 0.0,
+        is_reversed: false,
         disabled: false,
         sample_offset_px: 0.0,
         automation: AutomationData::new(),
@@ -62,6 +63,7 @@ fn make_waveform_with_samples(x: f32, y: f32, num_samples: usize) -> WaveformVie
         warp_mode: WarpMode::Off,
         sample_bpm: 120.0,
         pitch_semitones: 0.0,
+        is_reversed: false,
         disabled: false,
         sample_offset_px: 0.0,
         automation: AutomationData::new(),
@@ -381,4 +383,20 @@ fn test_auto_clip_fades_default_on() {
     let fade_off =
         if app2.settings.auto_clip_fades { DEFAULT_AUTO_FADE_PX } else { 0.0 };
     assert_eq!(fade_off, 0.0);
+}
+
+#[test]
+fn test_buffer_size_default_and_options() {
+    use crate::settings::BUFFER_SIZE_OPTIONS;
+
+    let app = App::new_headless();
+    assert_eq!(app.settings.buffer_size, 512, "buffer_size should default to 512");
+
+    assert!(BUFFER_SIZE_OPTIONS.contains(&512), "512 must be a valid option");
+    assert!(BUFFER_SIZE_OPTIONS.contains(&256), "256 must be a valid option");
+    assert!(BUFFER_SIZE_OPTIONS.contains(&1024), "1024 must be a valid option");
+
+    let mut app2 = App::new_headless();
+    app2.settings.buffer_size = 256;
+    assert_eq!(app2.settings.buffer_size, 256);
 }

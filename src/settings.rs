@@ -153,6 +153,9 @@ fn default_auto_clip_fades() -> bool { true }
 fn default_metronome_enabled() -> bool { false }
 fn default_primary_hue() -> f32 { 216.0 }
 fn default_theme_preset() -> String { "Default".to_string() }
+fn default_buffer_size() -> u32 { 512 }
+
+pub const BUFFER_SIZE_OPTIONS: &[u32] = &[32, 64, 128, 256, 512, 1024, 2048];
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Settings {
@@ -187,6 +190,8 @@ pub struct Settings {
     pub theme_preset: String,
     #[serde(default = "default_metronome_enabled")]
     pub metronome_enabled: bool,
+    #[serde(default = "default_buffer_size")]
+    pub buffer_size: u32,
     #[serde(skip)]
     pub theme: crate::theme::RuntimeTheme,
 }
@@ -251,6 +256,7 @@ impl Default for Settings {
             primary_hue: 216.0,
             theme_preset: "Default".to_string(),
             metronome_enabled: false,
+            buffer_size: 512,
             theme: crate::theme::RuntimeTheme::default(),
         }
     }

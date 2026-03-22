@@ -173,6 +173,49 @@ impl App {
 
         MouseButton::Left => match state {
             ElementState::Pressed => {
+                // Cancel browser inline rename if clicking outside the editing entry
+                if self.sample_browser.editing_browser_name.is_some() {
+                    let (_, sh, scale) = self.screen_info();
+                    let still_on_entry = self.sample_browser.visible
+                        && self.sample_browser.contains(self.mouse_pos, sh, scale)
+                        && self.sample_browser.item_at(self.mouse_pos, sh, scale)
+                            .and_then(|idx| self.sample_browser.entries.get(idx))
+                            .and_then(|e| match &e.kind {
+                                ui::browser::EntryKind::LayerNode { id, .. } => Some(*id),
+                                ui::browser::EntryKind::ProjectInstrument { id } => Some(*id),
+                                _ => None,
+                            })
+                            == self.sample_browser.editing_browser_name.as_ref().map(|(id, _, _)| *id);
+                    if !still_on_entry {
+                        self.sample_browser.editing_browser_name = None;
+                        self.sample_browser.text_dirty = true;
+                        self.request_redraw();
+                    }
+                }
+                // Cancel canvas effect-region name editing if clicking outside that region
+                if let Some((id, _)) = &self.editing_effect_name.clone() {
+                    let world = self.camera.screen_to_world(self.mouse_pos);
+                    let still_on = self.effect_regions.get(id).map_or(false, |er| {
+                        world[0] >= er.position[0] && world[0] <= er.position[0] + er.size[0]
+                            && world[1] >= er.position[1] && world[1] <= er.position[1] + er.size[1]
+                    });
+                    if !still_on {
+                        self.editing_effect_name = None;
+                        self.request_redraw();
+                    }
+                }
+                // Cancel canvas waveform name editing if clicking outside that waveform
+                if let Some((id, _)) = &self.editing_waveform_name.clone() {
+                    let world = self.camera.screen_to_world(self.mouse_pos);
+                    let still_on = self.waveforms.get(id).map_or(false, |wf| {
+                        world[0] >= wf.position[0] && world[0] <= wf.position[0] + wf.size[0]
+                            && world[1] >= wf.position[1] && world[1] <= wf.position[1] + wf.size[1]
+                    });
+                    if !still_on {
+                        self.editing_waveform_name = None;
+                        self.request_redraw();
+                    }
+                }
                 if self.editing_bpm.is_editing() {
                     let (sw, sh, scale) = self.screen_info();
                     if !TransportPanel::hit_bpm(self.mouse_pos, sw, sh, scale) {
@@ -246,6 +289,7 @@ impl App {
                     if inside {
                         // Try audio dropdown interaction first
                         let prev_output_device = self.settings.audio_output_device.clone();
+                        let prev_buffer_size = self.settings.buffer_size;
                         let audio_consumed =
                             self.settings_window.as_mut().map_or(false, |sw| {
                                 sw.handle_audio_click(
@@ -283,7 +327,7 @@ impl App {
                                         Some(self.settings.audio_output_device.as_str())
                                     };
                                 self.audio_engine =
-                                    AudioEngine::new_with_device(device_name);
+                                    AudioEngine::new_with_device(device_name, self.settings.buffer_size as usize);
 
                                 if let Some(ref engine) = self.audio_engine {
                                     let actual = engine.device_name().to_string();
@@ -305,6 +349,38 @@ impl App {
                                     println!("[audio] Warning: failed to create audio engine for device");
                                 }
 
+                                self.sync_audio_clips();
+                                if was_playing {
+                                    if let Some(engine) = &self.audio_engine {
+                                        engine.toggle_playback();
+                                    }
+                                }
+                            }
+
+                            if self.settings.buffer_size != prev_buffer_size {
+                                println!(
+                                    "[audio] Buffer size changed: {} -> {}",
+                                    prev_buffer_size, self.settings.buffer_size
+                                );
+
+                                let old_pos = self.audio_engine.as_ref().map(|e| e.position_seconds());
+                                let old_vol = self.audio_engine.as_ref().map(|e| e.master_volume());
+                                let was_playing = self.audio_engine.as_ref().map_or(false, |e| e.is_playing());
+
+                                let device_name = if self.settings.audio_output_device == "No Device" {
+                                    None
+                                } else {
+                                    Some(self.settings.audio_output_device.as_str())
+                                };
+                                self.audio_engine = AudioEngine::new_with_device(
+                                    device_name,
+                                    self.settings.buffer_size as usize,
+                                );
+
+                                if let Some(ref engine) = self.audio_engine {
+                                    if let Some(pos) = old_pos { engine.seek_to_seconds(pos); }
+                                    if let Some(vol) = old_vol { engine.set_master_volume(vol); }
+                                }
                                 self.sync_audio_clips();
                                 if was_playing {
                                     if let Some(engine) = &self.audio_engine {
@@ -411,11 +487,17 @@ impl App {
                         let hit_vol = rw.hit_test_vol_knob(self.mouse_pos, sw, sh, scale);
                         let hit_vol_track = rw.hit_test_vol_track(self.mouse_pos, sw, sh, scale);
                         let hit_pan = rw.hit_test_pan_knob(self.mouse_pos, sw, sh, scale);
+                        let hit_reverse_btn = rw.hit_test_reverse_button(self.mouse_pos, sw, sh, scale);
                         let hit_warp_btn = rw.hit_test_warp_mode_button(self.mouse_pos, sw, sh, scale);
                         let hit_warp_sel = rw.hit_test_warp_mode_selector(self.mouse_pos, sw, sh, scale);
                         let hit_sbpm_text = rw.hit_test_sample_bpm_text(self.mouse_pos, sw, sh, scale);
                         let hit_pitch_text = rw.hit_test_pitch_text(self.mouse_pos, sw, sh, scale);
-                        if hit_warp_btn {
+                        if hit_reverse_btn {
+                            self.execute_command(ui::palette::CommandAction::ReverseSample);
+                            self.update_right_window();
+                            self.request_redraw();
+                            return;
+                        } else if hit_warp_btn {
                             // Toggle warp on/off (default to Semitone when enabling)
                             let wf_id = rw.waveform_id;
                             let current = rw.warp_mode;
@@ -820,6 +902,30 @@ impl App {
                                     self.focus_instrument_region(*id);
                                 }
                                 ui::browser::EntryKind::LayerNode { id, kind, has_children, .. } => {
+                                    // Double-click enters inline rename in the browser
+                                    let now = TimeInstant::now();
+                                    let is_dbl = now.duration_since(self.last_browser_click_time).as_millis() < 400
+                                        && self.last_browser_click_idx == Some(idx);
+                                    self.last_browser_click_time = now;
+                                    self.last_browser_click_idx = Some(idx);
+                                    if is_dbl {
+                                        use crate::layers::LayerNodeKind;
+                                        let initial_text = match kind {
+                                            LayerNodeKind::Waveform => self.waveforms.get(id)
+                                                .map(|wf| if !wf.audio.filename.is_empty() { wf.audio.filename.clone() } else { wf.filename.clone() })
+                                                .unwrap_or_default(),
+                                            LayerNodeKind::EffectRegion => self.effect_regions.get(id)
+                                                .map(|er| er.name.clone())
+                                                .unwrap_or_default(),
+                                            _ => String::new(),
+                                        };
+                                        if matches!(kind, LayerNodeKind::Waveform | LayerNodeKind::EffectRegion) {
+                                            self.sample_browser.editing_browser_name = Some((*id, *kind, initial_text));
+                                            self.sample_browser.text_dirty = true;
+                                            self.request_redraw();
+                                            return;
+                                        }
+                                    }
                                     if *has_children {
                                         crate::layers::toggle_expanded(&mut self.layer_tree, *id);
                                         self.refresh_project_browser_entries();

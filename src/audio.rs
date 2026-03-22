@@ -12,7 +12,7 @@ use symphonia::core::probe::Hint;
 pub use crate::grid::PIXELS_PER_SECOND;
 pub use crate::ui::waveform::AudioClipData;
 
-const EFFECT_BLOCK_SIZE: usize = 512;
+const DEFAULT_EFFECT_BLOCK_SIZE: usize = 512;
 
 // ---------------------------------------------------------------------------
 // Lock-free SPSC ring buffer for input monitoring
@@ -200,10 +200,10 @@ fn clip_fade_gain(clip_t: f64, duration: f64, fade_in: f64, fade_out: f64, fade_
 
 impl AudioEngine {
     pub fn new() -> Option<Self> {
-        Self::new_with_device(None)
+        Self::new_with_device(None, DEFAULT_EFFECT_BLOCK_SIZE)
     }
 
-    pub fn new_with_device(device_name: Option<&str>) -> Option<Self> {
+    pub fn new_with_device(device_name: Option<&str>, effect_block_size: usize) -> Option<Self> {
         let host = cpal::default_host();
         let device = match device_name {
             Some(name) if name != "No Device" => {
@@ -280,17 +280,17 @@ impl AudioEngine {
         let mon_in_sr = monitor_input_sample_rate.clone();
         let sr = sample_rate as f64;
 
-        let mut fx_buf_l = vec![0.0f32; EFFECT_BLOCK_SIZE];
-        let mut fx_buf_r = vec![0.0f32; EFFECT_BLOCK_SIZE];
-        let mut fx_out_l = vec![0.0f32; EFFECT_BLOCK_SIZE];
-        let mut fx_out_r = vec![0.0f32; EFFECT_BLOCK_SIZE];
-        let mut inst_out_l = vec![0.0f32; EFFECT_BLOCK_SIZE];
-        let mut inst_out_r = vec![0.0f32; EFFECT_BLOCK_SIZE];
+        let mut fx_buf_l = vec![0.0f32; effect_block_size];
+        let mut fx_buf_r = vec![0.0f32; effect_block_size];
+        let mut fx_out_l = vec![0.0f32; effect_block_size];
+        let mut fx_out_r = vec![0.0f32; effect_block_size];
+        let mut inst_out_l = vec![0.0f32; effect_block_size];
+        let mut inst_out_r = vec![0.0f32; effect_block_size];
         let mut mon_raw = vec![0.0f32; 8192];
         let mut mon_fx_l = vec![0.0f32; 4096];
         let mut mon_fx_r = vec![0.0f32; 4096];
-        let mut mon_fx_out_l = vec![0.0f32; EFFECT_BLOCK_SIZE];
-        let mut mon_fx_out_r = vec![0.0f32; EFFECT_BLOCK_SIZE];
+        let mut mon_fx_out_l = vec![0.0f32; effect_block_size];
+        let mut mon_fx_out_r = vec![0.0f32; effect_block_size];
         let mut mon_debug_counter: u32 = 0;
         let mut was_playing = false;
         let mut met_phase: f64 = 0.0;
@@ -418,7 +418,7 @@ impl AudioEngine {
                                 // Process block-by-block through plugin chain
                                 let mut offset = 0;
                                 while offset < frames {
-                                    let block_len = (frames - offset).min(EFFECT_BLOCK_SIZE);
+                                    let block_len = (frames - offset).min(effect_block_size);
                                     let t_start = current_time + offset as f64 / sr;
                                     let t_end = t_start + block_len as f64 / sr;
                                     let mid_t = (t_start + t_end) * 0.5;
@@ -551,7 +551,7 @@ impl AudioEngine {
 
                             let mut offset = 0;
                             while offset < frames {
-                                let block_len = (frames - offset).min(EFFECT_BLOCK_SIZE);
+                                let block_len = (frames - offset).min(effect_block_size);
                                 let t_start = current_time + offset as f64 / sr;
                                 let t_end = t_start + block_len as f64 / sr;
                                 let mid_t = (t_start + t_end) * 0.5;
@@ -600,8 +600,8 @@ impl AudioEngine {
                                         inst_out_r[..block_len].fill(0.0);
 
                                         let in_ch = gui.audio_input_channels();
-                                        let silent_buf = [0.0f32; EFFECT_BLOCK_SIZE];
-                                        let silent_ref: &[f32] = &silent_buf[..block_len];
+                                        let silent_buf = vec![0.0f32; block_len];
+                                        let silent_ref: &[f32] = &silent_buf[..];
 
                                         let inputs: Vec<&[f32]> = (0..in_ch).map(|_| silent_ref).collect();
                                         let mut outputs: Vec<&mut [f32]> = vec![
@@ -1439,10 +1439,11 @@ pub fn render_to_wav(
         dry_mix[i] = mix;
     }
 
-    let mut fx_buf_l = vec![0.0f32; EFFECT_BLOCK_SIZE];
-    let mut fx_buf_r = vec![0.0f32; EFFECT_BLOCK_SIZE];
-    let mut fx_out_l = vec![0.0f32; EFFECT_BLOCK_SIZE];
-    let mut fx_out_r = vec![0.0f32; EFFECT_BLOCK_SIZE];
+    let effect_block_size = DEFAULT_EFFECT_BLOCK_SIZE;
+    let mut fx_buf_l = vec![0.0f32; effect_block_size];
+    let mut fx_buf_r = vec![0.0f32; effect_block_size];
+    let mut fx_out_l = vec![0.0f32; effect_block_size];
+    let mut fx_out_r = vec![0.0f32; effect_block_size];
 
     for region in effect_regions {
         let region_start_secs = region.x_start_px as f64 / PIXELS_PER_SECOND as f64;
@@ -1459,7 +1460,7 @@ pub fn render_to_wav(
 
         let mut offset = 0;
         while offset < total_frames {
-            let block_len = (total_frames - offset).min(EFFECT_BLOCK_SIZE);
+            let block_len = (total_frames - offset).min(effect_block_size);
             let t_start = start_secs + offset as f64 / sr;
             let t_end = t_start + block_len as f64 / sr;
             let mid_t = (t_start + t_end) * 0.5;

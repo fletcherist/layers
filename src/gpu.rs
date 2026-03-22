@@ -722,6 +722,7 @@ impl Gpu {
         input_monitoring: bool,
         text_notes: &indexmap::IndexMap<crate::entity_id::EntityId, crate::text_note::TextNote>,
         editing_text_note: Option<(crate::entity_id::EntityId, usize)>,
+        selected_ids: &std::collections::HashSet<crate::entity_id::EntityId>,
     ) {
         let w = self.config.width as f32;
         let h = self.config.height as f32;
@@ -764,7 +765,7 @@ impl Gpu {
         let mut overlay_instances: Vec<InstanceRaw> = Vec::new();
 
         if let Some(br) = sample_browser {
-            overlay_instances.extend(br.build_instances(settings, w, h, self.scale_factor));
+            overlay_instances.extend(br.build_instances(settings, w, h, self.scale_factor, selected_ids));
         }
 
         if let Some(rw) = right_window {

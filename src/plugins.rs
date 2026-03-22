@@ -64,7 +64,7 @@ impl App {
                 if !path.is_empty() {
                     if let Some(gui) = vst3_gui::Vst3Gui::open(&path, &pb.plugin_id, &pb.plugin_name) {
                         gui.hide();
-                        gui.setup_processing(48000.0, 512);
+                        gui.setup_processing(48000.0, self.settings.buffer_size as i32);
                         if let Some(state) = &pb.pending_state {
                             gui.set_state(state);
                             println!("  Restored plugin state ({} bytes)", state.len());
@@ -96,7 +96,7 @@ impl App {
                 if !path.is_empty() {
                     if let Some(gui) = vst3_gui::Vst3Gui::open(&path, &ir.plugin_id, &ir.plugin_name) {
                         gui.hide();
-                        gui.setup_processing(48000.0, 512);
+                        gui.setup_processing(48000.0, self.settings.buffer_size as i32);
                         if let Some(state) = &ir.pending_state {
                             gui.set_state(state);
                         }
@@ -135,7 +135,7 @@ impl App {
     pub(crate) fn add_plugin_block(&mut self, position: [f32; 2], plugin_id: &str, plugin_name: &str) {
         self.ensure_plugins_scanned();
         let _sample_rate = 48000.0;
-        let _block_size = 512;
+        let _block_size = self.settings.buffer_size;
 
         let plugin_path = self
             .plugin_registry
@@ -246,7 +246,7 @@ impl App {
             }
 
             if let Some(gui) = vst3_gui::Vst3Gui::open(&path, &uid, &name) {
-                gui.setup_processing(48000.0, 512);
+                gui.setup_processing(48000.0, self.settings.buffer_size as i32);
                 if let Some(state) = saved_state {
                     if !state.is_empty() {
                         gui.set_state(&state);
@@ -326,7 +326,7 @@ impl App {
             let path_str = plugin_path.to_string_lossy().to_string();
             if !path_str.is_empty() {
                 if let Some(gui) = vst3_gui::Vst3Gui::open(&path_str, plugin_id, plugin_name) {
-                    if gui.setup_processing(48000.0, 512) {
+                    if gui.setup_processing(48000.0, self.settings.buffer_size as i32) {
                         println!("  Set up audio processing for instrument '{}'", plugin_name);
                     } else {
                         println!("  Warning: audio processing setup failed for '{}'", plugin_name);

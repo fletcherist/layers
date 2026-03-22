@@ -885,6 +885,85 @@ impl App {
                 }
             }
 
+            // --- browser inline name editing input ---
+            if self.sample_browser.editing_browser_name.is_some() {
+                match &event.logical_key {
+                    Key::Named(NamedKey::Escape) => {
+                        self.sample_browser.editing_browser_name = None;
+                        self.sample_browser.text_dirty = true;
+                        self.request_redraw();
+                        return;
+                    }
+                    Key::Named(NamedKey::Enter) => {
+                        if let Some((id, kind, text)) = self.sample_browser.editing_browser_name.take() {
+                            use crate::layers::LayerNodeKind;
+                            match kind {
+                                LayerNodeKind::Waveform => {
+                                    if self.waveforms.contains_key(&id) {
+                                        let before = self.waveforms[&id].clone();
+                                        let wf = self.waveforms.get_mut(&id).unwrap();
+                                        let name = if text.trim().is_empty() {
+                                            wf.audio.filename.clone()
+                                        } else {
+                                            text
+                                        };
+                                        let mut new_audio = (*wf.audio).clone();
+                                        new_audio.filename = name;
+                                        wf.audio = std::sync::Arc::new(new_audio);
+                                        let after = self.waveforms[&id].clone();
+                                        self.push_op(crate::operations::Operation::UpdateWaveform { id, before, after });
+                                        self.mark_dirty();
+                                    }
+                                }
+                                LayerNodeKind::EffectRegion => {
+                                    if self.effect_regions.contains_key(&id) {
+                                        let before = self.effect_regions[&id].clone();
+                                        let name = if text.trim().is_empty() {
+                                            "effects".to_string()
+                                        } else {
+                                            text
+                                        };
+                                        self.effect_regions.get_mut(&id).unwrap().name = name;
+                                        let after = self.effect_regions[&id].clone();
+                                        self.push_op(crate::operations::Operation::UpdateEffectRegion { id, before, after });
+                                        self.mark_dirty();
+                                    }
+                                }
+                                _ => {}
+                            }
+                        }
+                        self.sample_browser.text_dirty = true;
+                        self.request_redraw();
+                        return;
+                    }
+                    Key::Named(NamedKey::Backspace) => {
+                        if let Some((_, _, ref mut text)) = self.sample_browser.editing_browser_name {
+                            text.pop();
+                        }
+                        self.sample_browser.text_dirty = true;
+                        self.request_redraw();
+                        return;
+                    }
+                    Key::Named(NamedKey::Space) => {
+                        if let Some((_, _, ref mut text)) = self.sample_browser.editing_browser_name {
+                            text.push(' ');
+                        }
+                        self.sample_browser.text_dirty = true;
+                        self.request_redraw();
+                        return;
+                    }
+                    Key::Character(ch) if !self.cmd_held() => {
+                        if let Some((_, _, ref mut text)) = self.sample_browser.editing_browser_name {
+                            text.push_str(ch.as_ref());
+                        }
+                        self.sample_browser.text_dirty = true;
+                        self.request_redraw();
+                        return;
+                    }
+                    _ => {}
+                }
+            }
+
             // --- effect region name editing input ---
             if self.editing_effect_name.is_some() {
                 match &event.logical_key {
@@ -1369,20 +1448,46 @@ impl App {
                                 self.open_add_folder_dialog();
                             }
                             "r" => {
-                                let has_er = self
-                                    .selected
-                                    .iter()
-                                    .any(|t| matches!(t, HitTarget::EffectRegion(_)));
-                                let has_wf = self
-                                    .selected
-                                    .iter()
-                                    .any(|t| matches!(t, HitTarget::Waveform(_)));
-                                if has_er {
-                                    self.execute_command(CommandAction::RenameEffectRegion);
-                                } else if has_wf {
-                                    self.execute_command(CommandAction::RenameSample);
+                                let (_, sh, scale) = self.screen_info();
+                                let mouse_over_layers = self.sample_browser.visible
+                                    && self.sample_browser.contains(self.mouse_pos, sh, scale)
+                                    && self.sample_browser.active_category == ui::browser::BrowserCategory::Layers;
+                                if mouse_over_layers {
+                                    use crate::layers::LayerNodeKind;
+                                    let browser_target = self.selected.iter().find_map(|t| match t {
+                                        HitTarget::Waveform(id) => Some((*id, LayerNodeKind::Waveform)),
+                                        HitTarget::EffectRegion(id) => Some((*id, LayerNodeKind::EffectRegion)),
+                                        _ => None,
+                                    });
+                                    if let Some((id, kind)) = browser_target {
+                                        let initial_text = match kind {
+                                            LayerNodeKind::Waveform => self.waveforms.get(&id)
+                                                .map(|wf| if !wf.audio.filename.is_empty() { wf.audio.filename.clone() } else { wf.filename.clone() })
+                                                .unwrap_or_default(),
+                                            LayerNodeKind::EffectRegion => self.effect_regions.get(&id)
+                                                .map(|er| er.name.clone())
+                                                .unwrap_or_default(),
+                                            _ => String::new(),
+                                        };
+                                        self.sample_browser.editing_browser_name = Some((id, kind, initial_text));
+                                        self.sample_browser.text_dirty = true;
+                                    }
                                 } else {
-                                    self.toggle_recording();
+                                    let has_er = self
+                                        .selected
+                                        .iter()
+                                        .any(|t| matches!(t, HitTarget::EffectRegion(_)));
+                                    let has_wf = self
+                                        .selected
+                                        .iter()
+                                        .any(|t| matches!(t, HitTarget::Waveform(_)));
+                                    if has_er {
+                                        self.execute_command(CommandAction::RenameEffectRegion);
+                                    } else if has_wf {
+                                        self.execute_command(CommandAction::RenameSample);
+                                    } else {
+                                        self.toggle_recording();
+                                    }
                                 }
                                 self.request_redraw();
                             }

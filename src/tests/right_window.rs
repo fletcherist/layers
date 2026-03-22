@@ -33,6 +33,7 @@ fn make_waveform() -> WaveformView {
         warp_mode: WarpMode::Off,
         sample_bpm: 120.0,
         pitch_semitones: 0.0,
+        is_reversed: false,
         disabled: false,
         sample_offset_px: 0.0,
         automation: AutomationData::new(),
@@ -653,4 +654,78 @@ fn test_undo_sample_bpm_preserves_selection() {
     assert!((app.waveforms[&id].sample_bpm - 120.0).abs() < 1e-4, "sample_bpm should be restored");
     assert!(!app.selected.is_empty(), "selection should be preserved after undo");
     assert!(app.right_window.is_some(), "right_window should stay open after undo");
+}
+
+#[test]
+fn test_reverse_sample_toggles_is_reversed() {
+    use crate::ui::palette::CommandAction;
+
+    let mut app = App::new_headless();
+    let id = new_id();
+
+    let samples = vec![1.0f32, 2.0, 3.0, 4.0];
+    let audio = Arc::new(AudioData {
+        left_samples: Arc::new(samples.clone()),
+        right_samples: Arc::new(samples.clone()),
+        left_peaks: Arc::new(WaveformPeaks::empty()),
+        right_peaks: Arc::new(WaveformPeaks::empty()),
+        sample_rate: 48000,
+        filename: "test.wav".to_string(),
+    });
+    let mut wf = make_waveform();
+    wf.audio = audio;
+    app.waveforms.insert(id, wf);
+    app.audio_clips.insert(id, AudioClipData {
+        samples: Arc::new(samples),
+        sample_rate: 48000,
+        duration_secs: 1.0,
+    });
+
+    app.selected.push(HitTarget::Waveform(id));
+
+    assert!(!app.waveforms[&id].is_reversed);
+
+    // First reverse: samples flip, is_reversed = true
+    app.execute_command(CommandAction::ReverseSample);
+    assert!(app.waveforms[&id].is_reversed, "is_reversed should be true after first reverse");
+    assert_eq!(*app.waveforms[&id].audio.left_samples, vec![4.0, 3.0, 2.0, 1.0]);
+
+    // Second reverse: samples flip back, is_reversed = false
+    app.execute_command(CommandAction::ReverseSample);
+    assert!(!app.waveforms[&id].is_reversed, "is_reversed should be false after second reverse");
+    assert_eq!(*app.waveforms[&id].audio.left_samples, vec![1.0, 2.0, 3.0, 4.0]);
+}
+
+#[test]
+fn test_reverse_reflects_in_right_window() {
+    use crate::ui::palette::CommandAction;
+
+    let mut app = App::new_headless();
+    let id = new_id();
+
+    let samples = vec![1.0f32, 2.0, 3.0];
+    let audio = Arc::new(AudioData {
+        left_samples: Arc::new(samples.clone()),
+        right_samples: Arc::new(samples.clone()),
+        left_peaks: Arc::new(WaveformPeaks::empty()),
+        right_peaks: Arc::new(WaveformPeaks::empty()),
+        sample_rate: 48000,
+        filename: "test.wav".to_string(),
+    });
+    let mut wf = make_waveform();
+    wf.audio = audio;
+    app.waveforms.insert(id, wf);
+    app.audio_clips.insert(id, AudioClipData {
+        samples: Arc::new(samples),
+        sample_rate: 48000,
+        duration_secs: 1.0,
+    });
+
+    app.selected.push(HitTarget::Waveform(id));
+    app.update_right_window();
+    assert!(!app.right_window.as_ref().unwrap().is_reversed);
+
+    app.execute_command(CommandAction::ReverseSample);
+    app.update_right_window();
+    assert!(app.right_window.as_ref().unwrap().is_reversed, "right window should reflect reversed state");
 }

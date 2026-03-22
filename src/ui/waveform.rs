@@ -134,6 +134,8 @@ pub struct WaveformView {
     pub sample_bpm: f32,
     #[serde(default)]
     pub pitch_semitones: f32,
+    #[serde(default)]
+    pub is_reversed: bool,
     pub disabled: bool,
     pub sample_offset_px: f32,
     pub automation: AutomationData,

@@ -138,6 +138,15 @@ impl App {
 
             let computer_keyboard_armed = self.computer_keyboard_armed;
 
+            let selected_entity_ids: std::collections::HashSet<crate::entity_id::EntityId> = self.selected.iter()
+                .filter_map(|t| match t {
+                    HitTarget::Waveform(id) | HitTarget::InstrumentRegion(id) |
+                    HitTarget::EffectRegion(id) | HitTarget::PluginBlock(id) |
+                    HitTarget::MidiClip(id) | HitTarget::TextNote(id) => Some(*id),
+                    _ => None,
+                })
+                .collect();
+
             gpu.render(
                 &self.camera,
                 &self.cached_instances,
@@ -192,6 +201,7 @@ impl App {
                 self.input_monitoring,
                 &self.text_notes,
                 self.editing_text_note.as_ref().map(|e| (e.note_id, e.cursor)),
+                &selected_entity_ids,
             );
         }
         if self.toast_manager.has_active() {

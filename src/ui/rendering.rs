@@ -120,24 +120,6 @@ pub(crate) fn build_instances(out: &mut Vec<InstanceRaw>, ctx: &RenderContext) {
         }
     }
 
-    // --- origin axes ---
-    let axis_w = 2.0 / camera.zoom;
-    if world_top <= 0.0 && world_bottom >= 0.0 {
-        out.push(InstanceRaw {
-            position: [world_left, -axis_w * 0.5],
-            size: [world_right - world_left, axis_w],
-            color: [0.85, 0.25, 0.25, 0.5],
-            border_radius: 0.0,
-        });
-    }
-    if world_left <= 0.0 && world_right >= 0.0 {
-        out.push(InstanceRaw {
-            position: [-axis_w * 0.5, world_top],
-            size: [axis_w, world_bottom - world_top],
-            color: [0.25, 0.85, 0.25, 0.5],
-            border_radius: 0.0,
-        });
-    }
 
     // --- effect regions (rendered behind everything) ---
     for (&id, er) in ctx.effect_regions.iter() {
