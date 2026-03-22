@@ -69,6 +69,14 @@ impl App {
                 self.editing_midi_clip = None;
                 self.selected_midi_notes.clear();
             }
+        } else if self.modifiers.shift_key() {
+            // Shift+scroll → horizontal pan (Ableton-style).
+            // On macOS the OS converts Shift+vertical-scroll into a horizontal
+            // scroll event (dx != 0, dy == 0), so prefer dx; fall back to dy
+            // for plain mice that only emit a vertical delta.
+            let horizontal = if dx != 0.0 { dx } else { dy };
+            self.camera.position[0] -= horizontal / self.camera.zoom;
+            self.broadcast_cursor_if_connected();
         } else {
             self.camera.position[0] -= dx / self.camera.zoom;
             self.camera.position[1] -= dy / self.camera.zoom;
