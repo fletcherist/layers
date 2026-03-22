@@ -92,6 +92,7 @@ const SLIDERS: &[SliderDef] = &[
 pub struct SettingsWindow {
     pub active_category: SettingsCategory,
     pub hovered_category: Option<usize>,
+    pub hovered_dropdown_item: Option<usize>,
     pub dragging_slider: Option<usize>,
     pub open_dropdown: Option<usize>,
     pub cached_driver_types: Vec<String>,
@@ -105,6 +106,7 @@ impl SettingsWindow {
         Self {
             active_category: SettingsCategory::ThemeAndColors,
             hovered_category: None,
+            hovered_dropdown_item: None,
             dragging_slider: None,
             open_dropdown: None,
             #[cfg(feature = "native")]
@@ -134,6 +136,31 @@ impl SettingsWindow {
     pub fn contains(&self, pos: [f32; 2], screen_w: f32, screen_h: f32, scale: f32) -> bool {
         let (rp, rs) = self.win_rect(screen_w, screen_h, scale);
         pos[0] >= rp[0] && pos[0] <= rp[0] + rs[0] && pos[1] >= rp[1] && pos[1] <= rp[1] + rs[1]
+    }
+
+    /// Returns the popup rect ([pos], [size]) when a dropdown is open, or None.
+    pub fn open_dropdown_popup_rect(
+        &self,
+        screen_w: f32,
+        screen_h: f32,
+        scale: f32,
+    ) -> Option<([f32; 2], [f32; 2])> {
+        let dd_idx = self.open_dropdown?;
+        let (dp, ds) = self.dropdown_rect(dd_idx, screen_w, screen_h, scale);
+        let item_h = DROPDOWN_ITEM_HEIGHT * scale;
+        let item_count = if dd_idx == 3 {
+            Self::auto_clip_fades_options().len()
+        } else if self.active_category == SettingsCategory::ThemeAndColors && dd_idx == 0 {
+            THEME_PRESETS.len()
+        } else {
+            self.dropdown_options(dd_idx).len()
+        };
+        if item_count == 0 {
+            return None;
+        }
+        let popup_y = dp[1] + ds[1] + 2.0 * scale;
+        let popup_h = item_count as f32 * item_h;
+        Some(([dp[0], popup_y], [ds[0], popup_h]))
     }
 
     fn slider_value(settings: &Settings, idx: usize) -> f32 {
@@ -264,6 +291,7 @@ impl SettingsWindow {
 
     pub fn update_hover(&mut self, pos: [f32; 2], screen_w: f32, screen_h: f32, scale: f32) {
         self.hovered_category = self.category_at(pos, screen_w, screen_h, scale);
+        self.hovered_dropdown_item = self.dropdown_item_hit_test(pos, screen_w, screen_h, scale);
     }
 
     fn dropdown_rect(
@@ -346,14 +374,21 @@ impl SettingsWindow {
         scale: f32,
     ) -> Option<usize> {
         let dd_idx = self.open_dropdown?;
-        let options = self.dropdown_options(dd_idx);
-        if options.is_empty() {
+        let count = if self.active_category == SettingsCategory::ThemeAndColors && dd_idx == 0 {
+            THEME_PRESETS.len()
+        } else if dd_idx == 3 {
+            Self::auto_clip_fades_options().len()
+        } else {
+            let options = self.dropdown_options(dd_idx);
+            options.len()
+        };
+        if count == 0 {
             return None;
         }
         let (dp, ds) = self.dropdown_rect(dd_idx, screen_w, screen_h, scale);
         let item_h = DROPDOWN_ITEM_HEIGHT * scale;
         let popup_y = dp[1] + ds[1] + 2.0 * scale;
-        let popup_h = options.len() as f32 * item_h;
+        let popup_h = count as f32 * item_h;
 
         if mouse[0] >= dp[0]
             && mouse[0] <= dp[0] + ds[0]
@@ -362,7 +397,7 @@ impl SettingsWindow {
         {
             let rel = mouse[1] - popup_y;
             let idx = (rel / item_h) as usize;
-            if idx < options.len() {
+            if idx < count {
                 return Some(idx);
             }
         }
@@ -751,6 +786,13 @@ impl SettingsWindow {
                             color: t.option_highlight,
                             border_radius: 4.0 * scale,
                         });
+                    } else if self.hovered_dropdown_item == Some(j) {
+                        out.push(InstanceRaw {
+                            position: [dp[0] + 4.0 * scale, iy + 2.0 * scale],
+                            size: [ds[0] - 8.0 * scale, item_h - 4.0 * scale],
+                            color: t.item_hover,
+                            border_radius: 4.0 * scale,
+                        });
                     }
                 }
             }
@@ -1016,6 +1058,13 @@ impl SettingsWindow {
                             color: t.option_highlight,
                             border_radius: 4.0 * scale,
                         });
+                    } else if self.hovered_dropdown_item == Some(j) {
+                        out.push(InstanceRaw {
+                            position: [dp[0] + 4.0 * scale, iy + 2.0 * scale],
+                            size: [ds[0] - 8.0 * scale, item_h - 4.0 * scale],
+                            color: t.item_hover,
+                            border_radius: 4.0 * scale,
+                        });
                     }
                 }
             } else if dd_idx == 3 {
@@ -1054,6 +1103,13 @@ impl SettingsWindow {
                             position: [dp3[0] + 4.0 * scale, iy + 2.0 * scale],
                             size: [ds3[0] - 8.0 * scale, item_h - 4.0 * scale],
                             color: t.option_highlight,
+                            border_radius: 4.0 * scale,
+                        });
+                    } else if self.hovered_dropdown_item == Some(j) {
+                        out.push(InstanceRaw {
+                            position: [dp3[0] + 4.0 * scale, iy + 2.0 * scale],
+                            size: [ds3[0] - 8.0 * scale, item_h - 4.0 * scale],
+                            color: t.item_hover,
                             border_radius: 4.0 * scale,
                         });
                     }
@@ -1335,7 +1391,7 @@ impl SettingsWindow {
                 center: false,
                 });
 
-                // Theme preset popup text
+                // Theme preset popup text (bounds marker = popup entry)
                 if let Some(0) = self.open_dropdown {
                     let item_h = DROPDOWN_ITEM_HEIGHT * scale;
                     let popup_y = dp[1] + ds[1] + 2.0 * scale;
@@ -1351,7 +1407,7 @@ impl SettingsWindow {
                             color: if is_selected { crate::theme::RuntimeTheme::text_u8(settings.theme.text_primary, 255) } else { crate::theme::RuntimeTheme::text_u8(settings.theme.text_secondary, 255) },
                             weight: if is_selected { 600 } else { 400 },
                             max_width: 300.0 * scale,
-                            bounds: None,
+                            bounds: Some([0.0, 0.0, 0.0, 0.0]),
                 center: false,
                         });
                     }
@@ -1550,7 +1606,7 @@ impl SettingsWindow {
                                 },
                                 weight: if is_selected { 600 } else { 400 },
                                 max_width: 300.0 * scale,
-                                bounds: None,
+                                bounds: Some([0.0, 0.0, 0.0, 0.0]),
                 center: false,
                             });
                         }
@@ -1578,7 +1634,7 @@ impl SettingsWindow {
                                 },
                                 weight: if is_selected { 600 } else { 400 },
                                 max_width: 300.0 * scale,
-                                bounds: None,
+                                bounds: Some([0.0, 0.0, 0.0, 0.0]),
                 center: false,
                             });
                         }

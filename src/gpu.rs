@@ -1040,14 +1040,34 @@ impl Gpu {
 
         // Settings window text
         if let Some(sw) = settings_window {
+            let popup_rect = sw.open_dropdown_popup_rect(w, h, scale);
             for te in sw.get_text_entries(settings, w, h, scale) {
+                let is_popup_entry = te.bounds.is_some();
+                // Clip non-popup text against the open dropdown popup
+                let mut bounds = full_bounds;
+                if !is_popup_entry {
+                    if let Some((pp, ps)) = popup_rect {
+                        let overlaps_v = te.y + te.line_height > pp[1]
+                            && te.y < pp[1] + ps[1];
+                        if overlaps_v {
+                            // Text starts inside popup horizontally → clip right edge
+                            if te.x >= pp[0] && te.x < pp[0] + ps[0] {
+                                continue; // fully inside popup column
+                            }
+                            // Text extends into popup from the left → clip right to popup left
+                            if te.x < pp[0] && te.x + te.max_width > pp[0] {
+                                bounds.right = bounds.right.min(pp[0] as i32);
+                            }
+                        }
+                    }
+                }
                 let buf = shape_text_entry(&mut self.font_system, &te);
                 text_buffers.push(buf);
                 text_meta.push((
                     te.x,
                     te.y,
                     TextColor::rgba(te.color[0], te.color[1], te.color[2], te.color[3]),
-                    full_bounds,
+                    bounds,
                 ));
             }
         }

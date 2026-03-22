@@ -1,3 +1,5 @@
+- 2026-03-22: feat: hover highlight on settings dropdown options (38.6k loc)
+- 2026-03-22: fix: settings dropdown popup hides text behind it, matching canvas clip pattern (38.5k loc)
 - 2026-03-22: perf: cache filesystem tree for sample browser search with 50ms debounce — eliminates recursive directory walk on every keystroke (38.5k loc)
 - 2026-03-22: fix: right window inspector elements (knob, fader, buttons, effect slots) use theme colors instead of hardcoded dark values (38.4k loc)
 - 2026-03-22: feat: adaptive text colors via text_primary/secondary/dim in RuntimeTheme + Light theme preset (38.4k loc)
