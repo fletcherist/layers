@@ -58,10 +58,16 @@ impl App {
         if let Some(rw) = &self.right_window {
             let (sw, sh, scale) = self.screen_info();
             let wf_id = rw.waveform_id;
+            // Trackpad (PixelDelta): natural scrolling is inverted, reduce sensitivity
+            // Mouse wheel (LineDelta): direct mapping, normal sensitivity
+            let rw_step = if is_pixel_delta {
+                -dy_raw / (800.0 * scale)
+            } else {
+                dy_raw * 0.03
+            };
             if rw.hit_test_vol_track(self.mouse_pos, sw, sh, scale) {
-                let step = dy / (200.0 * scale);
                 let current_pos = ui::palette::gain_to_vol_fader_pos(rw.volume);
-                let new_pos = (current_pos + step).clamp(0.0, 1.0);
+                let new_pos = (current_pos + rw_step).clamp(0.0, 1.0);
                 let new_vol = ui::palette::vol_fader_pos_to_gain(new_pos);
                 let before = self.waveforms.get(&wf_id).cloned();
                 if let Some(rw) = &mut self.right_window {
@@ -82,8 +88,7 @@ impl App {
                 return;
             }
             if rw.hit_test_pan_knob(self.mouse_pos, sw, sh, scale) {
-                let step = dy / (200.0 * scale);
-                let new_pan = (rw.pan + step).clamp(0.0, 1.0);
+                let new_pan = (rw.pan + rw_step).clamp(0.0, 1.0);
                 let before = self.waveforms.get(&wf_id).cloned();
                 if let Some(rw) = &mut self.right_window {
                     rw.pan = new_pan;

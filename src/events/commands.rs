@@ -446,6 +446,11 @@ impl App {
                 #[cfg(feature = "native")]
                 self.sync_audio_clips();
             }
+            CommandAction::OpenInstrumentGui => {
+                if let Some(id) = self.keyboard_instrument_id {
+                    self.open_instrument_gui(id);
+                }
+            }
         }
         self.request_redraw();
     }

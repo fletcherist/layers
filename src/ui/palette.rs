@@ -67,6 +67,7 @@ pub enum CommandAction {
     SetWarpOff,
     SetWarpRePitch,
     SetWarpSemitone,
+    OpenInstrumentGui,
 }
 
 #[derive(Clone, Copy, PartialEq)]

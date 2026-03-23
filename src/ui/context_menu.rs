@@ -494,6 +494,15 @@ impl ContextMenu {
                         }));
                         entries.push(ContextMenuEntry::Separator);
                     }
+                    LayerNodeKind::Instrument => {
+                        entries.push(ContextMenuEntry::Item(ContextMenuItem {
+                            label: "Open",
+                            shortcut: "",
+                            action: CommandAction::OpenInstrumentGui,
+                            checked: false,
+                        }));
+                        entries.push(ContextMenuEntry::Separator);
+                    }
                     _ => {}
                 }
                 entries.push(ContextMenuEntry::Item(ContextMenuItem {

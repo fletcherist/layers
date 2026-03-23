@@ -61,7 +61,10 @@ impl App {
                                     self.selected.clear();
                                     let target = match kind {
                                         crate::layers::LayerNodeKind::Waveform => Some(HitTarget::Waveform(*id)),
-                                        crate::layers::LayerNodeKind::Instrument => None,
+                                        crate::layers::LayerNodeKind::Instrument => {
+                                            self.keyboard_instrument_id = Some(*id);
+                                            None
+                                        },
                                         crate::layers::LayerNodeKind::EffectRegion => Some(HitTarget::EffectRegion(*id)),
                                         crate::layers::LayerNodeKind::PluginBlock => Some(HitTarget::PluginBlock(*id)),
                                         crate::layers::LayerNodeKind::MidiClip => Some(HitTarget::MidiClip(*id)),
