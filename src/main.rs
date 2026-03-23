@@ -1300,7 +1300,7 @@ impl App {
                 grid_mode: storage::grid_mode_from_stored(&smc.grid_mode_tag, &smc.grid_mode_value),
                 triplet_grid: smc.triplet_grid,
                 velocity_lane_height: midi::VELOCITY_LANE_HEIGHT,
-                instrument_id: if smc.instrument_region_id.is_empty() { None } else { smc.instrument_region_id.parse().ok() },
+                instrument_id: if smc.instrument_id.is_empty() { None } else { smc.instrument_id.parse().ok() },
             }))
             .collect();
 
@@ -1654,10 +1654,9 @@ impl App {
                         grid_mode_tag: grid_tag,
                         grid_mode_value: grid_val,
                         triplet_grid: mc.triplet_grid,
-                        instrument_region_id: mc.instrument_id.map(|id| id.to_string()).unwrap_or_default(),
+                        instrument_id: mc.instrument_id.map(|id| id.to_string()).unwrap_or_default(),
                     }
                 }).collect(),
-                instrument_regions: Vec::new(),
                 layer_tree: layers::tree_to_stored(&self.layer_tree),
                 text_notes: storage::text_notes_to_stored(&self.text_notes),
             };
@@ -2079,7 +2078,7 @@ impl App {
                 grid_mode: storage::grid_mode_from_stored(&smc.grid_mode_tag, &smc.grid_mode_value),
                 triplet_grid: smc.triplet_grid,
                 velocity_lane_height: midi::VELOCITY_LANE_HEIGHT,
-                instrument_id: if smc.instrument_region_id.is_empty() { None } else { smc.instrument_region_id.parse().ok() },
+                instrument_id: if smc.instrument_id.is_empty() { None } else { smc.instrument_id.parse().ok() },
             }))
             .collect();
 

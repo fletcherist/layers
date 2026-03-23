@@ -25,8 +25,8 @@ pub struct MidiClip {
     pub grid_mode: GridMode,
     pub triplet_grid: bool,
     pub velocity_lane_height: f32,
-    /// Parent instrument (lightweight, non-spatial). Each MIDI clip belongs to exactly one instrument.
-    #[serde(default, alias = "instrument_region_id")]
+    /// Parent instrument. Each MIDI clip belongs to exactly one instrument.
+    #[serde(default)]
     pub instrument_id: Option<EntityId>,
 }
 

@@ -211,21 +211,6 @@ pub fn midi_clips_from_stored(
         .collect()
 }
 
-pub fn instrument_regions_from_stored(
-    stored: Vec<StoredInstrumentRegion>,
-) -> Vec<(EntityId, StoredInstrumentRegion)> {
-    stored
-        .into_iter()
-        .map(|s| {
-            let id = if s.id.is_empty() {
-                new_id()
-            } else {
-                entity_id_from_string(&s.id)
-            };
-            (id, s)
-        })
-        .collect()
-}
 
 pub fn text_notes_to_stored(
     map: &IndexMap<EntityId, crate::text_note::TextNote>,

@@ -105,7 +105,7 @@ fn test_midi_clip_survives_save_load_roundtrip() {
         grid_mode_tag: grid_tag,
         grid_mode_value: grid_val,
         triplet_grid: original.triplet_grid,
-        instrument_region_id: String::new(),
+        instrument_id: String::new(),
     };
 
     // Load path: StoredMidiClip -> MidiClip

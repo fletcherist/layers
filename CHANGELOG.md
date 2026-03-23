@@ -1,4 +1,4 @@
-- 2026-03-23: refactor: instrument refactor cleanup — delete InstrumentRegion struct/rendering/hit-test, rename AudioInstrumentRegion to AudioInstrument, remove ~800 lines of dead code (37.7k loc)
+- 2026-03-23: refactor: remove all InstrumentRegion backward-compat — delete StoredInstrumentRegion, InstrumentRegionSnapshot, operation variants, serde alias (37.6k loc)
 - 2026-03-23: refactor: instrument refactor phase 4 — remove instrument_region_id from MidiClip, stop creating InstrumentRegion in add_instrument, remove IR audio fallback (38.5k loc)
 - 2026-03-23: fix: instrument audio playback — select MidiClip after add_instrument, sync keyboard target to Instrument ID, call sync_audio_clips (38.6k loc)
 - 2026-03-23: refactor: instrument refactor phase 3 — remove InstrumentRegion from canvas rendering, hit-testing, mouse handling; add plugin label to MIDI clips (38.6k loc)

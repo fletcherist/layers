@@ -654,12 +654,10 @@ fn test_serde_roundtrip_component_instance() {
 }
 
 #[test]
-fn test_serde_roundtrip_instrument_region() {
-    serde_roundtrip_op(Operation::CreateInstrumentRegion {
+fn test_serde_roundtrip_instrument() {
+    serde_roundtrip_op(Operation::CreateInstrument {
         id: new_id(),
-        data: crate::instruments::InstrumentRegionSnapshot {
-            position: [0.0, 0.0],
-            size: [600.0, 250.0],
+        data: crate::instruments::InstrumentSnapshot {
             name: "Piano".to_string(),
             plugin_id: "com.example.piano".to_string(),
             plugin_name: "Piano VST".to_string(),

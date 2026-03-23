@@ -2,7 +2,7 @@ use crate::ui::waveform::AudioClipData;
 use crate::component::{ComponentDef, ComponentInstance};
 use crate::effects::{EffectRegion, PluginBlockSnapshot};
 use crate::entity_id::EntityId;
-use crate::instruments::{InstrumentRegionSnapshot, InstrumentSnapshot};
+use crate::instruments::InstrumentSnapshot;
 use crate::midi::{MidiClip, MidiNote};
 use crate::regions::{ExportRegion, LoopRegion};
 use crate::text_note::TextNote;
@@ -70,12 +70,7 @@ pub enum Operation {
     DeleteComponentInstance { id: EntityId, data: ComponentInstance },
     UpdateComponentInstance { id: EntityId, before: ComponentInstance, after: ComponentInstance },
 
-    // --- InstrumentRegion ---
-    CreateInstrumentRegion { id: EntityId, data: InstrumentRegionSnapshot },
-    DeleteInstrumentRegion { id: EntityId, data: InstrumentRegionSnapshot },
-    UpdateInstrumentRegion { id: EntityId, before: InstrumentRegionSnapshot, after: InstrumentRegionSnapshot },
-
-    // --- Instrument (lightweight, non-spatial) ---
+    // --- Instrument ---
     CreateInstrument { id: EntityId, data: InstrumentSnapshot },
     DeleteInstrument { id: EntityId, data: InstrumentSnapshot },
     UpdateInstrument { id: EntityId, before: InstrumentSnapshot, after: InstrumentSnapshot },
@@ -125,9 +120,6 @@ impl Operation {
             Operation::CreateComponentInstance { .. } => "CreateComponentInstance",
             Operation::DeleteComponentInstance { .. } => "DeleteComponentInstance",
             Operation::UpdateComponentInstance { .. } => "UpdateComponentInstance",
-            Operation::CreateInstrumentRegion { .. } => "CreateInstrumentRegion",
-            Operation::DeleteInstrumentRegion { .. } => "DeleteInstrumentRegion",
-            Operation::UpdateInstrumentRegion { .. } => "UpdateInstrumentRegion",
             Operation::CreateInstrument { .. } => "CreateInstrument",
             Operation::DeleteInstrument { .. } => "DeleteInstrument",
             Operation::UpdateInstrument { .. } => "UpdateInstrument",
@@ -191,12 +183,7 @@ impl Operation {
             Operation::DeleteComponentInstance { id, data } => Operation::CreateComponentInstance { id: *id, data: data.clone() },
             Operation::UpdateComponentInstance { id, before, after } => Operation::UpdateComponentInstance { id: *id, before: after.clone(), after: before.clone() },
 
-            // InstrumentRegions
-            Operation::CreateInstrumentRegion { id, data } => Operation::DeleteInstrumentRegion { id: *id, data: data.clone() },
-            Operation::DeleteInstrumentRegion { id, data } => Operation::CreateInstrumentRegion { id: *id, data: data.clone() },
-            Operation::UpdateInstrumentRegion { id, before, after } => Operation::UpdateInstrumentRegion { id: *id, before: after.clone(), after: before.clone() },
-
-            // Instruments (lightweight)
+            // Instruments
             Operation::CreateInstrument { id, data } => Operation::DeleteInstrument { id: *id, data: data.clone() },
             Operation::DeleteInstrument { id, data } => Operation::CreateInstrument { id: *id, data: data.clone() },
             Operation::UpdateInstrument { id, before, after } => Operation::UpdateInstrument { id: *id, before: after.clone(), after: before.clone() },
@@ -413,12 +400,7 @@ impl Operation {
                 }
             }
 
-            // --- InstrumentRegion (kept for backward-compat deserialization, no-op now) ---
-            Operation::CreateInstrumentRegion { .. } => {}
-            Operation::DeleteInstrumentRegion { .. } => {}
-            Operation::UpdateInstrumentRegion { .. } => {}
-
-            // --- Instrument (lightweight, non-spatial) ---
+            // --- Instrument ---
             Operation::CreateInstrument { id, data } => {
                 let mut inst = crate::instruments::Instrument::new();
                 inst.name = data.name.clone();
@@ -658,7 +640,6 @@ impl App {
             Operation::UpdateComponent { id, .. } => return Some(vec![HitTarget::ComponentDef(*id)]),
             Operation::UpdateComponentInstance { id, .. } => return Some(vec![HitTarget::ComponentInstance(*id)]),
             Operation::UpdateMidiClip { id, .. } => return Some(vec![HitTarget::MidiClip(*id)]),
-            Operation::UpdateInstrumentRegion { .. } => return None,
             Operation::UpdateTextNote { id, .. } => return Some(vec![HitTarget::TextNote(*id)]),
             _ => {}
         }
@@ -675,7 +656,6 @@ impl App {
                     Operation::UpdateComponent { id, .. } => targets.push(HitTarget::ComponentDef(*id)),
                     Operation::UpdateComponentInstance { id, .. } => targets.push(HitTarget::ComponentInstance(*id)),
                     Operation::UpdateMidiClip { id, .. } => targets.push(HitTarget::MidiClip(*id)),
-                    Operation::UpdateInstrumentRegion { .. } => return None,
                     Operation::UpdateTextNote { id, .. } => targets.push(HitTarget::TextNote(*id)),
                     // PluginBlock uses Delete+Create pair for updates
                     Operation::DeletePluginBlock { id, .. } => targets.push(HitTarget::PluginBlock(*id)),

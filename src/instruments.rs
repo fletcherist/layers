@@ -43,17 +43,3 @@ pub struct InstrumentSnapshot {
     pub plugin_name: String,
     pub plugin_path: PathBuf,
 }
-
-// ---------------------------------------------------------------------------
-// Legacy snapshot (kept for backward-compat deserialization of old undo stacks)
-// ---------------------------------------------------------------------------
-
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
-pub struct InstrumentRegionSnapshot {
-    pub position: [f32; 2],
-    pub size: [f32; 2],
-    pub name: String,
-    pub plugin_id: String,
-    pub plugin_name: String,
-    pub plugin_path: PathBuf,
-}
