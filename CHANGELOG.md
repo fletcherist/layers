@@ -1,3 +1,5 @@
+- 2026-03-23: fix: disable collapsing for instruments in layers browser (38.2k loc)
+- 2026-03-23: fix: clip MIDI per-note labels to browser and right window boundaries (38.2k loc)
 - 2026-03-23: feat: instrument right window panel with volume, pan, and effects chain — opens on instrument/MIDI clip click (38.2k loc)
 - 2026-03-23: feat: add "Open" to instrument right-click menu in layers browser to open plugin GUI (37.8k loc)
 - 2026-03-23: feat: mousewheel volume and pan control in right window panel (37.8k loc)

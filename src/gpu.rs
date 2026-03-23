@@ -1914,10 +1914,11 @@ impl Gpu {
                         let note_screen_right =
                             (nx + nw - camera.position[0]) * camera.zoom;
                         let bounds = TextBounds {
-                            left: screen_x.max(clip_screen_left).max(0.0) as i32,
+                            left: screen_x.max(clip_screen_left).max(browser_right).max(0.0) as i32,
                             top: screen_y.max(clip_screen_top).max(0.0) as i32,
                             right: note_screen_right
                                 .min(clip_screen_right)
+                                .min(right_panel_left)
                                 .min(w) as i32,
                             bottom: (screen_y + pn_line)
                                 .min(clip_screen_bottom)

@@ -965,8 +965,9 @@ impl SampleBrowser {
                             border_radius: 0.0,
                         });
                     }
-                    // Chevron for expandable nodes
-                    if let EntryKind::LayerNode { has_children: true, expanded, .. } = &entry.kind {
+                    // Chevron for expandable nodes (not instruments — always expanded)
+                    if let EntryKind::LayerNode { has_children: true, expanded, kind, .. } = &entry.kind {
+                    if !matches!(kind, LayerNodeKind::Instrument) {
                         let chev_sz = 6.0 * scale;
                         let chev_x = cx + indent + 8.0 * scale + chev_sz * 0.5;
                         let cy_mid = y + item_h * 0.5;
@@ -1001,6 +1002,7 @@ impl SampleBrowser {
                                 border_radius: 0.0,
                             });
                         }
+                    }
                     }
                     // Category dot
                     let dot_sz = 5.0 * scale;

@@ -1068,7 +1068,7 @@ impl App {
                                             return;
                                         }
                                     }
-                                    if *has_children {
+                                    if *has_children && !matches!(kind, crate::layers::LayerNodeKind::Instrument) {
                                         crate::layers::toggle_expanded(&mut self.layer_tree, *id);
                                         self.refresh_project_browser_entries();
                                     }
