@@ -857,4 +857,333 @@ impl App {
 
         self.request_redraw();
     }
+
+    pub(crate) fn update_cursor(&self) {
+        if let Some(gpu) = &self.gpu {
+            let icon =
+                match &self.drag {
+                    DragState::Panning { .. } => CursorIcon::Grabbing,
+                    DragState::MovingSelection { .. } => CursorIcon::Grabbing,
+                    DragState::Selecting { .. } => CursorIcon::Default,
+                    DragState::DraggingFromBrowser { .. } => CursorIcon::Grabbing,
+                    DragState::DraggingPlugin { .. } => CursorIcon::Grabbing,
+                    DragState::ResizingBrowser => CursorIcon::EwResize,
+                    DragState::ResizingExportRegion { nwse, .. } => {
+                        if *nwse {
+                            CursorIcon::NwseResize
+                        } else {
+                            CursorIcon::NeswResize
+                        }
+                    }
+                    DragState::DraggingFade { .. } => CursorIcon::EwResize,
+                    DragState::ResizingWaveform { .. } => CursorIcon::EwResize,
+                    DragState::DraggingFadeCurve { .. } => CursorIcon::NsResize,
+                    DragState::DraggingAutomationPoint { .. } => CursorIcon::Grabbing,
+                    DragState::MovingMidiNote { .. } => CursorIcon::Default,
+                    DragState::ResizingMidiNote { .. } => CursorIcon::EwResize,
+                    DragState::ResizingMidiNoteLeft { .. } => CursorIcon::EwResize,
+                    DragState::ResizingMidiClip { nwse, .. } => {
+                        if *nwse {
+                            CursorIcon::NwseResize
+                        } else {
+                            CursorIcon::NeswResize
+                        }
+                    }
+                    DragState::MovingMidiClip { .. } => CursorIcon::Grabbing,
+                    DragState::SelectingMidiNotes { .. } => CursorIcon::Default,
+                    DragState::DraggingVelocity { .. } => CursorIcon::NsResize,
+                    DragState::ResizingVelocityLane { .. } => CursorIcon::NsResize,
+                    DragState::ResizingComponentDef { nwse, .. } => {
+                        if *nwse {
+                            CursorIcon::NwseResize
+                        } else {
+                            CursorIcon::NeswResize
+                        }
+                    }
+                    DragState::ResizingEffectRegion { nwse, .. } => {
+                        if *nwse {
+                            CursorIcon::NwseResize
+                        } else {
+                            CursorIcon::NeswResize
+                        }
+                    }
+                    DragState::ResizingLoopRegion { nwse, .. } => {
+                        if *nwse {
+                            CursorIcon::NwseResize
+                        } else {
+                            CursorIcon::NeswResize
+                        }
+                    }
+                    DragState::None => {
+                        if self.cmd_velocity_hover_note.is_some() {
+                            CursorIcon::NsResize
+                        } else if self.sample_browser.visible && self.sample_browser.resize_hovered {
+                            CursorIcon::EwResize
+                        } else if self.waveform_edge_hover != WaveformEdgeHover::None {
+                            CursorIcon::EwResize
+                        } else if self.midi_note_edge_hover {
+                            CursorIcon::EwResize
+                        } else if self.velocity_divider_hovered {
+                            CursorIcon::NsResize
+                        } else if self.velocity_bar_hovered {
+                            CursorIcon::NsResize
+                        } else if self.fade_handle_hovered.is_some() {
+                            CursorIcon::EwResize
+                        } else if self.fade_curve_hovered.is_some() {
+                            CursorIcon::NsResize
+                        } else if self.command_palette.is_some() {
+                            CursorIcon::Default
+                        } else if {
+                            let (sw, sh, sc) = self.screen_info();
+                            TransportPanel::hit_bpm(self.mouse_pos, sw, sh, sc)
+                        } {
+                            CursorIcon::Default
+                        } else {
+                            match self.component_def_hover {
+                                ComponentDefHover::CornerNW(_) | ComponentDefHover::CornerSE(_) => {
+                                    CursorIcon::NwseResize
+                                }
+                                ComponentDefHover::CornerNE(_) | ComponentDefHover::CornerSW(_) => {
+                                    CursorIcon::NeswResize
+                                }
+                                ComponentDefHover::None => match self.effect_region_hover {
+                                    EffectRegionHover::CornerNW(_)
+                                    | EffectRegionHover::CornerSE(_) => CursorIcon::NwseResize,
+                                    EffectRegionHover::CornerNE(_)
+                                    | EffectRegionHover::CornerSW(_) => CursorIcon::NeswResize,
+                                    EffectRegionHover::None => match self.export_hover {
+                                        ExportHover::CornerNW(_) | ExportHover::CornerSE(_) => {
+                                            CursorIcon::NwseResize
+                                        }
+                                        ExportHover::CornerNE(_) | ExportHover::CornerSW(_) => {
+                                            CursorIcon::NeswResize
+                                        }
+                                        ExportHover::RenderPill(_) => CursorIcon::Pointer,
+                                        ExportHover::None => match self.loop_hover {
+                                            LoopHover::CornerNW(_) | LoopHover::CornerSE(_) => {
+                                                CursorIcon::NwseResize
+                                            }
+                                            LoopHover::CornerNE(_) | LoopHover::CornerSW(_) => {
+                                                CursorIcon::NeswResize
+                                            }
+                                            LoopHover::None => {
+                                                if matches!(self.hovered, Some(HitTarget::MidiClip(i)) if self.editing_midi_clip == Some(i)) {
+                                                    CursorIcon::Default
+                                                } else if self.hovered.is_some() {
+                                                    CursorIcon::Grab
+                                                } else {
+                                                    CursorIcon::Default
+                                                }
+                                            }
+                                        },
+                                    },
+                                },
+                            }
+                        }
+                    }
+                    _ => CursorIcon::Default,
+                };
+            gpu.window.set_cursor(icon);
+        }
+    }
+
+    pub(crate) fn update_hover(&mut self) {
+        let (sw, sh, scale) = self.screen_info();
+        if let Some(palette) = &mut self.command_palette {
+            if let Some(idx) = palette.item_at(self.mouse_pos, sw, sh, scale) {
+                if matches!(palette.mode, PaletteMode::PluginPicker | PaletteMode::InstrumentPicker) {
+                    palette.plugin_selected_index = idx;
+                } else {
+                    palette.selected_index = idx;
+                }
+            }
+        }
+        let world = self.camera.screen_to_world(self.mouse_pos);
+        self.fade_handle_hovered = hit_test_fade_handle(&self.waveforms, world, &self.camera);
+        self.waveform_edge_hover = if self.fade_handle_hovered.is_none() {
+            hit_test_waveform_edge(&self.waveforms, world, &self.camera)
+        } else {
+            WaveformEdgeHover::None
+        };
+        self.midi_note_edge_hover = if let Some(mc_id) = self.editing_midi_clip {
+            if let Some(mc) = self.midi_clips.get(&mc_id) {
+                matches!(
+                    midi::hit_test_midi_note_editing(mc, world, &self.camera, true),
+                    Some((_, midi::MidiNoteHitZone::RightEdge | midi::MidiNoteHitZone::LeftEdge))
+                )
+            } else {
+                false
+            }
+        } else {
+            false
+        };
+        self.velocity_divider_hovered = if let Some(mc_id) = self.editing_midi_clip {
+            if let Some(mc) = self.midi_clips.get(&mc_id) {
+                midi::hit_test_velocity_divider(mc, world, &self.camera)
+            } else {
+                false
+            }
+        } else {
+            false
+        };
+        self.velocity_bar_hovered = if let Some(mc_id) = self.editing_midi_clip {
+            if let Some(mc) = self.midi_clips.get(&mc_id) {
+                !self.velocity_divider_hovered && midi::hit_test_velocity_bar(mc, world, &self.camera).is_some()
+            } else {
+                false
+            }
+        } else {
+            false
+        };
+        self.cmd_velocity_hover_note = if self.cmd_held() {
+            if let Some(mc_id) = self.editing_midi_clip {
+                if let Some(mc) = self.midi_clips.get(&mc_id) {
+                    match midi::hit_test_midi_note_editing(mc, world, &self.camera, true) {
+                        Some((note_idx, midi::MidiNoteHitZone::Body | midi::MidiNoteHitZone::LeftEdge | midi::MidiNoteHitZone::RightEdge)) => {
+                            Some((mc_id, note_idx))
+                        }
+                        _ => None,
+                    }
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        self.fade_curve_hovered = if self.fade_handle_hovered.is_none() && self.waveform_edge_hover == WaveformEdgeHover::None {
+            hit_test_fade_curve_dot(&self.waveforms, world, &self.camera)
+        } else {
+            None
+        };
+        self.hovered = hit_test(
+            &self.objects,
+            &self.waveforms,
+            &self.effect_regions,
+            &self.plugin_blocks,
+            &self.loop_regions,
+            &self.export_regions,
+            &self.components,
+            &self.component_instances,
+            &self.midi_clips,
+            &self.text_notes,
+            self.editing_component,
+            world,
+            &self.camera,
+        );
+
+        self.component_def_hover = ComponentDefHover::None;
+        for (&ci, def) in self.components.iter() {
+            let handle_sz = 24.0 / self.camera.zoom;
+            let hs = handle_sz * 0.5;
+            let p = def.position;
+            let s = def.size;
+            if point_in_rect(world, [p[0] - hs, p[1] - hs], [handle_sz, handle_sz]) {
+                self.component_def_hover = ComponentDefHover::CornerNW(ci);
+                break;
+            } else if point_in_rect(world, [p[0] + s[0] - hs, p[1] - hs], [handle_sz, handle_sz]) {
+                self.component_def_hover = ComponentDefHover::CornerNE(ci);
+                break;
+            } else if point_in_rect(world, [p[0] - hs, p[1] + s[1] - hs], [handle_sz, handle_sz]) {
+                self.component_def_hover = ComponentDefHover::CornerSW(ci);
+                break;
+            } else if point_in_rect(
+                world,
+                [p[0] + s[0] - hs, p[1] + s[1] - hs],
+                [handle_sz, handle_sz],
+            ) {
+                self.component_def_hover = ComponentDefHover::CornerSE(ci);
+                break;
+            }
+        }
+
+
+        self.effect_region_hover = EffectRegionHover::None;
+        for (&i, er) in self.effect_regions.iter() {
+            let handle_sz = 24.0 / self.camera.zoom;
+            let hs = handle_sz * 0.5;
+            let p = er.position;
+            let s = er.size;
+            if point_in_rect(world, [p[0] - hs, p[1] - hs], [handle_sz, handle_sz]) {
+                self.effect_region_hover = EffectRegionHover::CornerNW(i);
+                break;
+            } else if point_in_rect(world, [p[0] + s[0] - hs, p[1] - hs], [handle_sz, handle_sz]) {
+                self.effect_region_hover = EffectRegionHover::CornerNE(i);
+                break;
+            } else if point_in_rect(world, [p[0] - hs, p[1] + s[1] - hs], [handle_sz, handle_sz]) {
+                self.effect_region_hover = EffectRegionHover::CornerSW(i);
+                break;
+            } else if point_in_rect(
+                world,
+                [p[0] + s[0] - hs, p[1] + s[1] - hs],
+                [handle_sz, handle_sz],
+            ) {
+                self.effect_region_hover = EffectRegionHover::CornerSE(i);
+                break;
+            }
+        }
+
+        self.export_hover = ExportHover::None;
+        for (&i, er) in self.export_regions.iter() {
+            let handle_sz = 24.0 / self.camera.zoom;
+            let hs = handle_sz * 0.5;
+            let p = er.position;
+            let s = er.size;
+
+            if point_in_rect(world, [p[0] - hs, p[1] - hs], [handle_sz, handle_sz]) {
+                self.export_hover = ExportHover::CornerNW(i);
+                break;
+            } else if point_in_rect(world, [p[0] + s[0] - hs, p[1] - hs], [handle_sz, handle_sz]) {
+                self.export_hover = ExportHover::CornerNE(i);
+                break;
+            } else if point_in_rect(world, [p[0] - hs, p[1] + s[1] - hs], [handle_sz, handle_sz]) {
+                self.export_hover = ExportHover::CornerSW(i);
+                break;
+            } else if point_in_rect(
+                world,
+                [p[0] + s[0] - hs, p[1] + s[1] - hs],
+                [handle_sz, handle_sz],
+            ) {
+                self.export_hover = ExportHover::CornerSE(i);
+                break;
+            } else {
+                let pill_w = EXPORT_RENDER_PILL_W / self.camera.zoom;
+                let pill_h = EXPORT_RENDER_PILL_H / self.camera.zoom;
+                let pill_x = p[0] + 4.0 / self.camera.zoom;
+                let pill_y = p[1] + 4.0 / self.camera.zoom;
+                if point_in_rect(world, [pill_x, pill_y], [pill_w, pill_h]) {
+                    self.export_hover = ExportHover::RenderPill(i);
+                    break;
+                }
+            }
+        }
+
+        self.loop_hover = LoopHover::None;
+        for (&i, lr) in self.loop_regions.iter() {
+            if !lr.enabled {
+                continue;
+            }
+            let handle_sz = 24.0 / self.camera.zoom;
+            let hs = handle_sz * 0.5;
+            let p = lr.position;
+            let s = lr.size;
+            if point_in_rect(world, [p[0] - hs, p[1] - hs], [handle_sz, handle_sz]) {
+                self.loop_hover = LoopHover::CornerNW(i);
+                break;
+            } else if point_in_rect(world, [p[0] + s[0] - hs, p[1] - hs], [handle_sz, handle_sz]) {
+                self.loop_hover = LoopHover::CornerNE(i);
+                break;
+            } else if point_in_rect(world, [p[0] - hs, p[1] + s[1] - hs], [handle_sz, handle_sz]) {
+                self.loop_hover = LoopHover::CornerSW(i);
+                break;
+            } else if point_in_rect(world, [p[0] + s[0] - hs, p[1] + s[1] - hs], [handle_sz, handle_sz]) {
+                self.loop_hover = LoopHover::CornerSE(i);
+                break;
+            }
+        }
+
+        self.update_cursor();
+    }
 }

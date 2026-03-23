@@ -1,5 +1,6 @@
 use super::*;
 
+mod commands;
 mod cursor;
 mod keyboard;
 mod mouse;

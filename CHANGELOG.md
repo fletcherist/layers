@@ -1,3 +1,5 @@
+- 2026-03-23: refactor: split main.rs (6,038→2,857 lines) into types.rs, overlap.rs, clipboard.rs, project.rs, events/commands.rs, and events/cursor.rs (37.7k loc)
+- 2026-03-23: refactor: extract types and enums from main.rs into new src/types.rs (37.7k loc)
 - 2026-03-23: refactor: remove all InstrumentRegion backward-compat — delete StoredInstrumentRegion, InstrumentRegionSnapshot, operation variants, serde alias (37.6k loc)
 - 2026-03-23: refactor: instrument refactor phase 4 — remove instrument_region_id from MidiClip, stop creating InstrumentRegion in add_instrument, remove IR audio fallback (38.5k loc)
 - 2026-03-23: fix: instrument audio playback — select MidiClip after add_instrument, sync keyboard target to Instrument ID, call sync_audio_clips (38.6k loc)

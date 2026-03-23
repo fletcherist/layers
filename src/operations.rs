@@ -750,7 +750,7 @@ impl App {
                     duration_secs: loaded.duration_secs,
                 };
 
-                let _ = tx.send(crate::PendingRemoteAudioFetch {
+                let _ = tx.send(crate::project::PendingRemoteAudioFetch {
                     wf_id,
                     audio: new_audio,
                     ac,
