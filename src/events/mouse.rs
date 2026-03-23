@@ -1254,6 +1254,50 @@ impl App {
 
                 // InstrumentRegion corner resize removed — instruments are non-spatial now
 
+                // --- midi clip pitch range resize (top/bottom edges) ---
+                for (&i, mc) in self.midi_clips.iter() {
+                    if mc.hit_test_pitch_range_top(world, &self.camera) {
+                        self.drag = DragState::ResizingMidiPitchRange {
+                            clip_id: i,
+                            edge: PitchRangeEdge::Top,
+                            start_y: world[1],
+                            before: mc.clone(),
+                        };
+                        self.request_redraw();
+                        return;
+                    }
+                    if mc.hit_test_pitch_range_bottom(world, &self.camera) {
+                        self.drag = DragState::ResizingMidiPitchRange {
+                            clip_id: i,
+                            edge: PitchRangeEdge::Bottom,
+                            start_y: world[1],
+                            before: mc.clone(),
+                        };
+                        self.request_redraw();
+                        return;
+                    }
+                }
+
+                // --- midi clip horizontal edge resize (left/right edges) ---
+                for (&i, mc) in self.midi_clips.iter() {
+                    if mc.hit_test_left_edge(world, &self.camera) {
+                        self.drag = DragState::ResizingMidiClipEdge {
+                            clip_id: i, is_left: true, before: mc.clone(),
+                        };
+                        self.update_cursor();
+                        self.request_redraw();
+                        return;
+                    }
+                    if mc.hit_test_right_edge(world, &self.camera) {
+                        self.drag = DragState::ResizingMidiClipEdge {
+                            clip_id: i, is_left: false, before: mc.clone(),
+                        };
+                        self.update_cursor();
+                        self.request_redraw();
+                        return;
+                    }
+                }
+
                 // --- midi clip corner resize ---
                 for (&i, mc) in self.midi_clips.iter() {
                     if let Some((anchor, nwse)) = hit_test_corner_resize(mc.position, mc.size, world, self.camera.zoom) {
@@ -2075,6 +2119,43 @@ impl App {
                 // InstrumentRegion resize drag removed — instruments are non-spatial now
 
                 // --- finish MIDI note drag/resize ---
+                // --- finish MIDI pitch range resize ---
+                if let DragState::ResizingMidiPitchRange { clip_id, before, .. } = &self.drag {
+                    let clip_id = *clip_id;
+                    let before = before.clone();
+                    self.drag = DragState::None;
+                    if let Some(after) = self.midi_clips.get(&clip_id) {
+                        if after.pitch_range != before.pitch_range {
+                            self.push_op(crate::operations::Operation::UpdateMidiClip {
+                                id: clip_id, before, after: after.clone(),
+                            });
+                        }
+                    }
+                    self.mark_dirty();
+                    self.request_redraw();
+                    return;
+                }
+
+                // --- finish MIDI clip edge resize ---
+                if let DragState::ResizingMidiClipEdge { clip_id, ref before, .. } = self.drag {
+                    let clip_id = clip_id;
+                    let before = before.clone();
+                    self.drag = DragState::None;
+                    if let Some(after) = self.midi_clips.get(&clip_id) {
+                        if (after.position[0] - before.position[0]).abs() > 0.01
+                            || (after.size[0] - before.size[0]).abs() > 0.01
+                        {
+                            self.push_op(crate::operations::Operation::UpdateMidiClip {
+                                id: clip_id, before, after: after.clone(),
+                            });
+                        }
+                    }
+                    self.mark_dirty();
+                    self.update_cursor();
+                    self.request_redraw();
+                    return;
+                }
+
                 if matches!(self.drag, DragState::MovingMidiNote { .. } | DragState::ResizingMidiNote { .. } | DragState::ResizingMidiNoteLeft { .. } | DragState::ResizingMidiClip { .. }) {
                     self.broadcast_drag_end();
                     let old_drag = std::mem::replace(&mut self.drag, DragState::None);

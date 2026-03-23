@@ -30,11 +30,11 @@ pub struct MidiClip {
     pub instrument_id: Option<EntityId>,
 }
 
-pub const MIDI_CLIP_DEFAULT_HEIGHT: f32 = 540.0;
+pub const MIDI_CLIP_DEFAULT_HEIGHT: f32 = 180.0;
 pub const MIDI_CLIP_DEFAULT_BARS: u32 = 4;
-pub const MIDI_CLIP_DEFAULT_SIZE: [f32; 2] = [480.0, 540.0];
+pub const MIDI_CLIP_DEFAULT_SIZE: [f32; 2] = [480.0, 180.0];
 pub use crate::theme::MIDI_CLIP_DEFAULT_COLOR;
-pub const MIDI_CLIP_DEFAULT_PITCH_RANGE: (u8, u8) = (12, 109); // C0-C8
+pub const MIDI_CLIP_DEFAULT_PITCH_RANGE: (u8, u8) = (48, 72); // C3-C5 (3 octaves)
 pub const DEFAULT_NOTE_DURATION_PX: f32 = 30.0;
 pub const VELOCITY_LANE_HEIGHT: f32 = 40.0;
 pub const VELOCITY_LANE_MIN_HEIGHT: f32 = 20.0;
@@ -116,6 +116,37 @@ impl MidiClip {
 
     pub fn contains(&self, world_pos: [f32; 2]) -> bool {
         point_in_rect(world_pos, self.position, self.size)
+    }
+
+    /// Hit test for the top edge of the pitch range (higher pitches).
+    /// Returns true if world_pos is within a thin strip at the top of the clip.
+    pub fn hit_test_pitch_range_top(&self, world_pos: [f32; 2], camera: &crate::Camera) -> bool {
+        let zone = 5.0 / camera.zoom;
+        world_pos[0] >= self.position[0] && world_pos[0] <= self.position[0] + self.size[0]
+            && world_pos[1] >= self.position[1] - zone && world_pos[1] <= self.position[1] + zone
+    }
+
+    /// Hit test for the bottom edge of the pitch range (lower pitches).
+    pub fn hit_test_pitch_range_bottom(&self, world_pos: [f32; 2], camera: &crate::Camera) -> bool {
+        let zone = 5.0 / camera.zoom;
+        let bottom = self.position[1] + self.size[1];
+        world_pos[0] >= self.position[0] && world_pos[0] <= self.position[0] + self.size[0]
+            && world_pos[1] >= bottom - zone && world_pos[1] <= bottom + zone
+    }
+
+    /// Hit test for the left edge (horizontal resize).
+    pub fn hit_test_left_edge(&self, world_pos: [f32; 2], camera: &crate::Camera) -> bool {
+        let zone = 8.0 / camera.zoom;
+        world_pos[0] >= self.position[0] - zone && world_pos[0] <= self.position[0] + zone
+            && world_pos[1] >= self.position[1] && world_pos[1] <= self.position[1] + self.size[1]
+    }
+
+    /// Hit test for the right edge (horizontal resize).
+    pub fn hit_test_right_edge(&self, world_pos: [f32; 2], camera: &crate::Camera) -> bool {
+        let zone = 16.0 / camera.zoom;
+        let right = self.position[0] + self.size[0];
+        world_pos[0] >= right - zone && world_pos[0] <= right + zone
+            && world_pos[1] >= self.position[1] && world_pos[1] <= self.position[1] + self.size[1]
     }
 
     /// After moving/resizing notes, resolve overlaps on the same pitch.

@@ -37,6 +37,9 @@ pub(crate) enum HitTarget {
     TextNote(EntityId),
 }
 
+#[derive(Clone, Copy)]
+pub(crate) enum PitchRangeEdge { Top, Bottom }
+
 pub(crate) enum DragState {
     None,
     Panning {
@@ -121,6 +124,17 @@ pub(crate) enum DragState {
         clip_id: EntityId,
         anchor: [f32; 2],
         nwse: bool,
+        before: midi::MidiClip,
+    },
+    ResizingMidiPitchRange {
+        clip_id: EntityId,
+        edge: PitchRangeEdge,
+        start_y: f32,
+        before: midi::MidiClip,
+    },
+    ResizingMidiClipEdge {
+        clip_id: EntityId,
+        is_left: bool,
         before: midi::MidiClip,
     },
     MovingMidiClip {

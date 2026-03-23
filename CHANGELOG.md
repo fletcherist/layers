@@ -1,3 +1,4 @@
+- 2026-03-23: feat: MIDI clip semitone pitch range resize via edge drag, horizontal edge resize for width (38.5k loc)
 - 2026-03-23: feat: add color picker to MIDI clip right-click menu, same as audio clips (38.3k loc)
 - 2026-03-23: fix: disable collapsing for instruments in layers browser (38.2k loc)
 - 2026-03-23: fix: clip MIDI per-note labels to browser and right window boundaries (38.2k loc)

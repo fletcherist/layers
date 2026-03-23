@@ -319,6 +319,72 @@ impl App {
             return;
         }
 
+        // Resizing MIDI pitch range (semitone-based)
+        if let DragState::ResizingMidiPitchRange { clip_id, edge, start_y, ref before } = self.drag {
+            let world = self.camera.screen_to_world(self.mouse_pos);
+            let dy = world[1] - start_y;
+            let nh = before.note_height();
+            if nh > 0.0 {
+                let delta_semitones = (dy / nh).round() as i32;
+                if let Some(mc) = self.midi_clips.get_mut(&clip_id) {
+                    // Reset to before state, then apply delta
+                    mc.position = before.position;
+                    mc.size = before.size;
+                    mc.pitch_range = before.pitch_range;
+                    let min_range: i32 = 12;
+                    match edge {
+                        PitchRangeEdge::Top => {
+                            // Dragging up (dy < 0) → extend top, down → reduce
+                            let new_high = (before.pitch_range.1 as i32 - delta_semitones)
+                                .clamp(before.pitch_range.0 as i32 + min_range, 127);
+                            let added = new_high - before.pitch_range.1 as i32;
+                            mc.pitch_range.1 = new_high as u8;
+                            mc.position[1] = before.position[1] - nh * added as f32;
+                            let range = (mc.pitch_range.1 - mc.pitch_range.0) as f32;
+                            mc.size[1] = nh * range;
+                        }
+                        PitchRangeEdge::Bottom => {
+                            // Dragging down (dy > 0) → extend bottom, up → reduce
+                            let new_low = (before.pitch_range.0 as i32 - delta_semitones)
+                                .clamp(0, before.pitch_range.1 as i32 - min_range);
+                            mc.pitch_range.0 = new_low as u8;
+                            let range = (mc.pitch_range.1 - mc.pitch_range.0) as f32;
+                            mc.size[1] = nh * range;
+                        }
+                    }
+                }
+            }
+            self.mark_dirty();
+            self.request_redraw();
+            return;
+        }
+
+        // Resizing MIDI clip edge (horizontal)
+        if let DragState::ResizingMidiClipEdge { clip_id, is_left, ref before } = self.drag {
+            let world = self.camera.screen_to_world(self.mouse_pos);
+            let snap = !self.is_snap_override_active();
+            let snapped_x = if snap {
+                crate::grid::snap_to_grid(world[0], &self.settings, self.camera.zoom, self.bpm)
+            } else {
+                world[0]
+            };
+            let min_w = 20.0;
+            if let Some(mc) = self.midi_clips.get_mut(&clip_id) {
+                if is_left {
+                    let right = before.position[0] + before.size[0];
+                    let new_x = snapped_x.min(right - min_w);
+                    mc.position[0] = new_x;
+                    mc.size[0] = right - new_x;
+                } else {
+                    let new_w = (snapped_x - before.position[0]).max(min_w);
+                    mc.size[0] = new_w;
+                }
+            }
+            self.mark_dirty();
+            self.request_redraw();
+            return;
+        }
+
         // Resizing loop region
         if let DragState::ResizingLoopRegion { region_id, anchor, .. } = self.drag {
             let world = self.camera.screen_to_world(self.mouse_pos);
@@ -911,6 +977,8 @@ impl App {
                             CursorIcon::NeswResize
                         }
                     }
+                    DragState::ResizingMidiPitchRange { .. } => CursorIcon::NsResize,
+                    DragState::ResizingMidiClipEdge { .. } => CursorIcon::EwResize,
                     DragState::MovingMidiClip { .. } => CursorIcon::Grabbing,
                     DragState::SelectingMidiNotes { .. } => CursorIcon::Default,
                     DragState::DraggingVelocity { .. } => CursorIcon::NsResize,
@@ -942,6 +1010,10 @@ impl App {
                         } else if self.sample_browser.visible && self.sample_browser.resize_hovered {
                             CursorIcon::EwResize
                         } else if self.waveform_edge_hover != WaveformEdgeHover::None {
+                            CursorIcon::EwResize
+                        } else if self.midi_clip_edge_hover_ns {
+                            CursorIcon::NsResize
+                        } else if self.midi_clip_edge_hover_ew {
                             CursorIcon::EwResize
                         } else if self.midi_note_edge_hover {
                             CursorIcon::EwResize
@@ -1039,6 +1111,22 @@ impl App {
         } else {
             false
         };
+        // MIDI clip edge hover (right edge = EW, bottom edge = NS)
+        let mut ew_hover = false;
+        let mut ns_hover = false;
+        for (_, mc) in self.midi_clips.iter() {
+            if mc.hit_test_right_edge(world, &self.camera) || mc.hit_test_left_edge(world, &self.camera) {
+                ew_hover = true;
+                break;
+            }
+            if mc.hit_test_pitch_range_bottom(world, &self.camera) || mc.hit_test_pitch_range_top(world, &self.camera) {
+                ns_hover = true;
+                break;
+            }
+        }
+        self.midi_clip_edge_hover_ew = ew_hover;
+        self.midi_clip_edge_hover_ns = ns_hover;
+
         self.velocity_divider_hovered = if let Some(mc_id) = self.editing_midi_clip {
             if let Some(mc) = self.midi_clips.get(&mc_id) {
                 midi::hit_test_velocity_divider(mc, world, &self.camera)
