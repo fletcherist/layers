@@ -514,4 +514,165 @@ impl App {
             snapshots.entry(id).or_insert(original);
         }
     }
+
+    // -----------------------------------------------------------------------
+    // MIDI clip overlap resolution (mirrors waveform overlap system)
+    // -----------------------------------------------------------------------
+
+    const MIDI_CLIP_MIN_WIDTH_PX: f32 = 10.0;
+
+    /// Live overlap resolution for MIDI clips during drag.
+    /// `active_ids` are the clips being moved/resized (they win).
+    pub(crate) fn resolve_midi_clip_overlaps_live(
+        &mut self,
+        active_ids: &[EntityId],
+        snapshots: &mut IndexMap<EntityId, midi::MidiClip>,
+        temp_splits: &mut Vec<EntityId>,
+    ) {
+        // 0. Remove temporary split clips from previous frame
+        for id in temp_splits.drain(..) {
+            self.midi_clips.shift_remove(&id);
+        }
+
+        // 1. Restore all previously-affected clips to their original state
+        for (id, original) in snapshots.iter() {
+            if let Some(mc) = self.midi_clips.get_mut(id) {
+                *mc = original.clone();
+            } else {
+                self.midi_clips.insert(*id, original.clone());
+            }
+        }
+
+        let active_set: HashSet<EntityId> = active_ids.iter().copied().collect();
+        let mut new_snapshots: IndexMap<EntityId, midi::MidiClip> = IndexMap::new();
+
+        for &aid in active_ids {
+            let (a_pos, a_size) = match self.midi_clips.get(&aid) {
+                Some(mc) => (mc.position, mc.size),
+                None => continue,
+            };
+            let a_start = a_pos[0];
+            let a_end = a_start + a_size[0];
+            let a_y0 = a_pos[1];
+            let a_y1 = a_y0 + a_size[1];
+
+            let other_ids: Vec<EntityId> = self.midi_clips.keys()
+                .filter(|id| !active_set.contains(id))
+                .copied()
+                .collect();
+
+            for bid in other_ids {
+                let bmc = match self.midi_clips.get(&bid) {
+                    Some(mc) if !mc.disabled => mc,
+                    _ => continue,
+                };
+                let b_y0 = bmc.position[1];
+                let b_y1 = b_y0 + bmc.size[1];
+                if !(a_y0 < b_y1 && a_y1 > b_y0) { continue; }
+                let b_start = bmc.position[0];
+                let b_end = b_start + bmc.size[0];
+                let has_x_overlap = b_start < a_end && b_end > a_start;
+                if !has_x_overlap { continue; }
+
+                // Snapshot the original state
+                if !snapshots.contains_key(&bid) && !new_snapshots.contains_key(&bid) {
+                    new_snapshots.insert(bid, bmc.clone());
+                } else if snapshots.contains_key(&bid) && !new_snapshots.contains_key(&bid) {
+                    new_snapshots.insert(bid, snapshots[&bid].clone());
+                }
+
+                // Case 1: B fully covered by A → disable
+                if b_start >= a_start && b_end <= a_end {
+                    self.midi_clips.get_mut(&bid).unwrap().disabled = true;
+                    continue;
+                }
+
+                // Case 4: A fully inside B → split B
+                if b_start < a_start && b_end > a_end {
+                    let left_width = a_start - b_start;
+                    let right_width = b_end - a_end;
+                    if left_width < Self::MIDI_CLIP_MIN_WIDTH_PX {
+                        self.midi_clips.get_mut(&bid).unwrap().disabled = true;
+                    } else {
+                        let mc = self.midi_clips.get_mut(&bid).unwrap();
+                        mc.size[0] = left_width;
+                        // Remove notes that fall outside left portion
+                        mc.notes.retain(|n| n.start_px < left_width);
+                        for n in &mut mc.notes {
+                            n.duration_px = n.duration_px.min(left_width - n.start_px);
+                        }
+                    }
+                    if right_width >= Self::MIDI_CLIP_MIN_WIDTH_PX {
+                        let orig = new_snapshots.get(&bid)
+                            .or_else(|| snapshots.get(&bid))
+                            .unwrap();
+                        let mut right_mc = orig.clone();
+                        let crop_left = a_end - b_start;
+                        right_mc.position[0] = a_end;
+                        right_mc.size[0] = right_width;
+                        // Shift and filter notes for right portion
+                        right_mc.notes.retain(|n| n.start_px + n.duration_px > crop_left);
+                        for n in &mut right_mc.notes {
+                            let new_start = (n.start_px - crop_left).max(0.0);
+                            if n.start_px < crop_left {
+                                n.duration_px -= crop_left - n.start_px;
+                            }
+                            n.start_px = new_start;
+                        }
+                        let right_id = new_id();
+                        self.midi_clips.insert(right_id, right_mc);
+                        temp_splits.push(right_id);
+                    }
+                    continue;
+                }
+
+                // Case 2: B's tail overlaps A's start
+                if b_start < a_start && b_end > a_start {
+                    let new_width = a_start - b_start;
+                    if new_width < Self::MIDI_CLIP_MIN_WIDTH_PX {
+                        self.midi_clips.get_mut(&bid).unwrap().disabled = true;
+                    } else {
+                        let mc = self.midi_clips.get_mut(&bid).unwrap();
+                        mc.size[0] = new_width;
+                        mc.notes.retain(|n| n.start_px < new_width);
+                        for n in &mut mc.notes {
+                            n.duration_px = n.duration_px.min(new_width - n.start_px);
+                        }
+                    }
+                }
+
+                // Case 3: B's head overlaps A's end
+                if b_start >= a_start && b_start < a_end && b_end > a_end {
+                    let crop_amount = a_end - b_start;
+                    let new_width = b_end - a_end;
+                    if new_width < Self::MIDI_CLIP_MIN_WIDTH_PX {
+                        self.midi_clips.get_mut(&bid).unwrap().disabled = true;
+                    } else {
+                        let mc = self.midi_clips.get_mut(&bid).unwrap();
+                        mc.position[0] = a_end;
+                        mc.size[0] = new_width;
+                        mc.notes.retain(|n| n.start_px + n.duration_px > crop_amount);
+                        for n in &mut mc.notes {
+                            let new_start = (n.start_px - crop_amount).max(0.0);
+                            if n.start_px < crop_amount {
+                                n.duration_px -= crop_amount - n.start_px;
+                            }
+                            n.start_px = new_start;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Update snapshots
+        let prev_keys: Vec<EntityId> = snapshots.keys().copied().collect();
+        for id in prev_keys {
+            if !new_snapshots.contains_key(&id) {
+                snapshots.shift_remove(&id);
+            }
+        }
+        for (id, original) in new_snapshots {
+            snapshots.entry(id).or_insert(original);
+        }
+    }
 }

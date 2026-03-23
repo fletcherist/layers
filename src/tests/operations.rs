@@ -482,7 +482,7 @@ fn test_apply_create_delete_midi_clip() {
         grid_mode: crate::settings::GridMode::default(),
         triplet_grid: false,
         velocity_lane_height: 0.0,
-        instrument_id: None,
+        instrument_id: None, disabled: false,
     };
     Operation::CreateMidiClip { id, data: clip.clone() }.apply(&mut app);
     assert_eq!(app.midi_clips.len(), 1);
@@ -558,7 +558,7 @@ fn test_serde_roundtrip_create_midi_clip() {
             grid_mode: crate::settings::GridMode::default(),
             triplet_grid: false,
             velocity_lane_height: 40.0,
-            instrument_id: None,
+            instrument_id: None, disabled: false,
         },
     });
 }
@@ -865,7 +865,7 @@ fn test_serde_roundtrip_update_midi_clip() {
         grid_mode: crate::settings::GridMode::default(),
         triplet_grid: false,
         velocity_lane_height: 40.0,
-        instrument_id: None,
+        instrument_id: None, disabled: false,
     };
     let mut after = before.clone();
     after.position = [300.0, 150.0];
@@ -909,7 +909,7 @@ fn test_two_apps_midi_clip_move_sync() {
         grid_mode: crate::settings::GridMode::default(),
         triplet_grid: false,
         velocity_lane_height: 0.0,
-        instrument_id: None,
+        instrument_id: None, disabled: false,
     };
     app_a.midi_clips.insert(clip_id, clip.clone());
     app_a.push_op(Operation::CreateMidiClip { id: clip_id, data: clip.clone() });
@@ -969,7 +969,7 @@ fn test_surreal_json_roundtrip_update_midi_clip() {
         grid_mode: crate::settings::GridMode::default(),
         triplet_grid: false,
         velocity_lane_height: 0.0,
-        instrument_id: None,
+        instrument_id: None, disabled: false,
     };
     let mut after = before.clone();
     after.position = [300.0, 150.0];
@@ -1050,7 +1050,7 @@ fn test_set_bpm_rescales_midi_clip_and_notes() {
         grid_mode: crate::settings::GridMode::default(),
         triplet_grid: false,
         velocity_lane_height: 0.0,
-        instrument_id: None,
+        instrument_id: None, disabled: false,
     };
     app.midi_clips.insert(id, clip);
 
@@ -1088,7 +1088,7 @@ fn test_surreal_json_roundtrip_create_midi_clip() {
         grid_mode: crate::settings::GridMode::default(),
         triplet_grid: false,
         velocity_lane_height: 0.0,
-        instrument_id: None,
+        instrument_id: None, disabled: false,
     };
 
     let committed = commit_op(Operation::CreateMidiClip { id: clip_id, data: clip });

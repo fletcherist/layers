@@ -360,7 +360,11 @@ impl App {
         }
 
         // Resizing MIDI clip edge (horizontal)
-        if let DragState::ResizingMidiClipEdge { clip_id, is_left, ref before } = self.drag {
+        if matches!(self.drag, DragState::ResizingMidiClipEdge { .. }) {
+            let (clip_id, is_left, before) = match &self.drag {
+                DragState::ResizingMidiClipEdge { clip_id, is_left, before, .. } => (*clip_id, *is_left, before.clone()),
+                _ => unreachable!(),
+            };
             let world = self.camera.screen_to_world(self.mouse_pos);
             let snap = !self.is_snap_override_active();
             let snapped_x = if snap {
@@ -379,6 +383,17 @@ impl App {
                     let new_w = (snapped_x - before.position[0]).max(min_w);
                     mc.size[0] = new_w;
                 }
+            }
+            let mut snaps = if let DragState::ResizingMidiClipEdge { overlap_snapshots, .. } = &mut self.drag {
+                std::mem::take(overlap_snapshots)
+            } else { IndexMap::new() };
+            let mut tsplits = if let DragState::ResizingMidiClipEdge { overlap_temp_splits, .. } = &mut self.drag {
+                std::mem::take(overlap_temp_splits)
+            } else { Vec::new() };
+            self.resolve_midi_clip_overlaps_live(&[clip_id], &mut snaps, &mut tsplits);
+            if let DragState::ResizingMidiClipEdge { overlap_snapshots, overlap_temp_splits, .. } = &mut self.drag {
+                *overlap_snapshots = snaps;
+                *overlap_temp_splits = tsplits;
             }
             self.mark_dirty();
             self.request_redraw();
@@ -808,9 +823,11 @@ impl App {
                     }
                     }
                 }
-                if let DragState::MovingMidiClip { clip_id, offset, .. } = &self.drag {
-                    let clip_id = *clip_id;
-                    let offset = *offset;
+                if matches!(self.drag, DragState::MovingMidiClip { .. }) {
+                    let (clip_id, offset) = match &self.drag {
+                        DragState::MovingMidiClip { clip_id, offset, .. } => (*clip_id, *offset),
+                        _ => unreachable!(),
+                    };
                     if self.midi_clips.contains_key(&clip_id) {
                         let raw_x = world[0] - offset[0];
                         let snapped_x = if self.is_snap_override_active() {
@@ -825,6 +842,17 @@ impl App {
                             snap_to_vertical_grid(raw_y, &self.settings, self.camera.zoom, self.bpm)
                         };
                         self.midi_clips.get_mut(&clip_id).unwrap().position = [snapped_x, snapped_y];
+                        let mut snaps = if let DragState::MovingMidiClip { overlap_snapshots, .. } = &mut self.drag {
+                            std::mem::take(overlap_snapshots)
+                        } else { IndexMap::new() };
+                        let mut tsplits = if let DragState::MovingMidiClip { overlap_temp_splits, .. } = &mut self.drag {
+                            std::mem::take(overlap_temp_splits)
+                        } else { Vec::new() };
+                        self.resolve_midi_clip_overlaps_live(&[clip_id], &mut snaps, &mut tsplits);
+                        if let DragState::MovingMidiClip { overlap_snapshots, overlap_temp_splits, .. } = &mut self.drag {
+                            *overlap_snapshots = snaps;
+                            *overlap_temp_splits = tsplits;
+                        }
                         let mc = &self.midi_clips[&clip_id];
                         self.broadcast_drag_preview(crate::user::DragPreview::MovingEntities {
                             targets: vec![(HitTarget::MidiClip(clip_id), mc.position, mc.size)],

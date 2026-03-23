@@ -1283,6 +1283,7 @@ impl App {
                     if mc.hit_test_left_edge(world, &self.camera) {
                         self.drag = DragState::ResizingMidiClipEdge {
                             clip_id: i, is_left: true, before: mc.clone(),
+                            overlap_snapshots: IndexMap::new(), overlap_temp_splits: Vec::new(),
                         };
                         self.update_cursor();
                         self.request_redraw();
@@ -1291,6 +1292,7 @@ impl App {
                     if mc.hit_test_right_edge(world, &self.camera) {
                         self.drag = DragState::ResizingMidiClipEdge {
                             clip_id: i, is_left: false, before: mc.clone(),
+                            overlap_snapshots: IndexMap::new(), overlap_temp_splits: Vec::new(),
                         };
                         self.update_cursor();
                         self.request_redraw();
@@ -1335,7 +1337,10 @@ impl App {
                                 self.selected.push(HitTarget::MidiClip(clip_id));
                             }
                             let offset = [world[0] - pos[0], world[1] - pos[1]];
-                            self.drag = DragState::MovingMidiClip { clip_id, offset, before };
+                            self.drag = DragState::MovingMidiClip {
+                                clip_id, offset, before,
+                                overlap_snapshots: IndexMap::new(), overlap_temp_splits: Vec::new(),
+                            };
                             self.update_cursor();
                             self.request_redraw();
                             return;
@@ -2137,17 +2142,39 @@ impl App {
                 }
 
                 // --- finish MIDI clip edge resize ---
-                if let DragState::ResizingMidiClipEdge { clip_id, ref before, .. } = self.drag {
-                    let clip_id = clip_id;
-                    let before = before.clone();
-                    self.drag = DragState::None;
-                    if let Some(after) = self.midi_clips.get(&clip_id) {
-                        if (after.position[0] - before.position[0]).abs() > 0.01
-                            || (after.size[0] - before.size[0]).abs() > 0.01
-                        {
-                            self.push_op(crate::operations::Operation::UpdateMidiClip {
-                                id: clip_id, before, after: after.clone(),
-                            });
+                if matches!(self.drag, DragState::ResizingMidiClipEdge { .. }) {
+                    if let DragState::ResizingMidiClipEdge { clip_id, before, overlap_snapshots, overlap_temp_splits, .. } =
+                        std::mem::replace(&mut self.drag, DragState::None)
+                    {
+                        let mut ops = Vec::new();
+                        if let Some(after) = self.midi_clips.get(&clip_id) {
+                            if (after.position[0] - before.position[0]).abs() > 0.01
+                                || (after.size[0] - before.size[0]).abs() > 0.01
+                            {
+                                ops.push(crate::operations::Operation::UpdateMidiClip {
+                                    id: clip_id, before, after: after.clone(),
+                                });
+                            }
+                        }
+                        for (id, original) in &overlap_snapshots {
+                            if let Some(mc) = self.midi_clips.get(id) {
+                                if mc.disabled {
+                                    let _ = self.midi_clips.shift_remove(id);
+                                    ops.push(crate::operations::Operation::DeleteMidiClip { id: *id, data: original.clone() });
+                                } else {
+                                    ops.push(crate::operations::Operation::UpdateMidiClip { id: *id, before: original.clone(), after: mc.clone() });
+                                }
+                            }
+                        }
+                        for id in &overlap_temp_splits {
+                            if let Some(mc) = self.midi_clips.get(id) {
+                                ops.push(crate::operations::Operation::CreateMidiClip { id: *id, data: mc.clone() });
+                            }
+                        }
+                        if ops.len() == 1 {
+                            self.push_op(ops.into_iter().next().unwrap());
+                        } else if ops.len() > 1 {
+                            self.push_op(crate::operations::Operation::Batch(ops));
                         }
                     }
                     self.mark_dirty();
@@ -2239,11 +2266,34 @@ impl App {
                 // --- finish MIDI clip move ---
                 if matches!(self.drag, DragState::MovingMidiClip { .. }) {
                     self.broadcast_drag_end();
-                    if let DragState::MovingMidiClip { clip_id, before, .. } =
+                    if let DragState::MovingMidiClip { clip_id, before, overlap_snapshots, overlap_temp_splits, .. } =
                         std::mem::replace(&mut self.drag, DragState::None)
                     {
+                        let mut ops = Vec::new();
                         if let Some(after) = self.midi_clips.get(&clip_id) {
-                            self.push_op(crate::operations::Operation::UpdateMidiClip { id: clip_id, before, after: after.clone() });
+                            ops.push(crate::operations::Operation::UpdateMidiClip { id: clip_id, before, after: after.clone() });
+                        }
+                        // Commit overlap changes
+                        for (id, original) in &overlap_snapshots {
+                            if let Some(mc) = self.midi_clips.get(id) {
+                                if mc.disabled {
+                                    if let Some(data) = self.midi_clips.shift_remove(id) {
+                                        ops.push(crate::operations::Operation::DeleteMidiClip { id: *id, data: original.clone() });
+                                    }
+                                } else {
+                                    ops.push(crate::operations::Operation::UpdateMidiClip { id: *id, before: original.clone(), after: mc.clone() });
+                                }
+                            }
+                        }
+                        for id in &overlap_temp_splits {
+                            if let Some(mc) = self.midi_clips.get(id) {
+                                ops.push(crate::operations::Operation::CreateMidiClip { id: *id, data: mc.clone() });
+                            }
+                        }
+                        if ops.len() == 1 {
+                            self.push_op(ops.into_iter().next().unwrap());
+                        } else if ops.len() > 1 {
+                            self.push_op(crate::operations::Operation::Batch(ops));
                         }
                         self.sync_audio_clips();
                         self.update_cursor();

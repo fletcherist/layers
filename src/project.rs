@@ -596,6 +596,7 @@ impl App {
                 triplet_grid: smc.triplet_grid,
                 velocity_lane_height: midi::VELOCITY_LANE_HEIGHT,
                 instrument_id: if smc.instrument_id.is_empty() { None } else { smc.instrument_id.parse().ok() },
+                disabled: false,
             }))
             .collect();
 

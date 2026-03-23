@@ -84,7 +84,7 @@ fn test_midi_clip_survives_save_load_roundtrip() {
         grid_mode: GridMode::Fixed(FixedGrid::Eighth),
         triplet_grid: true,
         velocity_lane_height: midi::VELOCITY_LANE_HEIGHT,
-        instrument_id: None,
+        instrument_id: None, disabled: false,
     };
 
     // Save path: MidiClip -> StoredMidiClip
@@ -123,7 +123,7 @@ fn test_midi_clip_survives_save_load_roundtrip() {
         grid_mode: storage::grid_mode_from_stored(&stored.grid_mode_tag, &stored.grid_mode_value),
         triplet_grid: stored.triplet_grid,
         velocity_lane_height: midi::VELOCITY_LANE_HEIGHT,
-        instrument_id: None,
+        instrument_id: None, disabled: false,
     };
 
     assert_eq!(restored.position, original.position);

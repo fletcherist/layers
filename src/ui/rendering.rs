@@ -162,6 +162,7 @@ pub(crate) fn build_instances(out: &mut Vec<InstanceRaw>, ctx: &RenderContext) {
 
     // --- midi clips ---
     for (&id, mc) in ctx.midi_clips.iter() {
+        if mc.disabled { continue; }
         let mc_right = mc.position[0] + mc.size[0];
         let mc_bottom = mc.position[1] + mc.size[1];
         if mc_right < world_left

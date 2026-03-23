@@ -28,6 +28,9 @@ pub struct MidiClip {
     /// Parent instrument. Each MIDI clip belongs to exactly one instrument.
     #[serde(default)]
     pub instrument_id: Option<EntityId>,
+    /// Hidden during live overlap preview (not serialized).
+    #[serde(skip, default)]
+    pub disabled: bool,
 }
 
 pub const MIDI_CLIP_DEFAULT_HEIGHT: f32 = 180.0;
@@ -54,6 +57,7 @@ impl MidiClip {
             triplet_grid: settings.triplet_grid,
             velocity_lane_height: VELOCITY_LANE_HEIGHT,
             instrument_id: None,
+            disabled: false,
         }
     }
 

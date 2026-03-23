@@ -1,3 +1,4 @@
+- 2026-03-23: feat: MIDI clip overlap resolution — crop, split, and delete overlapping clips on same track (38.8k loc)
 - 2026-03-23: fix: first MIDI note at clip start not playing — use range overlap instead of midpoint for region check (38.5k loc)
 - 2026-03-23: feat: MIDI clip semitone pitch range resize via edge drag, horizontal edge resize for width (38.5k loc)
 - 2026-03-23: feat: add color picker to MIDI clip right-click menu, same as audio clips (38.3k loc)

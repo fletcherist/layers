@@ -136,11 +136,15 @@ pub(crate) enum DragState {
         clip_id: EntityId,
         is_left: bool,
         before: midi::MidiClip,
+        overlap_snapshots: IndexMap<EntityId, midi::MidiClip>,
+        overlap_temp_splits: Vec<EntityId>,
     },
     MovingMidiClip {
         clip_id: EntityId,
         offset: [f32; 2],
         before: midi::MidiClip,
+        overlap_snapshots: IndexMap<EntityId, midi::MidiClip>,
+        overlap_temp_splits: Vec<EntityId>,
     },
     MovingMidiNote {
         clip_id: EntityId,
