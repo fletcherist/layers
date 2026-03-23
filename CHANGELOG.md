@@ -1,3 +1,7 @@
+- 2026-03-23: feat: add X clear icon to browser search bar — appears when query is non-empty, clears and unfocuses on click (38.4k loc)
+- 2026-03-23: refactor: consolidate settings dropdown code into shared helpers — render_dropdown_button, render_dropdown_popup, build_popup_text_entries, push_row_label, push_dropdown_value (38.3k loc)
+- 2026-03-23: feat: add "Reset to Defaults" button in Developer settings tab to restore factory theme (38.7k loc)
+- 2026-03-23: fix: theme dropdown popup renders on top of sliders instead of behind them (38.6k loc)
 - 2026-03-22: refactor: replace 50+ hardcoded colors with RuntimeTheme fields across 13 files — shadows, tooltips, dividers, text, selections, and entity colors now adapt to dark/light/Ableton themes (38.6k loc)
 - 2026-03-22: feat: hover highlight on settings dropdown options (38.6k loc)
 - 2026-03-22: fix: settings dropdown popup hides text behind it, matching canvas clip pattern (38.5k loc)

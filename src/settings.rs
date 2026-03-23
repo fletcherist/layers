@@ -294,6 +294,15 @@ impl Settings {
         }
     }
 
+    pub fn reset_theme_to_defaults(&mut self) {
+        self.theme_preset = "Default".to_string();
+        self.primary_hue = 216.0;
+        self.brightness = 1.0;
+        self.color_intensity = 1.0;
+        self.grid_line_intensity = 0.26;
+        self.theme = crate::theme::RuntimeTheme::from_hue(216.0);
+    }
+
     pub fn save(&self) {
         #[cfg(feature = "native")]
         {

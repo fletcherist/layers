@@ -971,6 +971,20 @@ impl Gpu {
             }
         }
 
+        // Browser search clear icon
+        if let Some(br) = sample_browser {
+            if let Some(ie) = br.get_search_clear_icon_entry(&settings.theme, scale) {
+                let buf = shape_icon_entry(&mut self.font_system, &ie);
+                text_buffers.push(buf);
+                text_meta.push((
+                    ie.x,
+                    ie.y,
+                    TextColor::rgba(ie.color[0], ie.color[1], ie.color[2], ie.color[3]),
+                    full_bounds,
+                ));
+            }
+        }
+
         // Transport panel text (rendered before menus so menus appear on top)
         for te in TransportPanel::get_text_entries(&settings.theme, w, h, scale, playback_position, bpm, editing_bpm) {
             let buf = shape_text_entry(&mut self.font_system, &te);

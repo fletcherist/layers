@@ -173,6 +173,17 @@ impl App {
 
         MouseButton::Left => match state {
             ElementState::Pressed => {
+                // Handle search clear button click
+                {
+                    let (_, _, scale) = self.screen_info();
+                    if self.sample_browser.visible && self.sample_browser.hit_clear_button(self.mouse_pos, scale) {
+                        self.sample_browser.search_query.clear();
+                        self.sample_browser.search_focused = false;
+                        self.sample_browser.rebuild_entries();
+                        self.sample_browser.text_dirty = true;
+                        self.request_redraw();
+                    }
+                }
                 // Handle search bar focus/unfocus
                 {
                     let (_, _, scale) = self.screen_info();

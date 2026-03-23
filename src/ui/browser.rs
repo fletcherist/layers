@@ -136,6 +136,8 @@ pub struct SampleBrowser {
     file_index_dirty: bool,
     /// When set, a search rebuild is pending and should fire after this deadline.
     search_debounce_deadline: Option<TimeInstant>,
+    /// Whether the search clear (X) button is hovered.
+    pub search_clear_hovered: bool,
 }
 
 impl SampleBrowser {
@@ -172,6 +174,7 @@ impl SampleBrowser {
             file_index: Vec::new(),
             file_index_dirty: true,
             search_debounce_deadline: None,
+            search_clear_hovered: false,
         }
     }
 
@@ -502,6 +505,55 @@ impl SampleBrowser {
         ([x, y], [sz, sz])
     }
 
+    /// Rect for the search clear (X) button, inside the search input on the right.
+    fn clear_button_rect(&self, scale: f32) -> ([f32; 2], [f32; 2]) {
+        let w = self.panel_width(scale);
+        let margin = 6.0 * scale;
+        let right_pad = if self.active_category == BrowserCategory::Samples {
+            (ADD_BUTTON_SIZE + 10.0) * scale
+        } else {
+            margin
+        };
+        let sb_x = margin;
+        let row_y = HEADER_HEIGHT * scale;
+        let search_bar_h = SEARCH_BAR_HEIGHT * scale;
+        let sb_y = row_y + margin;
+        let sb_h = search_bar_h - 2.0 * margin;
+        let sb_w_inner = w - sb_x - right_pad;
+        let btn_sz = 16.0 * scale;
+        let btn_x = sb_x + sb_w_inner - btn_sz - 2.0 * scale;
+        let btn_y = sb_y + (sb_h - btn_sz) * 0.5;
+        ([btn_x, btn_y], [btn_sz, btn_sz])
+    }
+
+    pub fn hit_clear_button(&self, pos: [f32; 2], scale: f32) -> bool {
+        if self.search_query.is_empty() {
+            return false;
+        }
+        let (bp, bs) = self.clear_button_rect(scale);
+        pos[0] >= bp[0] && pos[0] <= bp[0] + bs[0] && pos[1] >= bp[1] && pos[1] <= bp[1] + bs[1]
+    }
+
+    pub fn get_search_clear_icon_entry(&self, theme: &crate::theme::RuntimeTheme, scale: f32) -> Option<crate::gpu::IconEntry> {
+        if self.search_query.is_empty() {
+            return None;
+        }
+        let (bp, bs) = self.clear_button_rect(scale);
+        let icon_size = bs[1];
+        let color = if self.search_clear_hovered {
+            crate::theme::RuntimeTheme::text_u8(theme.text_primary, 220)
+        } else {
+            crate::theme::RuntimeTheme::text_u8(theme.text_secondary, 160)
+        };
+        Some(crate::gpu::IconEntry {
+            codepoint: crate::icons::CLOSE,
+            x: bp[0],
+            y: bp[1],
+            size: icon_size,
+            color,
+        })
+    }
+
     pub fn hit_add_button(&self, pos: [f32; 2], scale: f32) -> bool {
         if self.active_category != BrowserCategory::Samples {
             return false;
@@ -518,6 +570,7 @@ impl SampleBrowser {
             && pos[0] >= 0.0
             && pos[0] < self.panel_width(scale)
             && !self.hit_add_button(pos, scale)
+            && !self.hit_clear_button(pos, scale)
     }
 
     /// Returns which content-area entry the position is over, if any.
@@ -581,6 +634,7 @@ impl SampleBrowser {
     pub fn update_hover(&mut self, pos: [f32; 2], screen_h: f32, scale: f32) {
         self.resize_hovered = self.hit_resize_handle(pos, scale);
         self.add_button_hovered = self.hit_add_button(pos, scale);
+        self.search_clear_hovered = self.hit_clear_button(pos, scale);
         self.hovered_sidebar = self.sidebar_item_at(pos, scale);
         self.hovered_entry = if self.resize_hovered || self.hovered_sidebar.is_some() {
             None
@@ -690,6 +744,17 @@ impl SampleBrowser {
                     size: [border, sb_h],
                     color: [settings.theme.accent[0], settings.theme.accent[1], settings.theme.accent[2], 0.5],
                     border_radius: 0.0,
+                });
+            }
+
+            // Search clear (X) button hover highlight
+            if !self.search_query.is_empty() && self.search_clear_hovered {
+                let (cp, cs) = self.clear_button_rect(scale);
+                out.push(InstanceRaw {
+                    position: cp,
+                    size: cs,
+                    color: settings.theme.item_hover,
+                    border_radius: cs[0] * 0.5,
                 });
             }
         }
@@ -1103,7 +1168,7 @@ impl SampleBrowser {
                 y: text_y,
                 font_size: font_sz,
                 line_height: line_h,
-                max_width: sb_w_inner - 16.0 * scale,
+                max_width: sb_w_inner - if self.search_query.is_empty() { 16.0 } else { 32.0 } * scale,
                 color,
                 weight: 400,
                 bounds: Some([sb_x, row_y, sb_x + sb_w_inner, row_y + search_bar_h]),

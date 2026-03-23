@@ -20,3 +20,4 @@ mod layers;
 mod monitoring;
 mod text_notes;
 mod effect_chains;
+mod settings;
