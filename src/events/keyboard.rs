@@ -1690,10 +1690,7 @@ impl App {
             let Some(target) = self.keyboard_instrument_id else {
                 return true;
             };
-            let can_send = self
-                .instrument_regions
-                .get(&target)
-                .map_or(false, |ir| ir.has_plugin());
+            let can_send = self.instruments.get(&target).map_or(false, |inst| inst.has_plugin());
             if !can_send {
                 return true;
             }

@@ -72,7 +72,7 @@ impl App {
                     automation_mode: self.automation_mode,
                     active_automation_param: self.active_automation_param,
                     editing_midi_clip: self.editing_midi_clip,
-                    instrument_regions: &self.instrument_regions,
+                    instruments: &self.instruments,
                     text_notes: &self.text_notes,
                     midi_clips: &self.midi_clips,
                     selected_midi_notes: &self.selected_midi_notes,
@@ -153,7 +153,7 @@ impl App {
 
             let selected_entity_ids: std::collections::HashSet<crate::entity_id::EntityId> = self.selected.iter()
                 .filter_map(|t| match t {
-                    HitTarget::Waveform(id) | HitTarget::InstrumentRegion(id) |
+                    HitTarget::Waveform(id) |
                     HitTarget::EffectRegion(id) | HitTarget::PluginBlock(id) |
                     HitTarget::MidiClip(id) | HitTarget::TextNote(id) => Some(*id),
                     _ => None,

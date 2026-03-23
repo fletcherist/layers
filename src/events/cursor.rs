@@ -284,19 +284,6 @@ impl App {
             return;
         }
 
-        // Resizing instrument region
-        if let DragState::ResizingInstrumentRegion { region_id, anchor, .. } = self.drag {
-            let world = self.camera.screen_to_world(self.mouse_pos);
-            let (pos, size) = compute_resize(anchor, world, 40.0, !self.is_snap_override_active(), &self.settings, self.camera.zoom, self.bpm);
-            if let Some(ir) = self.instrument_regions.get_mut(&region_id) {
-                ir.position = pos;
-                ir.size = size;
-            }
-            self.mark_dirty();
-            self.request_redraw();
-            return;
-        }
-
         // Resizing MIDI clip
         if let DragState::ResizingMidiClip { clip_id, anchor, .. } = self.drag {
             let world = self.camera.screen_to_world(self.mouse_pos);
@@ -304,13 +291,6 @@ impl App {
             if let Some(mc) = self.midi_clips.get_mut(&clip_id) {
                 mc.position = pos;
                 mc.size = size;
-                // Auto-extend any overlapping instrument region
-                let padding = instruments::INSTRUMENT_REGION_PADDING;
-                for ir in self.instrument_regions.values_mut() {
-                    if rects_overlap(ir.position, ir.size, pos, size) {
-                        instruments::ensure_region_contains_clip(ir, pos, size, padding);
-                    }
-                }
             }
             self.mark_dirty();
             self.request_redraw();
@@ -560,7 +540,6 @@ impl App {
                             | HitTarget::ComponentDef(_)
                             | HitTarget::ComponentInstance(_)
                             | HitTarget::MidiClip(_)
-                            | HitTarget::InstrumentRegion(_)
                     ) {
                         needs_sync = true;
                     }
@@ -581,21 +560,6 @@ impl App {
                         *overlap_temp_splits = tsplits;
                     }
                     needs_sync = true;
-                }
-                // Auto-extend instrument regions for moved MIDI clips
-                let padding = instruments::INSTRUMENT_REGION_PADDING;
-                for (target, _) in &offsets {
-                    if let HitTarget::MidiClip(ci) = target {
-                        if let Some(mc) = self.midi_clips.get(ci) {
-                            let cp = mc.position;
-                            let cs = mc.size;
-                            for ir in self.instrument_regions.values_mut() {
-                                if rects_overlap(ir.position, ir.size, cp, cs) {
-                                    instruments::ensure_region_contains_clip(ir, cp, cs, padding);
-                                }
-                            }
-                        }
-                    }
                 }
                 if let Some(ec_idx) = self.editing_component {
                     self.update_component_bounds(ec_idx);
@@ -633,7 +597,6 @@ impl App {
                             &self.components,
                             &self.component_instances,
                             &self.midi_clips,
-                            &self.instrument_regions,
                             &self.text_notes,
                             self.editing_component,
                             rp,

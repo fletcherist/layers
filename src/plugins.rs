@@ -81,29 +81,29 @@ impl App {
                 }
             }
         }
-        // Reload any saved instrument regions that were waiting for the scanner
+        // Reload lightweight instruments waiting for the scanner
         #[cfg(any(target_os = "macos", target_os = "windows"))]
-        for ir in self.instrument_regions.values_mut() {
-            if ir.plugin_id.is_empty() {
+        for inst in self.instruments.values_mut() {
+            if inst.plugin_id.is_empty() {
                 continue;
             }
-            let has_gui = ir.gui.lock().ok().map_or(false, |g| g.is_some());
+            let has_gui = inst.gui.lock().ok().map_or(false, |g| g.is_some());
             if !has_gui {
-                if let Some(entry) = self.plugin_registry.instruments.iter().find(|e| e.info.unique_id == ir.plugin_id) {
-                    ir.plugin_path = entry.info.path.clone();
+                if let Some(entry) = self.plugin_registry.instruments.iter().find(|e| e.info.unique_id == inst.plugin_id) {
+                    inst.plugin_path = entry.info.path.clone();
                 }
-                let path = ir.plugin_path.to_string_lossy().to_string();
+                let path = inst.plugin_path.to_string_lossy().to_string();
                 if !path.is_empty() {
-                    if let Some(gui) = vst3_gui::Vst3Gui::open(&path, &ir.plugin_id, &ir.plugin_name) {
+                    if let Some(gui) = vst3_gui::Vst3Gui::open(&path, &inst.plugin_id, &inst.plugin_name) {
                         gui.hide();
                         gui.setup_processing(48000.0, self.settings.buffer_size as i32);
-                        if let Some(state) = &ir.pending_state {
+                        if let Some(state) = &inst.pending_state {
                             gui.set_state(state);
                         }
-                        if let Ok(mut g) = ir.gui.lock() {
+                        if let Ok(mut g) = inst.gui.lock() {
                             *g = Some(gui);
                         }
-                        println!("  Reloaded instrument '{}'", ir.plugin_name);
+                        println!("  Reloaded instrument '{}'", inst.plugin_name);
                     }
                 }
             }
@@ -374,24 +374,14 @@ impl App {
     pub(crate) fn add_instrument(&mut self, plugin_id: &str, plugin_name: &str) {
         self.ensure_plugins_scanned();
 
-        let padding = instruments::INSTRUMENT_REGION_PADDING;
-
         let ppb = grid::pixels_per_beat(self.bpm);
         let beats_per_bar = 4.0;
         let clip_w = ppb * beats_per_bar * midi::MIDI_CLIP_DEFAULT_BARS as f32;
         let clip_h = midi::MIDI_CLIP_DEFAULT_HEIGHT;
 
-        let region_w = clip_w + padding * 2.0;
-        let region_h = clip_h + padding * 2.0;
-
         let (sw, sh, _) = self.screen_info();
         let center = self.camera.screen_to_world([sw * 0.5, sh * 0.5]);
-        let region_pos = [center[0] - region_w * 0.5, center[1] - region_h * 0.5];
-        let clip_pos = [region_pos[0] + padding, region_pos[1] + padding];
-
-        let mut ir = instruments::InstrumentRegion::new(region_pos, [region_w, region_h]);
-        ir.plugin_id = plugin_id.to_string();
-        ir.plugin_name = plugin_name.to_string();
+        let clip_pos = [center[0] - clip_w * 0.5, center[1] - clip_h * 0.5];
 
         let plugin_path = self
             .plugin_registry
@@ -400,7 +390,12 @@ impl App {
             .find(|e| e.info.unique_id == plugin_id)
             .map(|e| e.info.path.clone())
             .unwrap_or_default();
-        ir.plugin_path = plugin_path.clone();
+
+        let inst_id = new_id();
+        let mut inst = instruments::Instrument::new();
+        inst.plugin_id = plugin_id.to_string();
+        inst.plugin_name = plugin_name.to_string();
+        inst.plugin_path = plugin_path.clone();
 
         #[cfg(any(target_os = "macos", target_os = "windows"))]
         {
@@ -413,62 +408,69 @@ impl App {
                         println!("  Warning: audio processing setup failed for '{}'", plugin_name);
                     }
                     println!("  Opened native GUI for instrument '{}'", plugin_name);
-                    if let Ok(mut g) = ir.gui.lock() {
+                    if let Ok(mut g) = inst.gui.lock() {
                         *g = Some(gui);
                     }
                 }
             }
         }
 
-        let ir_id = new_id();
-        let ir_snap = instruments::InstrumentRegionSnapshot {
-            position: ir.position, size: ir.size,
-            name: ir.name.clone(), plugin_id: ir.plugin_id.clone(),
-            plugin_name: ir.plugin_name.clone(), plugin_path: ir.plugin_path.clone(),
+        let inst_snap = instruments::InstrumentSnapshot {
+            name: inst.name.clone(),
+            plugin_id: inst.plugin_id.clone(),
+            plugin_name: inst.plugin_name.clone(),
+            plugin_path: inst.plugin_path.clone(),
         };
-        self.instrument_regions.insert(ir_id, ir);
+        self.instruments.insert(inst_id, inst);
 
         let mut clip = midi::MidiClip::new(clip_pos, &self.settings);
         clip.size = [clip_w, clip_h];
-        clip.instrument_region_id = Some(ir_id);
+        clip.instrument_id = Some(inst_id);
         let clip_id = new_id();
         self.midi_clips.insert(clip_id, clip.clone());
 
         self.push_op(crate::operations::Operation::Batch(vec![
-            crate::operations::Operation::CreateInstrumentRegion { id: ir_id, data: ir_snap },
+            crate::operations::Operation::CreateInstrument { id: inst_id, data: inst_snap },
             crate::operations::Operation::CreateMidiClip { id: clip_id, data: clip },
         ]));
 
         self.selected.clear();
-        self.selected.push(HitTarget::InstrumentRegion(ir_id));
+        self.selected.push(HitTarget::MidiClip(clip_id));
+        self.keyboard_instrument_id = Some(inst_id);
         self.editing_midi_clip = Some(clip_id);
         self.selected_midi_notes.clear();
 
+        self.sync_audio_clips();
         self.request_redraw();
         println!("  Added instrument '{}'", plugin_name);
     }
 
-    #[cfg(any(target_os = "macos", target_os = "windows"))]
     pub(crate) fn open_instrument_region_gui(&mut self, id: EntityId) {
-        let Some(ir) = self.instrument_regions.get(&id) else {
+        // InstrumentRegion is gone; delegate to Instrument GUI
+        self.open_instrument_gui(id);
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    pub(crate) fn open_instrument_gui(&mut self, id: EntityId) {
+        let Some(inst) = self.instruments.get(&id) else {
             return;
         };
-        if ir.plugin_id.is_empty() {
+        if inst.plugin_id.is_empty() {
             return;
         }
 
-        let path = ir.plugin_path.to_string_lossy().to_string();
-        let uid = ir.plugin_id.clone();
-        let name = ir.plugin_name.clone();
+        let path = inst.plugin_path.to_string_lossy().to_string();
+        let uid = inst.plugin_id.clone();
+        let name = inst.plugin_name.clone();
 
         if !path.is_empty() {
-            let has_gui = ir.gui.lock().ok().map_or(false, |g| g.is_some());
+            let has_gui = inst.gui.lock().ok().map_or(false, |g| g.is_some());
             if has_gui {
-                let is_visible = ir.gui.lock()
+                let is_visible = inst.gui.lock()
                     .ok()
                     .map_or(false, |g| g.as_ref().map_or(false, |gui| gui.is_open()));
                 if !is_visible {
-                    if let Ok(g) = ir.gui.lock() {
+                    if let Ok(g) = inst.gui.lock() {
                         if let Some(gui) = g.as_ref() {
                             gui.show();
                         }
@@ -479,7 +481,7 @@ impl App {
 
             if let Some(gui) = vst3_gui::Vst3Gui::open(&path, &uid, &name) {
                 println!("  Opened native GUI for instrument '{}'", name);
-                if let Ok(mut g) = ir.gui.lock() {
+                if let Ok(mut g) = inst.gui.lock() {
                     *g = Some(gui);
                 }
             }
@@ -487,7 +489,7 @@ impl App {
     }
 
     #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-    pub(crate) fn open_instrument_region_gui(&mut self, _id: EntityId) {
+    pub(crate) fn open_instrument_gui(&mut self, _id: EntityId) {
         // VST3 instrument GUIs are not available on this platform
     }
 }

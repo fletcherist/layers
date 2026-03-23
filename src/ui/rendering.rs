@@ -46,7 +46,7 @@ pub(crate) struct RenderContext<'a> {
     pub(crate) automation_mode: bool,
     pub(crate) active_automation_param: crate::automation::AutomationParam,
     pub(crate) midi_clips: &'a IndexMap<EntityId, midi::MidiClip>,
-    pub(crate) instrument_regions: &'a IndexMap<EntityId, instruments::InstrumentRegion>,
+    pub(crate) instruments: &'a IndexMap<EntityId, instruments::Instrument>,
     pub(crate) text_notes: &'a IndexMap<EntityId, crate::text_note::TextNote>,
     pub(crate) editing_midi_clip: Option<EntityId>,
     pub(crate) selected_midi_notes: &'a [usize],
@@ -160,27 +160,6 @@ pub(crate) fn build_instances(out: &mut Vec<InstanceRaw>, ctx: &RenderContext) {
         ));
     }
 
-    // --- instrument regions ---
-    for (&id, ir) in ctx.instrument_regions.iter() {
-        let ir_right = ir.position[0] + ir.size[0];
-        let ir_bottom = ir.position[1] + ir.size[1];
-        if ir_right < world_left
-            || ir.position[0] > world_right
-            || ir_bottom < world_top
-            || ir.position[1] > world_bottom
-        {
-            continue;
-        }
-        let is_sel = ctx.selected.contains(&HitTarget::InstrumentRegion(id));
-        let is_hov = ctx.hovered == Some(HitTarget::InstrumentRegion(id));
-        let is_active = ctx.playhead_world_x.map_or(false, |px| {
-            px >= ir.position[0] && px <= ir.position[0] + ir.size[0]
-        });
-        out.extend(instruments::build_instrument_region_instances(
-            ir, camera, is_hov, is_sel, is_active, &ctx.settings.theme,
-        ));
-    }
-
     // --- midi clips ---
     for (&id, mc) in ctx.midi_clips.iter() {
         let mc_right = mc.position[0] + mc.size[0];
@@ -204,6 +183,21 @@ pub(crate) fn build_instances(out: &mut Vec<InstanceRaw>, ctx: &RenderContext) {
         out.extend(midi::build_midi_note_instances(
             mc, camera, sel_notes, editing,
         ));
+        // Plugin name label badge at top-left of MIDI clip
+        if let Some(inst_id) = mc.instrument_id {
+            if let Some(inst) = ctx.instruments.get(&inst_id) {
+                if !inst.plugin_name.is_empty() {
+                    let badge_h = 14.0 / camera.zoom;
+                    let badge_w = (inst.plugin_name.len() as f32 * 6.0 + 8.0) / camera.zoom;
+                    out.push(InstanceRaw {
+                        position: [mc.position[0] + 2.0 / camera.zoom, mc.position[1] + 2.0 / camera.zoom],
+                        size: [badge_w, badge_h],
+                        color: crate::theme::with_alpha(ctx.settings.theme.instrument_border_color, 0.65),
+                        border_radius: 2.0 / camera.zoom,
+                    });
+                }
+            }
+        }
         // TODO: refactor velocity lane rendering before re-enabling
         // if editing {
         //     out.extend(midi::build_velocity_lane_instances(mc, camera, sel_notes));
@@ -580,7 +574,6 @@ pub(crate) fn build_instances(out: &mut Vec<InstanceRaw>, ctx: &RenderContext) {
             ctx.components,
             ctx.component_instances,
             ctx.midi_clips,
-            ctx.instrument_regions,
             ctx.text_notes,
             target,
         ) else {
@@ -862,7 +855,6 @@ pub(crate) fn target_rect(
     components: &IndexMap<EntityId, component::ComponentDef>,
     component_instances: &IndexMap<EntityId, component::ComponentInstance>,
     midi_clips: &IndexMap<EntityId, midi::MidiClip>,
-    instrument_regions: &IndexMap<EntityId, instruments::InstrumentRegion>,
     text_notes: &IndexMap<EntityId, crate::text_note::TextNote>,
     target: &HitTarget,
 ) -> Option<([f32; 2], [f32; 2])> {
@@ -906,10 +898,6 @@ pub(crate) fn target_rect(
         HitTarget::MidiClip(id) => {
             let m = midi_clips.get(id)?;
             Some((m.position, m.size))
-        }
-        HitTarget::InstrumentRegion(id) => {
-            let ir = instrument_regions.get(id)?;
-            Some((ir.position, ir.size))
         }
         HitTarget::TextNote(id) => {
             let tn = text_notes.get(id)?;

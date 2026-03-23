@@ -60,14 +60,16 @@ impl App {
                                 ui::browser::EntryKind::LayerNode { id, kind, .. } => {
                                     self.selected.clear();
                                     let target = match kind {
-                                        crate::layers::LayerNodeKind::Waveform => HitTarget::Waveform(*id),
-                                        crate::layers::LayerNodeKind::Instrument => HitTarget::InstrumentRegion(*id),
-                                        crate::layers::LayerNodeKind::EffectRegion => HitTarget::EffectRegion(*id),
-                                        crate::layers::LayerNodeKind::PluginBlock => HitTarget::PluginBlock(*id),
-                                        crate::layers::LayerNodeKind::MidiClip => HitTarget::MidiClip(*id),
-                                        crate::layers::LayerNodeKind::TextNote => HitTarget::TextNote(*id),
+                                        crate::layers::LayerNodeKind::Waveform => Some(HitTarget::Waveform(*id)),
+                                        crate::layers::LayerNodeKind::Instrument => None,
+                                        crate::layers::LayerNodeKind::EffectRegion => Some(HitTarget::EffectRegion(*id)),
+                                        crate::layers::LayerNodeKind::PluginBlock => Some(HitTarget::PluginBlock(*id)),
+                                        crate::layers::LayerNodeKind::MidiClip => Some(HitTarget::MidiClip(*id)),
+                                        crate::layers::LayerNodeKind::TextNote => Some(HitTarget::TextNote(*id)),
                                     };
-                                    self.selected.push(target);
+                                    if let Some(target) = target {
+                                        self.selected.push(target);
+                                    }
                                     MenuContext::LayerNode { kind: *kind }
                                 }
                                 _ => {
@@ -113,7 +115,6 @@ impl App {
                     &self.components,
                     &self.component_instances,
                     &self.midi_clips,
-                    &self.instrument_regions,
                     &self.text_notes,
                     self.editing_component,
                     world,
@@ -1016,7 +1017,9 @@ impl App {
                                     };
                                 }
                                 ui::browser::EntryKind::ProjectInstrument { id } => {
-                                    self.focus_instrument_region(*id);
+                                    self.keyboard_instrument_id = Some(*id);
+                                    #[cfg(feature = "native")]
+                                    self.sync_computer_keyboard_to_engine();
                                 }
                                 ui::browser::EntryKind::LayerNode { id, kind, has_children, .. } => {
                                     // Double-click enters inline rename in the browser
@@ -1049,7 +1052,9 @@ impl App {
                                     }
                                     match kind {
                                         crate::layers::LayerNodeKind::Instrument => {
-                                            self.focus_instrument_region(*id);
+                                            self.keyboard_instrument_id = Some(*id);
+                                            #[cfg(feature = "native")]
+                                            self.sync_computer_keyboard_to_engine();
                                         }
                                         crate::layers::LayerNodeKind::MidiClip => {
                                             if let Some(mc) = self.midi_clips.get(id) {
@@ -1211,20 +1216,7 @@ impl App {
                     }
                 }
 
-                // --- instrument region corner resize ---
-                for (&i, ir) in self.instrument_regions.iter() {
-                    if let Some((anchor, nwse)) = hit_test_corner_resize(ir.position, ir.size, world, self.camera.zoom) {
-                        let before = crate::instruments::InstrumentRegionSnapshot {
-                            position: ir.position, size: ir.size,
-                            name: ir.name.clone(), plugin_id: ir.plugin_id.clone(),
-                            plugin_name: ir.plugin_name.clone(), plugin_path: ir.plugin_path.clone(),
-                        };
-                        self.drag = DragState::ResizingInstrumentRegion { region_id: i, anchor, nwse, before };
-                        self.update_cursor();
-                        self.request_redraw();
-                        return;
-                    }
-                }
+                // InstrumentRegion corner resize removed — instruments are non-spatial now
 
                 // --- midi clip corner resize ---
                 for (&i, mc) in self.midi_clips.iter() {
@@ -1487,7 +1479,6 @@ impl App {
                     &self.components,
                     &self.component_instances,
                     &self.midi_clips,
-                    &self.instrument_regions,
                     &self.text_notes,
                     self.editing_component,
                     world,
@@ -1555,14 +1546,7 @@ impl App {
                         self.request_redraw();
                         return;
                     }
-                    if let Some(HitTarget::InstrumentRegion(idx)) = hit {
-                        if self.instrument_regions[&idx].has_plugin() {
-                            #[cfg(feature = "native")]
-                            self.open_instrument_region_gui(idx);
-                        }
-                        self.request_redraw();
-                        return;
-                    }
+                    // InstrumentRegion double-click removed — use MidiClip to open instrument GUI
                     if let Some(HitTarget::TextNote(idx)) = hit {
                         self.enter_text_note_edit(idx);
                         return;
@@ -1807,7 +1791,6 @@ impl App {
                                 &self.components,
                                 &self.component_instances,
                                 &self.midi_clips,
-                                &self.instrument_regions,
                                 &self.text_notes,
                                 None,
                                 world,
@@ -2026,26 +2009,7 @@ impl App {
                     }
                 }
 
-                // --- finish resizing instrument region ---
-                if matches!(self.drag, DragState::ResizingInstrumentRegion { .. }) {
-                    if let DragState::ResizingInstrumentRegion { region_id, before, .. } =
-                        std::mem::replace(&mut self.drag, DragState::None)
-                    {
-                        if let Some(ir) = self.instrument_regions.get(&region_id) {
-                            let after = crate::instruments::InstrumentRegionSnapshot {
-                                position: ir.position, size: ir.size,
-                                name: ir.name.clone(), plugin_id: ir.plugin_id.clone(),
-                                plugin_name: ir.plugin_name.clone(), plugin_path: ir.plugin_path.clone(),
-                            };
-                            self.push_op(crate::operations::Operation::UpdateInstrumentRegion { id: region_id, before, after });
-                        }
-                        self.sync_audio_clips();
-                        self.update_hover();
-                        self.update_cursor();
-                        self.request_redraw();
-                        return;
-                    }
-                }
+                // InstrumentRegion resize drag removed — instruments are non-spatial now
 
                 // --- finish MIDI note drag/resize ---
                 if matches!(self.drag, DragState::MovingMidiNote { .. } | DragState::ResizingMidiNote { .. } | DragState::ResizingMidiNoteLeft { .. } | DragState::ResizingMidiClip { .. }) {
@@ -2416,16 +2380,6 @@ impl App {
                                     ops.push(crate::operations::Operation::UpdateMidiClip { id, before, after: after.clone() });
                                 }
                             }
-                            (HitTarget::InstrumentRegion(id), EntityBeforeState::InstrumentRegion(before)) => {
-                                if let Some(ir) = self.instrument_regions.get(&id) {
-                                    let after = crate::instruments::InstrumentRegionSnapshot {
-                                        position: ir.position, size: ir.size,
-                                        name: ir.name.clone(), plugin_id: ir.plugin_id.clone(),
-                                        plugin_name: ir.plugin_name.clone(), plugin_path: ir.plugin_path.clone(),
-                                    };
-                                    ops.push(crate::operations::Operation::UpdateInstrumentRegion { id, before, after });
-                                }
-                            }
                             _ => {}
                         }
                     }
@@ -2499,7 +2453,6 @@ impl App {
                             &self.components,
                             &self.component_instances,
                             &self.midi_clips,
-                            &self.instrument_regions,
                             &self.text_notes,
                             self.editing_component,
                             rp,

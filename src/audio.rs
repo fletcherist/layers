@@ -109,7 +109,7 @@ pub struct AudioEffectRegion {
     pub plugins: Vec<Arc<Mutex<Option<crate::effects::PluginGuiHandle>>>>,
 }
 
-pub struct AudioInstrumentRegion {
+pub struct AudioInstrument {
     pub id: EntityId,
     pub x_start_px: f32,
     pub x_end_px: f32,
@@ -152,7 +152,7 @@ pub struct AudioEngine {
     position_bits: Arc<AtomicU64>,
     clips: Arc<Mutex<Vec<PlaybackClip>>>,
     effect_regions: Arc<Mutex<Vec<AudioEffectRegion>>>,
-    instrument_regions: Arc<Mutex<Vec<AudioInstrumentRegion>>>,
+    instrument_regions: Arc<Mutex<Vec<AudioInstrument>>>,
     master_volume: Arc<AtomicU64>,
     rms_peak: Arc<AtomicU64>,
     loop_enabled: Arc<AtomicBool>,
@@ -241,7 +241,7 @@ impl AudioEngine {
         let position_bits = Arc::new(AtomicU64::new(0.0f64.to_bits()));
         let clips: Arc<Mutex<Vec<PlaybackClip>>> = Arc::new(Mutex::new(Vec::new()));
         let effect_regions: Arc<Mutex<Vec<AudioEffectRegion>>> = Arc::new(Mutex::new(Vec::new()));
-        let instrument_regions: Arc<Mutex<Vec<AudioInstrumentRegion>>> = Arc::new(Mutex::new(Vec::new()));
+        let instrument_regions: Arc<Mutex<Vec<AudioInstrument>>> = Arc::new(Mutex::new(Vec::new()));
         let master_volume = Arc::new(AtomicU64::new(1.0f64.to_bits()));
         let rms_peak = Arc::new(AtomicU64::new(0.0f64.to_bits()));
         let loop_enabled = Arc::new(AtomicBool::new(false));
@@ -893,7 +893,7 @@ impl AudioEngine {
         }
     }
 
-    pub fn update_instrument_regions(&self, regions: Vec<AudioInstrumentRegion>) {
+    pub fn update_instruments(&self, regions: Vec<AudioInstrument>) {
         if let Ok(mut guard) = self.instrument_regions.lock() {
             *guard = regions;
         }

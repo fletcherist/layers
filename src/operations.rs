@@ -1,8 +1,8 @@
 use crate::ui::waveform::AudioClipData;
 use crate::component::{ComponentDef, ComponentInstance};
-use crate::effects::{EffectRegion, PluginBlock, PluginBlockSnapshot};
+use crate::effects::{EffectRegion, PluginBlockSnapshot};
 use crate::entity_id::EntityId;
-use crate::instruments::{InstrumentRegion, InstrumentRegionSnapshot};
+use crate::instruments::{InstrumentRegionSnapshot, InstrumentSnapshot};
 use crate::midi::{MidiClip, MidiNote};
 use crate::regions::{ExportRegion, LoopRegion};
 use crate::text_note::TextNote;
@@ -75,6 +75,11 @@ pub enum Operation {
     DeleteInstrumentRegion { id: EntityId, data: InstrumentRegionSnapshot },
     UpdateInstrumentRegion { id: EntityId, before: InstrumentRegionSnapshot, after: InstrumentRegionSnapshot },
 
+    // --- Instrument (lightweight, non-spatial) ---
+    CreateInstrument { id: EntityId, data: InstrumentSnapshot },
+    DeleteInstrument { id: EntityId, data: InstrumentSnapshot },
+    UpdateInstrument { id: EntityId, before: InstrumentSnapshot, after: InstrumentSnapshot },
+
     // --- TextNote ---
     CreateTextNote { id: EntityId, data: TextNote },
     DeleteTextNote { id: EntityId, data: TextNote },
@@ -123,6 +128,9 @@ impl Operation {
             Operation::CreateInstrumentRegion { .. } => "CreateInstrumentRegion",
             Operation::DeleteInstrumentRegion { .. } => "DeleteInstrumentRegion",
             Operation::UpdateInstrumentRegion { .. } => "UpdateInstrumentRegion",
+            Operation::CreateInstrument { .. } => "CreateInstrument",
+            Operation::DeleteInstrument { .. } => "DeleteInstrument",
+            Operation::UpdateInstrument { .. } => "UpdateInstrument",
             Operation::CreateTextNote { .. } => "CreateTextNote",
             Operation::DeleteTextNote { .. } => "DeleteTextNote",
             Operation::UpdateTextNote { .. } => "UpdateTextNote",
@@ -187,6 +195,11 @@ impl Operation {
             Operation::CreateInstrumentRegion { id, data } => Operation::DeleteInstrumentRegion { id: *id, data: data.clone() },
             Operation::DeleteInstrumentRegion { id, data } => Operation::CreateInstrumentRegion { id: *id, data: data.clone() },
             Operation::UpdateInstrumentRegion { id, before, after } => Operation::UpdateInstrumentRegion { id: *id, before: after.clone(), after: before.clone() },
+
+            // Instruments (lightweight)
+            Operation::CreateInstrument { id, data } => Operation::DeleteInstrument { id: *id, data: data.clone() },
+            Operation::DeleteInstrument { id, data } => Operation::CreateInstrument { id: *id, data: data.clone() },
+            Operation::UpdateInstrument { id, before, after } => Operation::UpdateInstrument { id: *id, before: after.clone(), after: before.clone() },
 
             // TextNotes
             Operation::CreateTextNote { id, data } => Operation::DeleteTextNote { id: *id, data: data.clone() },
@@ -400,26 +413,29 @@ impl Operation {
                 }
             }
 
-            // --- InstrumentRegion (snapshot-based) ---
-            Operation::CreateInstrumentRegion { id, data } => {
-                let mut ir = crate::instruments::InstrumentRegion::new(data.position, data.size);
-                ir.name = data.name.clone();
-                ir.plugin_id = data.plugin_id.clone();
-                ir.plugin_name = data.plugin_name.clone();
-                ir.plugin_path = data.plugin_path.clone();
-                app.instrument_regions.insert(*id, ir);
+            // --- InstrumentRegion (kept for backward-compat deserialization, no-op now) ---
+            Operation::CreateInstrumentRegion { .. } => {}
+            Operation::DeleteInstrumentRegion { .. } => {}
+            Operation::UpdateInstrumentRegion { .. } => {}
+
+            // --- Instrument (lightweight, non-spatial) ---
+            Operation::CreateInstrument { id, data } => {
+                let mut inst = crate::instruments::Instrument::new();
+                inst.name = data.name.clone();
+                inst.plugin_id = data.plugin_id.clone();
+                inst.plugin_name = data.plugin_name.clone();
+                inst.plugin_path = data.plugin_path.clone();
+                app.instruments.insert(*id, inst);
             }
-            Operation::DeleteInstrumentRegion { id, .. } => {
-                app.instrument_regions.shift_remove(id);
+            Operation::DeleteInstrument { id, .. } => {
+                app.instruments.shift_remove(id);
             }
-            Operation::UpdateInstrumentRegion { id, after, .. } => {
-                if let Some(ir) = app.instrument_regions.get_mut(id) {
-                    ir.position = after.position;
-                    ir.size = after.size;
-                    ir.name = after.name.clone();
-                    ir.plugin_id = after.plugin_id.clone();
-                    ir.plugin_name = after.plugin_name.clone();
-                    ir.plugin_path = after.plugin_path.clone();
+            Operation::UpdateInstrument { id, after, .. } => {
+                if let Some(inst) = app.instruments.get_mut(id) {
+                    inst.name = after.name.clone();
+                    inst.plugin_id = after.plugin_id.clone();
+                    inst.plugin_name = after.plugin_name.clone();
+                    inst.plugin_path = after.plugin_path.clone();
                 }
             }
 
@@ -522,16 +538,6 @@ impl App {
                         (HitTarget::TextNote(id), EntityBeforeState::TextNote(before)) => {
                             if let Some(after) = self.text_notes.get(&id) {
                                 nudge_ops.push(Operation::UpdateTextNote { id, before, after: after.clone() });
-                            }
-                        }
-                        (HitTarget::InstrumentRegion(id), EntityBeforeState::InstrumentRegion(before)) => {
-                            if let Some(ir) = self.instrument_regions.get(&id) {
-                                let after = crate::instruments::InstrumentRegionSnapshot {
-                                    position: ir.position, size: ir.size,
-                                    name: ir.name.clone(), plugin_id: ir.plugin_id.clone(),
-                                    plugin_name: ir.plugin_name.clone(), plugin_path: ir.plugin_path.clone(),
-                                };
-                                nudge_ops.push(Operation::UpdateInstrumentRegion { id, before, after });
                             }
                         }
                         _ => {}
@@ -652,7 +658,7 @@ impl App {
             Operation::UpdateComponent { id, .. } => return Some(vec![HitTarget::ComponentDef(*id)]),
             Operation::UpdateComponentInstance { id, .. } => return Some(vec![HitTarget::ComponentInstance(*id)]),
             Operation::UpdateMidiClip { id, .. } => return Some(vec![HitTarget::MidiClip(*id)]),
-            Operation::UpdateInstrumentRegion { id, .. } => return Some(vec![HitTarget::InstrumentRegion(*id)]),
+            Operation::UpdateInstrumentRegion { .. } => return None,
             Operation::UpdateTextNote { id, .. } => return Some(vec![HitTarget::TextNote(*id)]),
             _ => {}
         }
@@ -669,7 +675,7 @@ impl App {
                     Operation::UpdateComponent { id, .. } => targets.push(HitTarget::ComponentDef(*id)),
                     Operation::UpdateComponentInstance { id, .. } => targets.push(HitTarget::ComponentInstance(*id)),
                     Operation::UpdateMidiClip { id, .. } => targets.push(HitTarget::MidiClip(*id)),
-                    Operation::UpdateInstrumentRegion { id, .. } => targets.push(HitTarget::InstrumentRegion(*id)),
+                    Operation::UpdateInstrumentRegion { .. } => return None,
                     Operation::UpdateTextNote { id, .. } => targets.push(HitTarget::TextNote(*id)),
                     // PluginBlock uses Delete+Create pair for updates
                     Operation::DeletePluginBlock { id, .. } => targets.push(HitTarget::PluginBlock(*id)),

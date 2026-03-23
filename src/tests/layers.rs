@@ -43,16 +43,15 @@ fn make_waveform(x: f32, y: f32) -> WaveformView {
 #[test]
 fn test_layer_tree_built_from_entities() {
     let mut app = App::new_headless();
-    app.add_instrument_area();
-    app.add_midi_clip();
+    app.add_instrument("test-synth", "TestSynth");
 
     app.refresh_project_browser_entries();
     assert!(!app.layer_tree.is_empty());
 
-    let ir_nodes: Vec<_> = app.layer_tree.iter()
+    let inst_nodes: Vec<_> = app.layer_tree.iter()
         .filter(|n| n.kind == LayerNodeKind::Instrument)
         .collect();
-    assert_eq!(ir_nodes.len(), 1);
+    assert_eq!(inst_nodes.len(), 1);
 }
 
 #[test]
@@ -71,13 +70,17 @@ fn test_midi_clip_nested_under_instrument() {
 #[test]
 fn test_layer_tree_sync_removes_stale() {
     let mut app = App::new_headless();
-    app.add_instrument_area();
-    let ir_id = app.instrument_regions.keys().next().copied().unwrap();
+    app.add_instrument("test-synth", "TestSynth");
+    let inst_id = app.instruments.keys().next().copied().unwrap();
     app.refresh_project_browser_entries();
     assert_eq!(app.layer_tree.len(), 1);
 
-    app.selected = vec![HitTarget::InstrumentRegion(ir_id)];
+    // Delete the MIDI clip — instrument stays but with no children
+    let mc_id = app.midi_clips.keys().next().copied().unwrap();
+    app.selected = vec![HitTarget::MidiClip(mc_id)];
     app.delete_selected();
+    // Now delete the instrument by removing it directly and refreshing
+    app.instruments.shift_remove(&inst_id);
     app.refresh_project_browser_entries();
     assert!(app.layer_tree.is_empty());
 }
@@ -85,33 +88,33 @@ fn test_layer_tree_sync_removes_stale() {
 #[test]
 fn test_move_node_up_down() {
     let mut app = App::new_headless();
-    app.add_instrument_area();
-    let ir_id = app.instrument_regions.keys().next().copied().unwrap();
+    app.add_instrument("synth-a", "SynthA");
+    let id_a = *app.instruments.keys().next().unwrap();
     app.selected.clear();
 
     // Add a second instrument
-    app.add_instrument_area();
-    let ir2_id = app.instrument_regions.keys().nth(1).copied().unwrap();
+    app.add_instrument("synth-b", "SynthB");
+    let id_b = *app.instruments.keys().nth(1).unwrap();
     app.refresh_project_browser_entries();
 
     assert_eq!(app.layer_tree.len(), 2);
-    assert_eq!(app.layer_tree[0].entity_id, ir_id);
-    assert_eq!(app.layer_tree[1].entity_id, ir2_id);
+    assert_eq!(app.layer_tree[0].entity_id, id_a);
+    assert_eq!(app.layer_tree[1].entity_id, id_b);
 
     // Move second instrument up
-    assert!(layers::move_node_up(&mut app.layer_tree, ir2_id));
-    assert_eq!(app.layer_tree[0].entity_id, ir2_id);
-    assert_eq!(app.layer_tree[1].entity_id, ir_id);
+    assert!(layers::move_node_up(&mut app.layer_tree, id_b));
+    assert_eq!(app.layer_tree[0].entity_id, id_b);
+    assert_eq!(app.layer_tree[1].entity_id, id_a);
 
     // Move it back down
-    assert!(layers::move_node_down(&mut app.layer_tree, ir2_id));
-    assert_eq!(app.layer_tree[0].entity_id, ir_id);
-    assert_eq!(app.layer_tree[1].entity_id, ir2_id);
+    assert!(layers::move_node_down(&mut app.layer_tree, id_b));
+    assert_eq!(app.layer_tree[0].entity_id, id_a);
+    assert_eq!(app.layer_tree[1].entity_id, id_b);
 
     // Can't move first up further
-    assert!(!layers::move_node_up(&mut app.layer_tree, ir_id));
+    assert!(!layers::move_node_up(&mut app.layer_tree, id_a));
     // Can't move last down further
-    assert!(!layers::move_node_down(&mut app.layer_tree, ir2_id));
+    assert!(!layers::move_node_down(&mut app.layer_tree, id_b));
 }
 
 #[test]
@@ -123,7 +126,7 @@ fn test_flatten_respects_expanded() {
     // Expanded by default — should see instrument + midi child
     let rows = layers::flatten_tree(
         &app.layer_tree,
-        &app.instrument_regions, &app.midi_clips,
+        &app.instruments, &app.midi_clips,
         &app.waveforms, &app.effect_regions, &app.plugin_blocks,
     );
     assert_eq!(rows.len(), 2);
@@ -133,7 +136,7 @@ fn test_flatten_respects_expanded() {
     layers::toggle_expanded(&mut app.layer_tree, ir_id);
     let rows = layers::flatten_tree(
         &app.layer_tree,
-        &app.instrument_regions, &app.midi_clips,
+        &app.instruments, &app.midi_clips,
         &app.waveforms, &app.effect_regions, &app.plugin_blocks,
     );
     assert_eq!(rows.len(), 1);
@@ -159,8 +162,8 @@ fn test_midi_clip_has_instrument_id_after_add_instrument() {
     app.add_instrument("test-synth", "TestSynth");
 
     let mc = app.midi_clips.values().next().unwrap();
-    let ir_id = app.instrument_regions.keys().next().copied().unwrap();
-    assert_eq!(mc.instrument_region_id, Some(ir_id));
+    let inst_id = app.instruments.keys().next().copied().unwrap();
+    assert_eq!(mc.instrument_id, Some(inst_id));
 }
 
 #[test]
@@ -172,7 +175,7 @@ fn test_flat_layer_row_color() {
 
     let rows = layers::flatten_tree(
         &app.layer_tree,
-        &app.instrument_regions, &app.midi_clips,
+        &app.instruments, &app.midi_clips,
         &app.waveforms, &app.effect_regions, &app.plugin_blocks,
     );
 
@@ -187,13 +190,12 @@ fn test_flat_layer_row_color() {
 fn test_delete_instrument_cascades_midi_clips() {
     let mut app = App::new_headless();
     app.add_instrument("test-synth", "TestSynth");
-    assert_eq!(app.instrument_regions.len(), 1);
+    assert_eq!(app.instruments.len(), 1);
     assert_eq!(app.midi_clips.len(), 1);
 
-    let ir_id = app.instrument_regions.keys().next().copied().unwrap();
-    app.selected = vec![HitTarget::InstrumentRegion(ir_id)];
+    // Delete the MIDI clip (which belongs to the instrument)
+    let mc_id = app.midi_clips.keys().next().copied().unwrap();
+    app.selected = vec![HitTarget::MidiClip(mc_id)];
     app.delete_selected();
-
-    assert!(app.instrument_regions.is_empty());
     assert!(app.midi_clips.is_empty());
 }

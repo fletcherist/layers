@@ -61,7 +61,7 @@ pub struct FlatLayerRow {
 /// Instruments (sorted by Y) with MIDI children; waveforms (sorted by Y);
 /// effect regions (sorted by Y) with plugin block children.
 pub fn build_default_tree(
-    instrument_regions: &IndexMap<EntityId, crate::instruments::InstrumentRegion>,
+    instruments: &IndexMap<EntityId, crate::instruments::Instrument>,
     midi_clips: &IndexMap<EntityId, crate::midi::MidiClip>,
     waveforms: &IndexMap<EntityId, crate::ui::waveform::WaveformView>,
     effect_regions: &IndexMap<EntityId, crate::effects::EffectRegion>,
@@ -69,15 +69,10 @@ pub fn build_default_tree(
 ) -> Vec<LayerNode> {
     let mut tree = Vec::new();
 
-    // Instruments sorted by Y position
-    let mut irs: Vec<(EntityId, f32)> = instrument_regions.iter()
-        .map(|(&id, ir)| (id, ir.position[1]))
-        .collect();
-    irs.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
-
-    for (ir_id, _) in &irs {
+    // Instruments (lightweight) sorted by insertion order
+    for (&inst_id, _) in instruments.iter() {
         let children: Vec<LayerNode> = midi_clips.iter()
-            .filter(|(_, mc)| mc.instrument_region_id == Some(*ir_id))
+            .filter(|(_, mc)| mc.instrument_id == Some(inst_id))
             .map(|(&mc_id, _)| LayerNode {
                 entity_id: mc_id,
                 kind: LayerNodeKind::MidiClip,
@@ -86,7 +81,7 @@ pub fn build_default_tree(
             })
             .collect();
         tree.push(LayerNode {
-            entity_id: *ir_id,
+            entity_id: inst_id,
             kind: LayerNodeKind::Instrument,
             expanded: true,
             children,
@@ -141,7 +136,7 @@ pub fn build_default_tree(
 /// Flatten a tree of LayerNodes into display rows, respecting expanded state.
 pub fn flatten_tree(
     tree: &[LayerNode],
-    instrument_regions: &IndexMap<EntityId, crate::instruments::InstrumentRegion>,
+    instruments: &IndexMap<EntityId, crate::instruments::Instrument>,
     midi_clips: &IndexMap<EntityId, crate::midi::MidiClip>,
     waveforms: &IndexMap<EntityId, crate::ui::waveform::WaveformView>,
     effect_regions: &IndexMap<EntityId, crate::effects::EffectRegion>,
@@ -149,7 +144,7 @@ pub fn flatten_tree(
 ) -> Vec<FlatLayerRow> {
     let mut rows = Vec::new();
     for node in tree {
-        flatten_node(node, 0, &mut rows, instrument_regions, midi_clips, waveforms, effect_regions, plugin_blocks);
+        flatten_node(node, 0, &mut rows, instruments, midi_clips, waveforms, effect_regions, plugin_blocks);
     }
     rows
 }
@@ -158,7 +153,7 @@ fn flatten_node(
     node: &LayerNode,
     depth: usize,
     rows: &mut Vec<FlatLayerRow>,
-    instrument_regions: &IndexMap<EntityId, crate::instruments::InstrumentRegion>,
+    instruments: &IndexMap<EntityId, crate::instruments::Instrument>,
     midi_clips: &IndexMap<EntityId, crate::midi::MidiClip>,
     waveforms: &IndexMap<EntityId, crate::ui::waveform::WaveformView>,
     effect_regions: &IndexMap<EntityId, crate::effects::EffectRegion>,
@@ -166,11 +161,13 @@ fn flatten_node(
 ) {
     let label = match node.kind {
         LayerNodeKind::Instrument => {
-            instrument_regions.get(&node.entity_id).map(|ir| {
-                if !ir.name.is_empty() && ir.name != "instrument" { ir.name.clone() }
-                else if !ir.plugin_name.is_empty() { ir.plugin_name.clone() }
+            if let Some(inst) = instruments.get(&node.entity_id) {
+                if !inst.name.is_empty() && inst.name != "instrument" { inst.name.clone() }
+                else if !inst.plugin_name.is_empty() { inst.plugin_name.clone() }
                 else { format!("Instrument {}", node.entity_id) }
-            }).unwrap_or_else(|| format!("Instrument {}", node.entity_id))
+            } else {
+                format!("Instrument {}", node.entity_id)
+            }
         }
         LayerNodeKind::MidiClip => {
             midi_clips.get(&node.entity_id).map(|mc| {
@@ -221,7 +218,7 @@ fn flatten_node(
 
     if node.expanded {
         for child in &node.children {
-            flatten_node(child, depth + 1, rows, instrument_regions, midi_clips, waveforms, effect_regions, plugin_blocks);
+            flatten_node(child, depth + 1, rows, instruments, midi_clips, waveforms, effect_regions, plugin_blocks);
         }
     }
 }
@@ -230,7 +227,7 @@ fn flatten_node(
 /// Preserves existing order and expanded state where possible.
 pub fn sync_tree(
     tree: &mut Vec<LayerNode>,
-    instrument_regions: &IndexMap<EntityId, crate::instruments::InstrumentRegion>,
+    instruments: &IndexMap<EntityId, crate::instruments::Instrument>,
     midi_clips: &IndexMap<EntityId, crate::midi::MidiClip>,
     waveforms: &IndexMap<EntityId, crate::ui::waveform::WaveformView>,
     effect_regions: &IndexMap<EntityId, crate::effects::EffectRegion>,
@@ -241,7 +238,7 @@ pub fn sync_tree(
     // Phase 1: remove stale root nodes
     tree.retain(|node| {
         match node.kind {
-            LayerNodeKind::Instrument => instrument_regions.contains_key(&node.entity_id),
+            LayerNodeKind::Instrument => instruments.contains_key(&node.entity_id),
             LayerNodeKind::Waveform => waveforms.contains_key(&node.entity_id),
             LayerNodeKind::EffectRegion => effect_regions.contains_key(&node.entity_id),
             LayerNodeKind::MidiClip => midi_clips.contains_key(&node.entity_id),
@@ -260,7 +257,7 @@ pub fn sync_tree(
             let node_id = node.entity_id;
             let existing: std::collections::HashSet<EntityId> = node.children.iter().map(|c| c.entity_id).collect();
             for (&mc_id, mc) in midi_clips.iter() {
-                if mc.instrument_region_id == Some(node_id) && !existing.contains(&mc_id) {
+                if mc.instrument_id == Some(node_id) && !existing.contains(&mc_id) {
                     node.children.push(LayerNode {
                         entity_id: mc_id, kind: LayerNodeKind::MidiClip, expanded: false, children: Vec::new(),
                     });
@@ -284,11 +281,11 @@ pub fn sync_tree(
     }
 
     // Phase 3: add new root-level entities not yet in the tree
-    for &id in instrument_regions.keys() {
+    for &id in instruments.keys() {
         if !seen_ids.contains(&id) {
             let mut children = Vec::new();
             for (&mc_id, mc) in midi_clips.iter() {
-                if mc.instrument_region_id == Some(id) && !seen_ids.contains(&mc_id) {
+                if mc.instrument_id == Some(id) && !seen_ids.contains(&mc_id) {
                     children.push(LayerNode { entity_id: mc_id, kind: LayerNodeKind::MidiClip, expanded: false, children: Vec::new() });
                     seen_ids.insert(mc_id);
                 }
@@ -297,6 +294,7 @@ pub fn sync_tree(
             seen_ids.insert(id);
         }
     }
+    // InstrumentRegion fallback removed — instruments are the sole source
     for &id in waveforms.keys() {
         if !seen_ids.contains(&id) {
             tree.push(LayerNode { entity_id: id, kind: LayerNodeKind::Waveform, expanded: false, children: Vec::new() });

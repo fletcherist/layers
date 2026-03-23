@@ -160,7 +160,6 @@ pub(crate) enum HitTarget {
     ComponentDef(EntityId),
     ComponentInstance(EntityId),
     MidiClip(EntityId),
-    InstrumentRegion(EntityId),
     TextNote(EntityId),
 }
 
@@ -248,12 +247,6 @@ enum DragState {
         original_value: f32,
         before: WaveformView,
     },
-    ResizingInstrumentRegion {
-        region_id: EntityId,
-        anchor: [f32; 2],
-        nwse: bool,
-        before: instruments::InstrumentRegionSnapshot,
-    },
     ResizingMidiClip {
         clip_id: EntityId,
         anchor: [f32; 2],
@@ -328,7 +321,6 @@ pub(crate) enum EntityBeforeState {
     ComponentDef(component::ComponentDef),
     ComponentInstance(component::ComponentInstance),
     MidiClip(midi::MidiClip),
-    InstrumentRegion(instruments::InstrumentRegionSnapshot),
     TextNote(text_note::TextNote),
 }
 
@@ -343,15 +335,6 @@ enum ComponentDefHover {
 
 #[derive(Clone, Copy, PartialEq)]
 enum EffectRegionHover {
-    None,
-    CornerNW(EntityId),
-    CornerNE(EntityId),
-    CornerSW(EntityId),
-    CornerSE(EntityId),
-}
-
-#[derive(Clone, Copy, PartialEq)]
-enum InstrumentRegionHover {
     None,
     CornerNW(EntityId),
     CornerNE(EntityId),
@@ -384,7 +367,6 @@ enum ClipboardItem {
     ComponentInstance(component::ComponentInstance),
     MidiClip(midi::MidiClip),
     MidiNotes(Vec<midi::MidiNote>),
-    InstrumentRegion(instruments::InstrumentRegionSnapshot),
     TextNote(text_note::TextNote),
 }
 
@@ -539,12 +521,11 @@ struct App {
     select_area: Option<SelectArea>,
     component_def_hover: ComponentDefHover,
     effect_region_hover: EffectRegionHover,
-    instrument_region_hover: InstrumentRegionHover,
     text_notes: IndexMap<EntityId, text_note::TextNote>,
     text_note_hover: TextNoteHover,
     editing_text_note: Option<text_note::TextNoteEditState>,
     midi_clips: IndexMap<EntityId, midi::MidiClip>,
-    instrument_regions: IndexMap<EntityId, instruments::InstrumentRegion>,
+    instruments: IndexMap<EntityId, instruments::Instrument>,
     editing_midi_clip: Option<EntityId>,
     selected_midi_notes: Vec<usize>,
     pending_midi_note_click: Option<usize>,
@@ -671,12 +652,11 @@ impl App {
             select_area: None,
             component_def_hover: ComponentDefHover::None,
             effect_region_hover: EffectRegionHover::None,
-            instrument_region_hover: InstrumentRegionHover::None,
             text_notes: IndexMap::new(),
             text_note_hover: TextNoteHover::None,
             editing_text_note: None,
             midi_clips: IndexMap::new(),
-            instrument_regions: IndexMap::new(),
+            instruments: IndexMap::new(),
             editing_midi_clip: None,
             selected_midi_notes: Vec::new(),
             pending_midi_note_click: None,
@@ -769,7 +749,7 @@ impl App {
     pub(crate) fn refresh_project_browser_entries(&mut self) {
         layers::sync_tree(
             &mut self.layer_tree,
-            &self.instrument_regions,
+            &self.instruments,
             &self.midi_clips,
             &self.waveforms,
             &self.effect_regions,
@@ -777,7 +757,7 @@ impl App {
         );
         let rows = layers::flatten_tree(
             &self.layer_tree,
-            &self.instrument_regions,
+            &self.instruments,
             &self.midi_clips,
             &self.waveforms,
             &self.effect_regions,
@@ -789,26 +769,6 @@ impl App {
         }
     }
 
-    /// Center the camera on an instrument region and select it for computer-keyboard preview.
-    pub(crate) fn focus_instrument_region(&mut self, id: EntityId) {
-        let Some(ir) = self.instrument_regions.get(&id) else {
-            return;
-        };
-        let (sw, sh, _) = self.screen_info();
-        let cx = ir.position[0] + ir.size[0] * 0.5;
-        let cy = ir.position[1] + ir.size[1] * 0.5;
-        self.camera.position = [
-            cx - sw * 0.5 / self.camera.zoom,
-            cy - sh * 0.5 / self.camera.zoom,
-        ];
-        self.selected.clear();
-        self.selected.push(HitTarget::InstrumentRegion(id));
-        self.keyboard_instrument_id = Some(id);
-        self.update_right_window();
-        #[cfg(feature = "native")]
-        self.sync_computer_keyboard_to_engine();
-        self.mark_dirty();
-    }
 
     #[cfg(feature = "native")]
     pub(crate) fn release_computer_keyboard_notes(&mut self) {
@@ -863,11 +823,6 @@ impl App {
             er.position[1] *= scale;
             er.size[0] *= scale;
         }
-        for ir in self.instrument_regions.values_mut() {
-            ir.position[0] *= scale;
-            ir.position[1] *= scale;
-            ir.size[0] *= scale;
-        }
         for efr in self.effect_regions.values_mut() {
             efr.position[0] *= scale;
             efr.position[1] *= scale;
@@ -919,13 +874,6 @@ impl App {
     fn shutdown_plugins(&mut self) {
         // Stop audio engine first so the audio thread releases plugin locks
         self.audio_engine = None;
-
-        // Destroy instrument region GUIs (single instance handles both GUI + audio)
-        for ir in self.instrument_regions.values_mut() {
-            if let Ok(mut g) = ir.gui.lock() {
-                *g = None;
-            }
-        }
 
         // Destroy plugin block GUIs
         for pb in self.plugin_blocks.values_mut() {
@@ -995,7 +943,6 @@ impl App {
             audio_clips,
             loaded_bpm,
             stored_midi_clips,
-            stored_instrument_regions,
             stored_layer_tree,
             restored_text_notes,
         ) = match loaded {
@@ -1129,7 +1076,6 @@ impl App {
                     audio_clips,
                     if state.bpm > 0.0 { state.bpm } else { DEFAULT_BPM },
                     storage::midi_clips_from_stored(state.midi_clips),
-                    storage::instrument_regions_from_stored(state.instrument_regions),
                     state.layer_tree,
                     storage::text_notes_from_stored(state.text_notes),
                 )
@@ -1153,7 +1099,6 @@ impl App {
                     IndexMap::new(),  // audio_clips
                     DEFAULT_BPM,
                     Vec::new(),  // stored_midi_clips
-                    Vec::new(),  // stored_instrument_regions
                     Vec::new(),  // stored_layer_tree
                     IndexMap::new(),  // text_notes
                 )
@@ -1355,36 +1300,15 @@ impl App {
                 grid_mode: storage::grid_mode_from_stored(&smc.grid_mode_tag, &smc.grid_mode_value),
                 triplet_grid: smc.triplet_grid,
                 velocity_lane_height: midi::VELOCITY_LANE_HEIGHT,
-                instrument_region_id: if smc.instrument_region_id.is_empty() { None } else { smc.instrument_region_id.parse().ok() },
+                instrument_id: if smc.instrument_region_id.is_empty() { None } else { smc.instrument_region_id.parse().ok() },
             }))
-            .collect();
-
-        let restored_instrument_regions: IndexMap<EntityId, instruments::InstrumentRegion> = stored_instrument_regions
-            .into_iter()
-            .map(|(id, sir)| {
-                let mut ir = instruments::InstrumentRegion::new(sir.position, sir.size);
-                ir.name = sir.name;
-                ir.plugin_id = sir.plugin_id;
-                ir.plugin_name = sir.plugin_name;
-                if !sir.state.is_empty() {
-                    ir.pending_state = Some(sir.state);
-                }
-                if !sir.params.is_empty() {
-                    ir.pending_params = Some(sir.params.chunks(8).map(|chunk| {
-                        let mut bytes = [0u8; 8];
-                        bytes[..chunk.len()].copy_from_slice(chunk);
-                        f64::from_le_bytes(bytes)
-                    }).collect());
-                }
-                (id, ir)
-            })
             .collect();
 
         let restored_layer_tree = {
             let mut tree = layers::tree_from_stored(&stored_layer_tree);
             layers::sync_tree(
                 &mut tree,
-                &restored_instrument_regions,
+                &IndexMap::new(), // no instruments in old format yet
                 &restored_midi_clips,
                 &waveforms,
                 &restored_effect_regions,
@@ -1450,12 +1374,11 @@ impl App {
             select_area: None,
             component_def_hover: ComponentDefHover::None,
             effect_region_hover: EffectRegionHover::None,
-            instrument_region_hover: InstrumentRegionHover::None,
             text_notes: restored_text_notes,
             text_note_hover: TextNoteHover::None,
             editing_text_note: None,
             midi_clips: restored_midi_clips,
-            instrument_regions: restored_instrument_regions,
+            instruments: IndexMap::new(),
             editing_midi_clip: None,
             selected_midi_notes: Vec::new(),
             pending_midi_note_click: None,
@@ -1731,26 +1654,10 @@ impl App {
                         grid_mode_tag: grid_tag,
                         grid_mode_value: grid_val,
                         triplet_grid: mc.triplet_grid,
-                        instrument_region_id: mc.instrument_region_id.map(|id| id.to_string()).unwrap_or_default(),
+                        instrument_region_id: mc.instrument_id.map(|id| id.to_string()).unwrap_or_default(),
                     }
                 }).collect(),
-                instrument_regions: self.instrument_regions.iter().map(|(id, ir)| storage::StoredInstrumentRegion {
-                    id: id.to_string(),
-                    position: ir.position,
-                    size: ir.size,
-                    name: ir.name.clone(),
-                    plugin_id: ir.plugin_id.clone(),
-                    plugin_name: ir.plugin_name.clone(),
-                    state: ir.gui.lock().ok()
-                        .and_then(|g| g.as_ref().and_then(|gui| gui.get_state()))
-                        .unwrap_or_default(),
-                    params: {
-                        let vals = ir.gui.lock().ok()
-                            .and_then(|g| g.as_ref().map(|gui| gui.get_all_parameters()))
-                            .unwrap_or_default();
-                        vals.iter().flat_map(|v| v.to_le_bytes()).collect()
-                    },
-                }).collect(),
+                instrument_regions: Vec::new(),
                 layer_tree: layers::tree_to_stored(&self.layer_tree),
                 text_notes: storage::text_notes_to_stored(&self.text_notes),
             };
@@ -2172,36 +2079,15 @@ impl App {
                 grid_mode: storage::grid_mode_from_stored(&smc.grid_mode_tag, &smc.grid_mode_value),
                 triplet_grid: smc.triplet_grid,
                 velocity_lane_height: midi::VELOCITY_LANE_HEIGHT,
-                instrument_region_id: if smc.instrument_region_id.is_empty() { None } else { smc.instrument_region_id.parse().ok() },
+                instrument_id: if smc.instrument_region_id.is_empty() { None } else { smc.instrument_region_id.parse().ok() },
             }))
-            .collect();
-
-        self.instrument_regions = storage::instrument_regions_from_stored(state.instrument_regions)
-            .into_iter()
-            .map(|(id, sir)| {
-                let mut ir = instruments::InstrumentRegion::new(sir.position, sir.size);
-                ir.name = sir.name;
-                ir.plugin_id = sir.plugin_id;
-                ir.plugin_name = sir.plugin_name;
-                if !sir.state.is_empty() {
-                    ir.pending_state = Some(sir.state);
-                }
-                if !sir.params.is_empty() {
-                    ir.pending_params = Some(sir.params.chunks(8).map(|chunk| {
-                        let mut bytes = [0u8; 8];
-                        bytes[..chunk.len()].copy_from_slice(chunk);
-                        f64::from_le_bytes(bytes)
-                    }).collect());
-                }
-                (id, ir)
-            })
             .collect();
 
         {
             let mut tree = layers::tree_from_stored(&state.layer_tree);
             layers::sync_tree(
                 &mut tree,
-                &self.instrument_regions,
+                &self.instruments,
                 &self.midi_clips,
                 &self.waveforms,
                 &self.effect_regions,
@@ -3153,37 +3039,6 @@ impl App {
         }
     }
 
-    #[cfg(test)]
-    fn add_instrument_area(&mut self) {
-        let (pos, size) = if let Some(sa) = self.select_area.take() {
-            let x0 = snap_to_grid(sa.position[0], &self.settings, self.camera.zoom, self.bpm);
-            let x1 = snap_to_grid(
-                sa.position[0] + sa.size[0],
-                &self.settings,
-                self.camera.zoom,
-                self.bpm,
-            );
-            ([x0, sa.position[1]], [x1 - x0, sa.size[1]])
-        } else {
-            let (sw, sh, _) = self.screen_info();
-            let center = self.camera.screen_to_world([sw * 0.5, sh * 0.5]);
-            let w = instruments::INSTRUMENT_REGION_DEFAULT_WIDTH;
-            let h = instruments::INSTRUMENT_REGION_DEFAULT_HEIGHT;
-            ([center[0] - w * 0.5, center[1] - h * 0.5], [w, h])
-        };
-        let id = new_id();
-        let ir = instruments::InstrumentRegion::new(pos, size);
-        let snap = instruments::InstrumentRegionSnapshot {
-            position: ir.position, size: ir.size,
-            name: ir.name.clone(), plugin_id: ir.plugin_id.clone(),
-            plugin_name: ir.plugin_name.clone(), plugin_path: ir.plugin_path.clone(),
-        };
-        self.instrument_regions.insert(id, ir);
-        self.push_op(operations::Operation::CreateInstrumentRegion { id, data: snap });
-        self.selected.clear();
-        self.selected.push(HitTarget::InstrumentRegion(id));
-        self.request_redraw();
-    }
 
     fn add_midi_clip(&mut self) {
         let (sw, sh, _) = self.screen_info();
@@ -3195,7 +3050,7 @@ impl App {
         let pos = [center[0] - width * 0.5, center[1] - height * 0.5];
         let mut clip = midi::MidiClip::new(pos, &self.settings);
         clip.size = [width, height];
-        clip.instrument_region_id = self.find_containing_instrument(pos, [width, height]);
+        // Standalone MIDI clip — no instrument assigned
         let id = new_id();
         self.midi_clips.insert(id, clip.clone());
         self.push_op(operations::Operation::CreateMidiClip { id, data: clip });
@@ -3204,39 +3059,30 @@ impl App {
         self.request_redraw();
     }
 
-    /// Find the instrument region whose rectangle contains the given rect's center,
-    /// falling back to the first instrument if none overlap.
-    fn find_containing_instrument(&self, pos: [f32; 2], size: [f32; 2]) -> Option<EntityId> {
-        if self.instrument_regions.is_empty() {
-            return None;
-        }
-        let cx = pos[0] + size[0] * 0.5;
-        let cy = pos[1] + size[1] * 0.5;
-        for (&id, ir) in &self.instrument_regions {
-            if cx >= ir.position[0] && cx <= ir.position[0] + ir.size[0]
-                && cy >= ir.position[1] && cy <= ir.position[1] + ir.size[1]
-            {
-                return Some(id);
-            }
-        }
-        Some(*self.instrument_regions.keys().next().unwrap())
+    /// Find the first instrument, if any.
+    fn find_containing_instrument(&self, _pos: [f32; 2], _size: [f32; 2]) -> Option<EntityId> {
+        self.instruments.keys().next().copied()
     }
 
     #[cfg(feature = "native")]
     fn sync_instrument_regions(&self) {
         if let Some(engine) = &self.audio_engine {
-            let mut instrument_regions = Vec::new();
-            for (&id, ir) in self.instrument_regions.iter() {
-                if !ir.has_plugin() {
+            let mut audio_instruments = Vec::new();
+
+            // Build from lightweight instruments (new path)
+            for (&inst_id, inst) in self.instruments.iter() {
+                if !inst.has_plugin() {
                     continue;
                 }
                 let mut midi_events = Vec::new();
+                let mut x_min = f32::MAX;
+                let mut x_max = f32::MIN;
                 for mc in self.midi_clips.values() {
-                    let belongs = mc.instrument_region_id == Some(id)
-                        || (mc.instrument_region_id.is_none() && rects_overlap(ir.position, ir.size, mc.position, mc.size));
-                    if !belongs {
+                    if mc.instrument_id != Some(inst_id) {
                         continue;
                     }
+                    x_min = x_min.min(mc.position[0]);
+                    x_max = x_max.max(mc.position[0] + mc.size[0]);
                     for note in &mc.notes {
                         let note_on_time = (mc.position[0] + note.start_px) as f64
                             / PIXELS_PER_SECOND as f64;
@@ -3256,37 +3102,45 @@ impl App {
                         });
                     }
                 }
+                if x_min > x_max {
+                    x_min = 0.0;
+                    x_max = 0.0;
+                }
                 midi_events.sort_by(|a, b| a.time_secs.partial_cmp(&b.time_secs).unwrap());
-                instrument_regions.push(audio::AudioInstrumentRegion {
-                    id,
-                    x_start_px: ir.position[0],
-                    x_end_px: ir.position[0] + ir.size[0],
-                    y_start: ir.position[1],
-                    y_end: ir.position[1] + ir.size[1],
-                    gui: ir.gui.clone(),
+                audio_instruments.push(audio::AudioInstrument {
+                    id: inst_id,
+                    x_start_px: x_min,
+                    x_end_px: x_max,
+                    y_start: 0.0,
+                    y_end: 0.0,
+                    gui: inst.gui.clone(),
                     midi_events,
                 });
             }
-            engine.update_instrument_regions(instrument_regions);
+
+            engine.update_instruments(audio_instruments);
         }
         self.sync_computer_keyboard_to_engine();
     }
 
     #[cfg(feature = "native")]
     pub(crate) fn sync_keyboard_instrument_from_selection(&mut self) {
-        let irs: Vec<EntityId> = self
+        // Try to find instrument from selected MidiClip's instrument_id
+        let clip_insts: Vec<EntityId> = self
             .selected
             .iter()
             .filter_map(|t| match t {
-                HitTarget::InstrumentRegion(id) => Some(*id),
+                HitTarget::MidiClip(id) => {
+                    self.midi_clips.get(id).and_then(|mc| mc.instrument_id)
+                }
                 _ => None,
             })
             .collect();
-        self.keyboard_instrument_id = if irs.len() == 1 && self.instrument_regions.contains_key(&irs[0]) {
-            Some(irs[0])
-        } else {
-            None
-        };
+        if clip_insts.len() == 1 && self.instruments.contains_key(&clip_insts[0]) {
+            self.keyboard_instrument_id = Some(clip_insts[0]);
+            return;
+        }
+        self.keyboard_instrument_id = None;
     }
 
     #[cfg(feature = "native")]
@@ -3302,11 +3156,8 @@ impl App {
             engine.set_keyboard_preview_target(None);
             return;
         };
-        if self
-            .instrument_regions
-            .get(&id)
-            .map_or(false, |ir| ir.has_plugin())
-        {
+        let has_plugin = self.instruments.get(&id).map_or(false, |inst| inst.has_plugin());
+        if has_plugin {
             engine.set_keyboard_preview_target(Some(id));
         } else {
             engine.set_keyboard_preview_target(None);
@@ -3783,12 +3634,7 @@ impl App {
                                 ComponentDefHover::CornerNE(_) | ComponentDefHover::CornerSW(_) => {
                                     CursorIcon::NeswResize
                                 }
-                                ComponentDefHover::None => match self.instrument_region_hover {
-                                    InstrumentRegionHover::CornerNW(_)
-                                    | InstrumentRegionHover::CornerSE(_) => CursorIcon::NwseResize,
-                                    InstrumentRegionHover::CornerNE(_)
-                                    | InstrumentRegionHover::CornerSW(_) => CursorIcon::NeswResize,
-                                    InstrumentRegionHover::None => match self.effect_region_hover {
+                                ComponentDefHover::None => match self.effect_region_hover {
                                     EffectRegionHover::CornerNW(_)
                                     | EffectRegionHover::CornerSE(_) => CursorIcon::NwseResize,
                                     EffectRegionHover::CornerNE(_)
@@ -3819,7 +3665,6 @@ impl App {
                                             }
                                         },
                                     },
-                                },
                                 },
                             }
                         }
@@ -3911,7 +3756,6 @@ impl App {
             &self.components,
             &self.component_instances,
             &self.midi_clips,
-            &self.instrument_regions,
             &self.text_notes,
             self.editing_component,
             world,
@@ -3943,30 +3787,6 @@ impl App {
             }
         }
 
-        self.instrument_region_hover = InstrumentRegionHover::None;
-        for (&i, ir) in self.instrument_regions.iter() {
-            let handle_sz = 24.0 / self.camera.zoom;
-            let hs = handle_sz * 0.5;
-            let p = ir.position;
-            let s = ir.size;
-            if point_in_rect(world, [p[0] - hs, p[1] - hs], [handle_sz, handle_sz]) {
-                self.instrument_region_hover = InstrumentRegionHover::CornerNW(i);
-                break;
-            } else if point_in_rect(world, [p[0] + s[0] - hs, p[1] - hs], [handle_sz, handle_sz]) {
-                self.instrument_region_hover = InstrumentRegionHover::CornerNE(i);
-                break;
-            } else if point_in_rect(world, [p[0] - hs, p[1] + s[1] - hs], [handle_sz, handle_sz]) {
-                self.instrument_region_hover = InstrumentRegionHover::CornerSW(i);
-                break;
-            } else if point_in_rect(
-                world,
-                [p[0] + s[0] - hs, p[1] + s[1] - hs],
-                [handle_sz, handle_sz],
-            ) {
-                self.instrument_region_hover = InstrumentRegionHover::CornerSE(i);
-                break;
-            }
-        }
 
         self.effect_region_hover = EffectRegionHover::None;
         for (&i, er) in self.effect_regions.iter() {
@@ -4097,7 +3917,6 @@ impl App {
             }
             HitTarget::ComponentInstance(i) => { if let Some(c) = self.component_instances.get_mut(i) { c.position = pos; } }
             HitTarget::MidiClip(i) => { if let Some(m) = self.midi_clips.get_mut(i) { m.position = pos; } }
-            HitTarget::InstrumentRegion(i) => { if let Some(r) = self.instrument_regions.get_mut(i) { r.position = pos; } }
         }
     }
 
@@ -4112,7 +3931,6 @@ impl App {
             HitTarget::ComponentDef(i) => self.components.get(i).map(|c| c.position).unwrap_or([0.0; 2]),
             HitTarget::ComponentInstance(i) => self.component_instances.get(i).map(|c| c.position).unwrap_or([0.0; 2]),
             HitTarget::MidiClip(i) => self.midi_clips.get(i).map(|m| m.position).unwrap_or([0.0; 2]),
-            HitTarget::InstrumentRegion(i) => self.instrument_regions.get(i).map(|r| r.position).unwrap_or([0.0; 2]),
             HitTarget::TextNote(i) => self.text_notes.get(i).map(|t| t.position).unwrap_or([0.0; 2]),
         }
     }
@@ -4133,7 +3951,6 @@ impl App {
                     .unwrap_or([50.0; 2])
             }
             HitTarget::MidiClip(i) => self.midi_clips.get(i).map(|m| m.size).unwrap_or([50.0; 2]),
-            HitTarget::InstrumentRegion(i) => self.instrument_regions.get(i).map(|r| r.size).unwrap_or([50.0; 2]),
             HitTarget::TextNote(i) => self.text_notes.get(i).map(|t| t.size).unwrap_or([50.0; 2]),
         }
     }
@@ -4246,19 +4063,6 @@ impl App {
                             new_selected.push(HitTarget::MidiClip(nid));
                         }
                     }
-                    HitTarget::InstrumentRegion(i) => {
-                        if let Some(ir) = self.instrument_regions.get(&i).cloned() {
-                            let nid = new_id();
-                            let snap = instruments::InstrumentRegionSnapshot {
-                                position: ir.position, size: ir.size,
-                                name: ir.name.clone(), plugin_id: ir.plugin_id.clone(),
-                                plugin_name: ir.plugin_name.clone(), plugin_path: ir.plugin_path.clone(),
-                            };
-                            self.instrument_regions.insert(nid, ir);
-                            copy_ops.push(operations::Operation::CreateInstrumentRegion { id: nid, data: snap });
-                            new_selected.push(HitTarget::InstrumentRegion(nid));
-                        }
-                    }
                     HitTarget::TextNote(i) => {
                         if let Some(tn) = self.text_notes.get(&i).cloned() {
                             let nid = new_id();
@@ -4317,14 +4121,6 @@ impl App {
                 HitTarget::ComponentDef(id) => self.components.get(id).map(|c| (*t, EntityBeforeState::ComponentDef(c.clone()))),
                 HitTarget::ComponentInstance(id) => self.component_instances.get(id).map(|c| (*t, EntityBeforeState::ComponentInstance(c.clone()))),
                 HitTarget::MidiClip(id) => self.midi_clips.get(id).map(|m| (*t, EntityBeforeState::MidiClip(m.clone()))),
-                HitTarget::InstrumentRegion(id) => self.instrument_regions.get(id).map(|r| {
-                    let snap = instruments::InstrumentRegionSnapshot {
-                        position: r.position, size: r.size,
-                        name: r.name.clone(), plugin_id: r.plugin_id.clone(),
-                        plugin_name: r.plugin_name.clone(), plugin_path: r.plugin_path.clone(),
-                    };
-                    (*t, EntityBeforeState::InstrumentRegion(snap))
-                }),
                 HitTarget::TextNote(id) => self.text_notes.get(id).map(|tn| (*t, EntityBeforeState::TextNote(tn.clone()))),
             }
         }).collect();
@@ -4395,16 +4191,6 @@ impl App {
                             ops.push(crate::operations::Operation::UpdateMidiClip { id, before, after: after.clone() });
                         }
                     }
-                    (HitTarget::InstrumentRegion(id), EntityBeforeState::InstrumentRegion(before)) => {
-                        if let Some(ir) = self.instrument_regions.get(&id) {
-                            let after = crate::instruments::InstrumentRegionSnapshot {
-                                position: ir.position, size: ir.size,
-                                name: ir.name.clone(), plugin_id: ir.plugin_id.clone(),
-                                plugin_name: ir.plugin_name.clone(), plugin_path: ir.plugin_path.clone(),
-                            };
-                            ops.push(crate::operations::Operation::UpdateInstrumentRegion { id, before, after });
-                        }
-                    }
                     (HitTarget::TextNote(id), EntityBeforeState::TextNote(before)) => {
                         if let Some(after) = self.text_notes.get(&id) {
                             ops.push(crate::operations::Operation::UpdateTextNote { id, before, after: after.clone() });
@@ -4470,14 +4256,6 @@ impl App {
                     HitTarget::ComponentDef(id) => self.components.get(id).map(|c| (*t, EntityBeforeState::ComponentDef(c.clone()))),
                     HitTarget::ComponentInstance(id) => self.component_instances.get(id).map(|c| (*t, EntityBeforeState::ComponentInstance(c.clone()))),
                     HitTarget::MidiClip(id) => self.midi_clips.get(id).map(|m| (*t, EntityBeforeState::MidiClip(m.clone()))),
-                    HitTarget::InstrumentRegion(id) => self.instrument_regions.get(id).map(|r| {
-                        let snap = instruments::InstrumentRegionSnapshot {
-                            position: r.position, size: r.size,
-                            name: r.name.clone(), plugin_id: r.plugin_id.clone(),
-                            plugin_name: r.plugin_name.clone(), plugin_path: r.plugin_path.clone(),
-                        };
-                        (*t, EntityBeforeState::InstrumentRegion(snap))
-                    }),
                     HitTarget::TextNote(id) => self.text_notes.get(id).map(|tn| (*t, EntityBeforeState::TextNote(tn.clone()))),
                 }
             }).collect();
@@ -4920,7 +4698,7 @@ impl App {
             CommandAction::MoveLayerUp => {
                 if let Some(target) = self.selected.first() {
                     let id = match target {
-                        HitTarget::InstrumentRegion(id) | HitTarget::Waveform(id) |
+                        HitTarget::Waveform(id) |
                         HitTarget::EffectRegion(id) | HitTarget::MidiClip(id) |
                         HitTarget::PluginBlock(id) => Some(*id),
                         _ => None,
@@ -4936,7 +4714,7 @@ impl App {
             CommandAction::MoveLayerDown => {
                 if let Some(target) = self.selected.first() {
                     let id = match target {
-                        HitTarget::InstrumentRegion(id) | HitTarget::Waveform(id) |
+                        HitTarget::Waveform(id) |
                         HitTarget::EffectRegion(id) | HitTarget::MidiClip(id) |
                         HitTarget::PluginBlock(id) => Some(*id),
                         _ => None,
@@ -5000,7 +4778,6 @@ impl App {
             &self.components,
             &self.component_instances,
             &self.midi_clips,
-            &self.instrument_regions,
             &self.text_notes,
             self.editing_component,
             world,
@@ -5425,15 +5202,6 @@ impl App {
                         new_selected.push(HitTarget::TextNote(nid));
                     }
                 }
-                HitTarget::InstrumentRegion(i) => {
-                    if let Some(ir) = self.instrument_regions.get(&i).cloned() {
-                        let mut ir = ir;
-                        ir.position[0] += ir.size[0];
-                        let nid = new_id();
-                        self.instrument_regions.insert(nid, ir);
-                        new_selected.push(HitTarget::InstrumentRegion(nid));
-                    }
-                }
             }
         }
 
@@ -5449,7 +5217,6 @@ impl App {
                 HitTarget::ComponentDef(id) => { if let Some(d) = self.components.get(id) { dup_ops.push(operations::Operation::CreateComponent { id: *id, data: d.clone() }); } }
                 HitTarget::ComponentInstance(id) => { if let Some(d) = self.component_instances.get(id) { dup_ops.push(operations::Operation::CreateComponentInstance { id: *id, data: d.clone() }); } }
                 HitTarget::MidiClip(id) => { if let Some(d) = self.midi_clips.get(id) { dup_ops.push(operations::Operation::CreateMidiClip { id: *id, data: d.clone() }); } }
-                HitTarget::InstrumentRegion(id) => { if let Some(ir) = self.instrument_regions.get(id) { let snap = instruments::InstrumentRegionSnapshot { position: ir.position, size: ir.size, name: ir.name.clone(), plugin_id: ir.plugin_id.clone(), plugin_name: ir.plugin_name.clone(), plugin_path: ir.plugin_path.clone() }; dup_ops.push(operations::Operation::CreateInstrumentRegion { id: *id, data: snap }); } }
                 HitTarget::TextNote(id) => { if let Some(d) = self.text_notes.get(id) { dup_ops.push(operations::Operation::CreateTextNote { id: *id, data: d.clone() }); } }
             }
         }
@@ -5551,20 +5318,6 @@ impl App {
                         self.clipboard.items.push(ClipboardItem::MidiClip(mc.clone()));
                     }
                 }
-                HitTarget::InstrumentRegion(i) => {
-                    if let Some(ir) = self.instrument_regions.get(i) {
-                        self.clipboard.items.push(ClipboardItem::InstrumentRegion(
-                            instruments::InstrumentRegionSnapshot {
-                                position: ir.position,
-                                size: ir.size,
-                                name: ir.name.clone(),
-                                plugin_id: ir.plugin_id.clone(),
-                                plugin_name: ir.plugin_name.clone(),
-                                plugin_path: ir.plugin_path.clone(),
-                            },
-                        ));
-                    }
-                }
                 HitTarget::TextNote(i) => {
                     if let Some(tn) = self.text_notes.get(i) {
                         self.clipboard.items.push(ClipboardItem::TextNote(tn.clone()));
@@ -5636,7 +5389,6 @@ impl App {
                 ClipboardItem::ComponentInstance(ci) => ci.position,
                 ClipboardItem::MidiClip(mc) => mc.position,
                 ClipboardItem::MidiNotes(_) => continue,
-                ClipboardItem::InstrumentRegion(ir) => ir.position,
                 ClipboardItem::TextNote(tn) => tn.position,
             };
             if pos[0] < min_x {
@@ -5737,18 +5489,6 @@ impl App {
                 ClipboardItem::MidiNotes(_) => {
                     // Handled in MIDI editing mode (events.rs), skip in global paste
                 }
-                ClipboardItem::InstrumentRegion(snap) => {
-                    let mut ir = instruments::InstrumentRegion::new(snap.position, snap.size);
-                    ir.position[0] += dx;
-                    ir.position[1] += dy;
-                    ir.name = snap.name;
-                    ir.plugin_id = snap.plugin_id;
-                    ir.plugin_name = snap.plugin_name;
-                    ir.plugin_path = snap.plugin_path;
-                    let nid = new_id();
-                    self.instrument_regions.insert(nid, ir);
-                    new_selected.push(HitTarget::InstrumentRegion(nid));
-                }
                 ClipboardItem::TextNote(mut tn) => {
                     tn.position[0] += dx;
                     tn.position[1] += dy;
@@ -5772,7 +5512,6 @@ impl App {
                 HitTarget::ComponentDef(id) => { if let Some(d) = self.components.get(id) { paste_ops.push(operations::Operation::CreateComponent { id: *id, data: d.clone() }); } }
                 HitTarget::ComponentInstance(id) => { if let Some(d) = self.component_instances.get(id) { paste_ops.push(operations::Operation::CreateComponentInstance { id: *id, data: d.clone() }); } }
                 HitTarget::MidiClip(id) => { if let Some(d) = self.midi_clips.get(id) { paste_ops.push(operations::Operation::CreateMidiClip { id: *id, data: d.clone() }); } }
-                HitTarget::InstrumentRegion(id) => { if let Some(ir) = self.instrument_regions.get(id) { let snap = instruments::InstrumentRegionSnapshot { position: ir.position, size: ir.size, name: ir.name.clone(), plugin_id: ir.plugin_id.clone(), plugin_name: ir.plugin_name.clone(), plugin_path: ir.plugin_path.clone() }; paste_ops.push(operations::Operation::CreateInstrumentRegion { id: *id, data: snap }); } }
                 HitTarget::TextNote(id) => { if let Some(d) = self.text_notes.get(id) { paste_ops.push(operations::Operation::CreateTextNote { id: *id, data: d.clone() }); } }
             }
         }
@@ -5804,26 +5543,7 @@ impl App {
         let comp_ids: Vec<EntityId> = self.selected.iter().filter_map(|t| match t { HitTarget::ComponentDef(i) => Some(*i), _ => None }).collect();
         let inst_ids: Vec<EntityId> = self.selected.iter().filter_map(|t| match t { HitTarget::ComponentInstance(i) => Some(*i), _ => None }).collect();
         let mc_ids: Vec<EntityId> = self.selected.iter().filter_map(|t| match t { HitTarget::MidiClip(i) => Some(*i), _ => None }).collect();
-        let ir_ids: Vec<EntityId> = self.selected.iter().filter_map(|t| match t { HitTarget::InstrumentRegion(i) => Some(*i), _ => None }).collect();
         let tn_ids: Vec<EntityId> = self.selected.iter().filter_map(|t| match t { HitTarget::TextNote(i) => Some(*i), _ => None }).collect();
-
-        #[cfg(feature = "native")]
-        if !ir_ids.is_empty() {
-            let removed_ids: HashSet<_> = ir_ids.iter().copied().collect();
-            if let Some(engine) = &self.audio_engine {
-                self.midi_keyboard_held.retain(|_, (target, note)| {
-                    if removed_ids.contains(target) {
-                        engine.keyboard_preview_note_off(*target, *note);
-                        false
-                    } else {
-                        true
-                    }
-                });
-            } else {
-                self.midi_keyboard_held
-                    .retain(|_, (target, _)| !removed_ids.contains(target));
-            }
-        }
 
         // Capture before removing
         for &id in &inst_ids {
@@ -5855,19 +5575,6 @@ impl App {
         for &id in &lr_ids { if let Some(d) = self.loop_regions.get(&id) { del_ops.push(operations::Operation::DeleteLoopRegion { id, data: d.clone() }); } self.loop_regions.shift_remove(&id); }
         for &id in &xr_ids { if let Some(d) = self.export_regions.get(&id) { del_ops.push(operations::Operation::DeleteExportRegion { id, data: d.clone() }); } self.export_regions.shift_remove(&id); }
         for &id in &mc_ids { if let Some(d) = self.midi_clips.get(&id) { del_ops.push(operations::Operation::DeleteMidiClip { id, data: d.clone() }); } self.midi_clips.shift_remove(&id); }
-        // Cascade-delete child MIDI clips when deleting instrument regions
-        if !ir_ids.is_empty() {
-            let ir_set: std::collections::HashSet<EntityId> = ir_ids.iter().copied().collect();
-            let child_mc_ids: Vec<EntityId> = self.midi_clips.iter()
-                .filter(|(_, mc)| mc.instrument_region_id.map_or(false, |iid| ir_set.contains(&iid)))
-                .map(|(&id, _)| id)
-                .collect();
-            for id in child_mc_ids {
-                if let Some(d) = self.midi_clips.get(&id) { del_ops.push(operations::Operation::DeleteMidiClip { id, data: d.clone() }); }
-                self.midi_clips.shift_remove(&id);
-            }
-        }
-        for &id in &ir_ids { if let Some(ir) = self.instrument_regions.get(&id) { let snap = instruments::InstrumentRegionSnapshot { position: ir.position, size: ir.size, name: ir.name.clone(), plugin_id: ir.plugin_id.clone(), plugin_name: ir.plugin_name.clone(), plugin_path: ir.plugin_path.clone() }; del_ops.push(operations::Operation::DeleteInstrumentRegion { id, data: snap }); } self.instrument_regions.shift_remove(&id); }
         for &id in &tn_ids { if let Some(d) = self.text_notes.get(&id) { del_ops.push(operations::Operation::DeleteTextNote { id, data: d.clone() }); } self.text_notes.shift_remove(&id); }
         if !del_ops.is_empty() {
             self.push_op(operations::Operation::Batch(del_ops));

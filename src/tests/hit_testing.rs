@@ -156,7 +156,6 @@ fn test_hit_test_priority_order() {
     let empty_lr = IndexMap::new();
     let empty_xr = IndexMap::new();
     let empty_mc = IndexMap::new();
-    let empty_ir = IndexMap::new();
 
     // With instance present, should hit instance first
     let result = hit_test(
@@ -169,7 +168,6 @@ fn test_hit_test_priority_order() {
         &components,
         &instances,
         &empty_mc,
-        &empty_ir,
         &IndexMap::new(),
         None,
         [50.0, 30.0],
@@ -189,7 +187,6 @@ fn test_hit_test_priority_order() {
         &components,
         &empty_inst,
         &empty_mc,
-        &empty_ir,
         &IndexMap::new(),
         None,
         [50.0, 30.0],
@@ -209,7 +206,6 @@ fn test_hit_test_priority_order() {
         &components,
         &empty_inst,
         &empty_mc,
-        &empty_ir,
         &IndexMap::new(),
         None,
         [50.0, 30.0],
@@ -246,7 +242,6 @@ fn test_targets_in_rect_skips_component_waveforms() {
     let empty_xr = IndexMap::new();
     let empty_inst = IndexMap::new();
     let empty_mc = IndexMap::new();
-    let empty_ir = IndexMap::new();
 
     let targets = targets_in_rect(
         &empty_obj,
@@ -258,7 +253,6 @@ fn test_targets_in_rect_skips_component_waveforms() {
         &components,
         &empty_inst,
         &empty_mc,
-        &empty_ir,
         &IndexMap::new(),
         None,
         [0.0, 0.0],

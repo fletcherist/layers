@@ -7,7 +7,6 @@ use crate::component;
 use crate::effects;
 use crate::entity_id::EntityId;
 use crate::grid::snap_to_grid;
-use crate::instruments;
 use crate::midi;
 use crate::regions::{ExportRegion, LoopRegion};
 use crate::settings::Settings;
@@ -199,7 +198,6 @@ pub(crate) fn hit_test(
     components: &IndexMap<EntityId, component::ComponentDef>,
     component_instances: &IndexMap<EntityId, component::ComponentInstance>,
     midi_clips: &IndexMap<EntityId, midi::MidiClip>,
-    instrument_regions: &IndexMap<EntityId, instruments::InstrumentRegion>,
     text_notes: &IndexMap<EntityId, crate::text_note::TextNote>,
     editing_component: Option<EntityId>,
     world_pos: [f32; 2],
@@ -270,11 +268,7 @@ pub(crate) fn hit_test(
             return Some(HitTarget::EffectRegion(id));
         }
     }
-    for (&id, ir) in instrument_regions.iter().rev() {
-        if ir.hit_test_border(world_pos, camera) {
-            return Some(HitTarget::InstrumentRegion(id));
-        }
-    }
+    // InstrumentRegion hit-testing removed — instruments are non-spatial now
     for (&id, lr) in loop_regions.iter().rev() {
         if lr.hit_test_border(world_pos, camera) {
             return Some(HitTarget::LoopRegion(id));
@@ -298,7 +292,6 @@ pub(crate) fn targets_in_rect(
     components: &IndexMap<EntityId, component::ComponentDef>,
     component_instances: &IndexMap<EntityId, component::ComponentInstance>,
     midi_clips: &IndexMap<EntityId, midi::MidiClip>,
-    instrument_regions: &IndexMap<EntityId, instruments::InstrumentRegion>,
     text_notes: &IndexMap<EntityId, crate::text_note::TextNote>,
     editing_component: Option<EntityId>,
     rect_pos: [f32; 2],
@@ -375,11 +368,7 @@ pub(crate) fn targets_in_rect(
             result.push(HitTarget::MidiClip(id));
         }
     }
-    for (&id, ir) in instrument_regions.iter() {
-        if rects_overlap(rect_pos, rect_size, ir.position, ir.size) {
-            result.push(HitTarget::InstrumentRegion(id));
-        }
-    }
+    // InstrumentRegion rect-selection removed — instruments are non-spatial now
     for (&id, tn) in text_notes.iter() {
         if rects_overlap(rect_pos, rect_size, tn.position, tn.size) {
             result.push(HitTarget::TextNote(id));
