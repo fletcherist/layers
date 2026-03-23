@@ -44,7 +44,7 @@ use web_time::Instant as TimeInstant;
 use std::time::Instant as TimeInstant;
 
 pub(crate) use gpu::{push_border, Camera, Gpu, InstanceRaw};
-pub(crate) use ui::transport::{TransportPanel, TRANSPORT_WIDTH};
+pub(crate) use ui::transport::TransportPanel;
 
 use grid::{grid_spacing_for_settings, snap_to_clip_grid, snap_to_grid, snap_to_vertical_grid, DEFAULT_BPM};
 use ui::hit_testing::{
@@ -59,7 +59,7 @@ use regions::{
     EXPORT_RENDER_PILL_H, EXPORT_RENDER_PILL_W,
     LOOP_REGION_DEFAULT_HEIGHT, LOOP_REGION_DEFAULT_WIDTH,
 };
-use ui::rendering::{build_instances, build_waveform_vertices, default_objects, RenderContext};
+use ui::rendering::{build_instances, build_waveform_vertices, RenderContext};
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
@@ -82,13 +82,11 @@ use ui::palette::{
 pub(crate) use ui::waveform::WaveformView;
 use ui::waveform::{AudioData, WaveformPeaks, WaveformVertex};
 
-#[cfg(feature = "native")]
-use muda::{MenuId, Submenu as MudaSubmenu};
 use settings::Settings;
 #[cfg(feature = "native")]
 use ui::settings_window::{SettingsWindow, CATEGORIES};
 #[cfg(feature = "native")]
-use storage::{default_base_path, ProjectState, Storage};
+use storage::{default_base_path, Storage};
 use winit::{
     event_loop::EventLoop,
     keyboard::{KeyCode, ModifiersState},

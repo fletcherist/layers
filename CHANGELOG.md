@@ -1,3 +1,4 @@
+- 2026-03-23: refactor: extract shared dropdown component into ui/dropdown.rs, reuse in settings_window (37.7k loc)
 - 2026-03-23: refactor: split main.rs (6,038→2,857 lines) into types.rs, overlap.rs, clipboard.rs, project.rs, events/commands.rs, and events/cursor.rs (37.7k loc)
 - 2026-03-23: refactor: extract types and enums from main.rs into new src/types.rs (37.7k loc)
 - 2026-03-23: refactor: remove all InstrumentRegion backward-compat — delete StoredInstrumentRegion, InstrumentRegionSnapshot, operation variants, serde alias (37.6k loc)

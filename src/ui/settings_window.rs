@@ -22,7 +22,6 @@ const SLIDER_RIGHT_PAD: f32 = 24.0;
 const DROPDOWN_WIDTH: f32 = 220.0;
 const DROPDOWN_HEIGHT: f32 = 28.0;
 const DROPDOWN_RIGHT_PAD: f32 = 24.0;
-const DROPDOWN_ITEM_HEIGHT: f32 = 26.0;
 const AUDIO_DROPDOWN_COUNT: usize = 3;
 const THEME_PRESETS: &[&str] = &["Default", "Ableton", "Light"];
 
@@ -151,10 +150,7 @@ impl SettingsWindow {
             return None;
         }
         let (dp, ds) = self.dropdown_rect(dd_idx, screen_w, screen_h, scale);
-        let item_h = DROPDOWN_ITEM_HEIGHT * scale;
-        let popup_y = dp[1] + ds[1] + 2.0 * scale;
-        let popup_h = count as f32 * item_h;
-        Some(([dp[0], popup_y], [ds[0], popup_h]))
+        Some(super::dropdown::popup_rect(dp, ds, count, scale))
     }
 
     // -----------------------------------------------------------------------
@@ -229,100 +225,6 @@ impl SettingsWindow {
         &["On", "Off"]
     }
 
-    // -----------------------------------------------------------------------
-    // Shared dropdown rendering helpers
-    // -----------------------------------------------------------------------
-
-    /// Render a dropdown button (border + background + arrow indicator).
-    fn render_dropdown_button(
-        out: &mut Vec<InstanceRaw>,
-        dp: [f32; 2],
-        ds: [f32; 2],
-        scale: f32,
-        t: &crate::theme::RuntimeTheme,
-    ) {
-        let dd_br = 4.0 * scale;
-        out.push(InstanceRaw {
-            position: [dp[0] - 1.0, dp[1] - 1.0],
-            size: [ds[0] + 2.0, ds[1] + 2.0],
-            color: t.bg_window_header,
-            border_radius: dd_br + 1.0,
-        });
-        out.push(InstanceRaw {
-            position: dp,
-            size: ds,
-            color: t.bg_input,
-            border_radius: dd_br,
-        });
-        let arrow_size = 6.0 * scale;
-        let arrow_x = dp[0] + ds[0] - 14.0 * scale;
-        let arrow_y = dp[1] + (ds[1] - arrow_size) * 0.5;
-        out.push(InstanceRaw {
-            position: [arrow_x, arrow_y],
-            size: [arrow_size, arrow_size],
-            color: crate::theme::with_alpha(t.text_primary, 0.3),
-            border_radius: arrow_size * 0.5,
-        });
-    }
-
-    /// Render a dropdown popup (shadow + border + background + item highlights).
-    fn render_dropdown_popup(
-        &self,
-        out: &mut Vec<InstanceRaw>,
-        dp: [f32; 2],
-        ds: [f32; 2],
-        item_count: usize,
-        selected_idx: usize,
-        scale: f32,
-        t: &crate::theme::RuntimeTheme,
-    ) {
-        let item_h = DROPDOWN_ITEM_HEIGHT * scale;
-        let popup_h = item_count as f32 * item_h;
-        let popup_y = dp[1] + ds[1] + 2.0 * scale;
-        let popup_br = 6.0 * scale;
-
-        // Shadow
-        out.push(InstanceRaw {
-            position: [dp[0] + 4.0 * scale, popup_y + 4.0 * scale],
-            size: [ds[0], popup_h],
-            color: t.shadow_strong,
-            border_radius: popup_br,
-        });
-        // Border
-        out.push(InstanceRaw {
-            position: [dp[0] - 1.0, popup_y - 1.0],
-            size: [ds[0] + 2.0, popup_h + 2.0],
-            color: t.bg_window_header,
-            border_radius: popup_br + 1.0,
-        });
-        // Background
-        out.push(InstanceRaw {
-            position: [dp[0], popup_y],
-            size: [ds[0], popup_h],
-            color: t.bg_menu,
-            border_radius: popup_br,
-        });
-        // Item highlights
-        for j in 0..item_count {
-            let iy = popup_y + j as f32 * item_h;
-            if j == selected_idx {
-                out.push(InstanceRaw {
-                    position: [dp[0] + 4.0 * scale, iy + 2.0 * scale],
-                    size: [ds[0] - 8.0 * scale, item_h - 4.0 * scale],
-                    color: t.option_highlight,
-                    border_radius: 4.0 * scale,
-                });
-            } else if self.hovered_dropdown_item == Some(j) {
-                out.push(InstanceRaw {
-                    position: [dp[0] + 4.0 * scale, iy + 2.0 * scale],
-                    size: [ds[0] - 8.0 * scale, item_h - 4.0 * scale],
-                    color: t.item_hover,
-                    border_radius: 4.0 * scale,
-                });
-            }
-        }
-    }
-
     /// Render a row separator line.
     fn render_row_separator(
         out: &mut Vec<InstanceRaw>,
@@ -341,10 +243,9 @@ impl SettingsWindow {
     }
 
     // -----------------------------------------------------------------------
-    // Hit testing
+    // Hit testing (delegates to shared dropdown component)
     // -----------------------------------------------------------------------
 
-    /// Returns which dropdown row was clicked (button hit test), if any.
     fn dropdown_button_hit_test(
         &self,
         mouse: [f32; 2],
@@ -354,13 +255,9 @@ impl SettingsWindow {
         scale: f32,
     ) -> bool {
         let (dp, ds) = self.dropdown_rect(row_idx, screen_w, screen_h, scale);
-        mouse[0] >= dp[0]
-            && mouse[0] <= dp[0] + ds[0]
-            && mouse[1] >= dp[1]
-            && mouse[1] <= dp[1] + ds[1]
+        super::dropdown::hit_test_button(mouse, dp, ds)
     }
 
-    /// When a dropdown popup is open, returns the index of the item under the mouse.
     pub fn dropdown_item_hit_test(
         &self,
         mouse: [f32; 2],
@@ -370,29 +267,10 @@ impl SettingsWindow {
     ) -> Option<usize> {
         let dd_idx = self.open_dropdown?;
         let count = self.dropdown_option_count(dd_idx);
-        if count == 0 {
-            return None;
-        }
         let (dp, ds) = self.dropdown_rect(dd_idx, screen_w, screen_h, scale);
-        let item_h = DROPDOWN_ITEM_HEIGHT * scale;
-        let popup_y = dp[1] + ds[1] + 2.0 * scale;
-        let popup_h = count as f32 * item_h;
-
-        if mouse[0] >= dp[0]
-            && mouse[0] <= dp[0] + ds[0]
-            && mouse[1] >= popup_y
-            && mouse[1] <= popup_y + popup_h
-        {
-            let rel = mouse[1] - popup_y;
-            let idx = (rel / item_h) as usize;
-            if idx < count {
-                return Some(idx);
-            }
-        }
-        None
+        super::dropdown::hit_test_popup_item(mouse, dp, ds, count, scale)
     }
 
-    /// Returns which dropdown row (0..3) was clicked, if any (audio category).
     pub fn dropdown_hit_test(
         &self,
         mouse: [f32; 2],
@@ -411,13 +289,6 @@ impl SettingsWindow {
         None
     }
 
-    // -----------------------------------------------------------------------
-    // Shared click handler for dropdown toggle + popup selection
-    // -----------------------------------------------------------------------
-
-    /// Generic dropdown click: check popup item → toggle button → close.
-    /// Returns Some(item_idx) if a popup item was selected, None otherwise.
-    /// Sets `open_dropdown` state automatically.
     fn handle_dropdown_click(
         &mut self,
         mouse: [f32; 2],
@@ -426,23 +297,20 @@ impl SettingsWindow {
         screen_h: f32,
         scale: f32,
     ) -> Option<usize> {
-        // Check if click is on open popup item
-        if self.open_dropdown == Some(dd_idx) {
-            if let Some(item_idx) = self.dropdown_item_hit_test(mouse, screen_w, screen_h, scale) {
+        let (dp, ds) = self.dropdown_rect(dd_idx, screen_w, screen_h, scale);
+        let count = self.dropdown_option_count(dd_idx);
+        let is_open = self.open_dropdown == Some(dd_idx);
+        match super::dropdown::handle_click(mouse, dp, ds, count, scale, is_open) {
+            super::dropdown::ClickResult::Selected(idx) => {
                 self.open_dropdown = None;
-                return Some(item_idx);
+                Some(idx)
             }
-        }
-        // Check if click is on dropdown button
-        if self.dropdown_button_hit_test(mouse, dd_idx, screen_w, screen_h, scale) {
-            if self.open_dropdown == Some(dd_idx) {
-                self.open_dropdown = None;
-            } else {
-                self.open_dropdown = Some(dd_idx);
+            super::dropdown::ClickResult::Toggled(new_open) => {
+                self.open_dropdown = if new_open { Some(dd_idx) } else { None };
+                None
             }
-            return None;
+            super::dropdown::ClickResult::None => None,
         }
-        None
     }
 
     // -----------------------------------------------------------------------
@@ -962,7 +830,7 @@ impl SettingsWindow {
         t: &crate::theme::RuntimeTheme,
     ) {
         let (dp, ds) = self.dropdown_rect(0, screen_w, screen_h, scale);
-        Self::render_dropdown_button(out, dp, ds, scale, t);
+        super::dropdown::render_button(out, dp, ds, scale, t);
 
         // Row separator below theme row
         let row_bottom = wp[1] + SECTION_HEADER_HEIGHT * scale + ROW_HEIGHT * scale;
@@ -972,7 +840,7 @@ impl SettingsWindow {
         if self.active_category == SettingsCategory::ThemeAndColors {
             if let Some(0) = self.open_dropdown {
                 let selected = THEME_PRESETS.iter().position(|p| *p == settings.theme_preset).unwrap_or(0);
-                self.render_dropdown_popup(out, dp, ds, THEME_PRESETS.len(), selected, scale, t);
+                super::dropdown::render_popup(out, dp, ds, THEME_PRESETS.len(), selected, self.hovered_dropdown_item, scale, t);
             }
         }
     }
@@ -993,7 +861,7 @@ impl SettingsWindow {
         // Audio dropdowns (rows 0-2)
         for i in 0..AUDIO_DROPDOWN_COUNT {
             let (dp, ds) = self.dropdown_rect(i, screen_w, screen_h, scale);
-            Self::render_dropdown_button(out, dp, ds, scale, t);
+            super::dropdown::render_button(out, dp, ds, scale, t);
 
             if i < AUDIO_DROPDOWN_COUNT - 1 {
                 let row_bottom =
@@ -1007,7 +875,7 @@ impl SettingsWindow {
             let (dp, ds) = self.dropdown_rect(3, screen_w, screen_h, scale);
             let row_top = wp[1] + SECTION_HEADER_HEIGHT * scale + 3.0 * ROW_HEIGHT * scale;
             Self::render_row_separator(out, content_x, content_w, row_top, scale, t);
-            Self::render_dropdown_button(out, dp, ds, scale, t);
+            super::dropdown::render_button(out, dp, ds, scale, t);
         }
 
         // Row 4: Buffer Size
@@ -1015,7 +883,7 @@ impl SettingsWindow {
             let (dp, ds) = self.dropdown_rect(4, screen_w, screen_h, scale);
             let row_top = wp[1] + SECTION_HEADER_HEIGHT * scale + 4.0 * ROW_HEIGHT * scale;
             Self::render_row_separator(out, content_x, content_w, row_top, scale, t);
-            Self::render_dropdown_button(out, dp, ds, scale, t);
+            super::dropdown::render_button(out, dp, ds, scale, t);
         }
 
         // Open dropdown popup
@@ -1024,7 +892,7 @@ impl SettingsWindow {
             if dd_idx == 3 {
                 let options = Self::auto_clip_fades_options();
                 let selected = if settings.auto_clip_fades { 0 } else { 1 };
-                self.render_dropdown_popup(out, dp, ds, options.len(), selected, scale, t);
+                super::dropdown::render_popup(out, dp, ds, options.len(), selected, self.hovered_dropdown_item, scale, t);
             } else {
                 let options = self.dropdown_options(dd_idx);
                 if !options.is_empty() {
@@ -1036,7 +904,7 @@ impl SettingsWindow {
                         Self::dropdown_current(settings, dd_idx)
                     };
                     let selected = options.iter().position(|o| o == current).unwrap_or(0);
-                    self.render_dropdown_popup(out, dp, ds, options.len(), selected, scale, t);
+                    super::dropdown::render_popup(out, dp, ds, options.len(), selected, self.hovered_dropdown_item, scale, t);
                 }
             }
         }
@@ -1056,12 +924,12 @@ impl SettingsWindow {
         t: &crate::theme::RuntimeTheme,
     ) {
         let (dp, ds) = self.dropdown_rect(0, screen_w, screen_h, scale);
-        Self::render_dropdown_button(out, dp, ds, scale, t);
+        super::dropdown::render_button(out, dp, ds, scale, t);
 
         // Popup
         if let Some(0) = self.open_dropdown {
             let selected = if settings.dev_mode { 1 } else { 0 };
-            self.render_dropdown_popup(out, dp, ds, Self::dev_mode_options().len(), selected, scale, t);
+            super::dropdown::render_popup(out, dp, ds, Self::dev_mode_options().len(), selected, self.hovered_dropdown_item, scale, t);
         }
 
         // Reset Theme button (row 2)
@@ -1082,44 +950,6 @@ impl SettingsWindow {
 use crate::gpu::TextEntry;
 
 impl SettingsWindow {
-    /// Generate popup item text entries for any open dropdown.
-    fn build_popup_text_entries(
-        &self,
-        out: &mut Vec<TextEntry>,
-        labels: &[&str],
-        selected_idx: usize,
-        dp: [f32; 2],
-        ds: [f32; 2],
-        scale: f32,
-        settings: &Settings,
-    ) {
-        let dd_font = 12.0 * scale;
-        let dd_line = 16.0 * scale;
-        let item_h = DROPDOWN_ITEM_HEIGHT * scale;
-        let popup_y = dp[1] + ds[1] + 2.0 * scale;
-
-        for (j, label) in labels.iter().enumerate() {
-            let iy = popup_y + j as f32 * item_h;
-            let is_selected = j == selected_idx;
-            out.push(TextEntry {
-                text: label.to_string(),
-                x: dp[0] + 12.0 * scale,
-                y: iy + (item_h - dd_line) * 0.5,
-                font_size: dd_font,
-                line_height: dd_line,
-                color: if is_selected {
-                    crate::theme::RuntimeTheme::text_u8(settings.theme.text_primary, 255)
-                } else {
-                    crate::theme::RuntimeTheme::text_u8(settings.theme.text_secondary, 255)
-                },
-                weight: if is_selected { 600 } else { 400 },
-                max_width: 300.0 * scale,
-                bounds: Some([0.0, 0.0, 0.0, 0.0]),
-                center: false,
-            });
-        }
-    }
-
     /// Helper to push a row label text entry.
     fn push_row_label(
         out: &mut Vec<TextEntry>,
@@ -1145,30 +975,6 @@ impl SettingsWindow {
         });
     }
 
-    /// Helper to push a dropdown display value text entry.
-    fn push_dropdown_value(
-        out: &mut Vec<TextEntry>,
-        text: &str,
-        dp: [f32; 2],
-        ds: [f32; 2],
-        scale: f32,
-        settings: &Settings,
-    ) {
-        let dd_font = 12.0 * scale;
-        let dd_line = 16.0 * scale;
-        out.push(TextEntry {
-            text: text.to_string(),
-            x: dp[0] + 10.0 * scale,
-            y: dp[1] + (ds[1] - dd_line) * 0.5,
-            font_size: dd_font,
-            line_height: dd_line,
-            color: crate::theme::RuntimeTheme::text_u8(settings.theme.text_primary, 255),
-            weight: 400,
-            max_width: 300.0 * scale,
-            bounds: None,
-            center: false,
-        });
-    }
 
     pub fn get_text_entries(
         &self,
@@ -1249,12 +1055,12 @@ impl SettingsWindow {
                 let theme_row_y = wp[1] + SECTION_HEADER_HEIGHT * scale;
                 Self::push_row_label(&mut out, "Theme", content_x, theme_row_y, scale, settings);
                 let (dp, ds) = self.dropdown_rect(0, screen_w, screen_h, scale);
-                Self::push_dropdown_value(&mut out, &settings.theme_preset, dp, ds, scale, settings);
+                super::dropdown::render_value_text(&mut out, &settings.theme_preset, dp, ds, scale, &settings.theme);
 
                 // Theme preset popup text
                 if let Some(0) = self.open_dropdown {
                     let selected = THEME_PRESETS.iter().position(|p| *p == settings.theme_preset).unwrap_or(0);
-                    self.build_popup_text_entries(&mut out, THEME_PRESETS, selected, dp, ds, scale, settings);
+                    super::dropdown::build_popup_text(&mut out, THEME_PRESETS, selected, dp, ds, scale, &settings.theme);
                 }
 
                 // Slider rows (only when Default preset)
@@ -1312,7 +1118,7 @@ impl SettingsWindow {
 
                     let current = Self::dropdown_current(settings, i);
                     let (dp, ds) = self.dropdown_rect(i, screen_w, screen_h, scale);
-                    Self::push_dropdown_value(&mut out, current, dp, ds, scale, settings);
+                    super::dropdown::render_value_text(&mut out, current, dp, ds, scale, &settings.theme);
                 }
 
                 // Row 3: Auto Clip Fades
@@ -1321,7 +1127,7 @@ impl SettingsWindow {
                     Self::push_row_label(&mut out, "Auto Clip Fades", content_x, row_y, scale, settings);
                     let current_text = if settings.auto_clip_fades { "On" } else { "Off" };
                     let (dp3, ds3) = self.dropdown_rect(3, screen_w, screen_h, scale);
-                    Self::push_dropdown_value(&mut out, current_text, dp3, ds3, scale, settings);
+                    super::dropdown::render_value_text(&mut out, current_text, dp3, ds3, scale, &settings.theme);
                 }
 
                 // Row 4: Buffer Size
@@ -1330,7 +1136,7 @@ impl SettingsWindow {
                     Self::push_row_label(&mut out, "Buffer Size", content_x, row_y, scale, settings);
                     let current_text = settings.buffer_size.to_string();
                     let (dp4, ds4) = self.dropdown_rect(4, screen_w, screen_h, scale);
-                    Self::push_dropdown_value(&mut out, &current_text, dp4, ds4, scale, settings);
+                    super::dropdown::render_value_text(&mut out, &current_text, dp4, ds4, scale, &settings.theme);
                 }
 
                 // Popup item text
@@ -1339,7 +1145,7 @@ impl SettingsWindow {
                     if dd_idx == 3 {
                         let options = Self::auto_clip_fades_options();
                         let selected = if settings.auto_clip_fades { 0 } else { 1 };
-                        self.build_popup_text_entries(&mut out, options, selected, dp, ds, scale, settings);
+                        super::dropdown::build_popup_text(&mut out, options, selected, dp, ds, scale, &settings.theme);
                     } else {
                         let options = self.dropdown_options(dd_idx);
                         if !options.is_empty() {
@@ -1352,7 +1158,7 @@ impl SettingsWindow {
                             };
                             let selected = options.iter().position(|o| o == current).unwrap_or(0);
                             let labels: Vec<&str> = options.iter().map(|s| s.as_str()).collect();
-                            self.build_popup_text_entries(&mut out, &labels, selected, dp, ds, scale, settings);
+                            super::dropdown::build_popup_text(&mut out, &labels, selected, dp, ds, scale, &settings.theme);
                         }
                     }
                 }
@@ -1380,7 +1186,7 @@ impl SettingsWindow {
                 Self::push_row_label(&mut out, "Mode", content_x, row_y, scale, settings);
                 let current_text = if settings.dev_mode { "Development" } else { "Production" };
                 let (dp, ds) = self.dropdown_rect(0, screen_w, screen_h, scale);
-                Self::push_dropdown_value(&mut out, current_text, dp, ds, scale, settings);
+                super::dropdown::render_value_text(&mut out, current_text, dp, ds, scale, &settings.theme);
 
                 // Row 1: Build version
                 let build_row_y = row_y + ROW_HEIGHT * scale;
@@ -1423,7 +1229,7 @@ impl SettingsWindow {
                 if let Some(0) = self.open_dropdown {
                     let options = Self::dev_mode_options();
                     let selected = if settings.dev_mode { 1 } else { 0 };
-                    self.build_popup_text_entries(&mut out, options, selected, dp, ds, scale, settings);
+                    super::dropdown::build_popup_text(&mut out, options, selected, dp, ds, scale, &settings.theme);
                 }
             }
         }
