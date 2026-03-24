@@ -78,6 +78,7 @@ impl App {
                     midi_clips: &self.midi_clips,
                     selected_midi_notes: &self.selected_midi_notes,
                     midi_note_select_rect: self.midi_note_select_rect,
+                    groups: &self.groups,
                     remote_users: &self.remote_users,
                     network_mode: self.network.mode(),
                 };
@@ -239,6 +240,7 @@ impl App {
                 &self.text_notes,
                 self.editing_text_note.as_ref().map(|e| (e.note_id, e.cursor)),
                 &selected_entity_ids,
+                &self.groups,
             );
         }
         if self.toast_manager.has_active() {

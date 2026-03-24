@@ -241,6 +241,15 @@ pub(crate) enum TextNoteHover {
     CornerSE(EntityId),
 }
 
+#[derive(Clone, Copy, PartialEq)]
+pub(crate) enum GroupHover {
+    None,
+    CornerNW(EntityId),
+    CornerNE(EntityId),
+    CornerSW(EntityId),
+    CornerSE(EntityId),
+}
+
 #[derive(Clone)]
 pub(crate) enum ClipboardItem {
     Object(CanvasObject),

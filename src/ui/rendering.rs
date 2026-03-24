@@ -51,6 +51,7 @@ pub(crate) struct RenderContext<'a> {
     pub(crate) editing_midi_clip: Option<EntityId>,
     pub(crate) selected_midi_notes: &'a [usize],
     pub(crate) midi_note_select_rect: Option<[f32; 4]>,
+    pub(crate) groups: &'a IndexMap<EntityId, crate::group::Group>,
     pub(crate) remote_users: &'a std::collections::HashMap<crate::user::UserId, crate::user::RemoteUserState>,
     pub(crate) network_mode: crate::network::NetworkMode,
 }
@@ -521,6 +522,28 @@ pub(crate) fn build_instances(out: &mut Vec<InstanceRaw>, ctx: &RenderContext) {
                 &ctx.settings.theme,
             ));
         }
+    }
+
+    // --- groups ---
+    for (&id, group) in ctx.groups.iter() {
+        let g_right = group.position[0] + group.size[0];
+        let g_bottom = group.position[1] + group.size[1];
+        if g_right < world_left
+            || group.position[0] > world_right
+            || g_bottom < world_top
+            || group.position[1] > world_bottom
+        {
+            continue;
+        }
+        let is_sel = ctx.selected.contains(&HitTarget::Group(id));
+        let is_hov = ctx.hovered == Some(HitTarget::Group(id));
+        out.extend(crate::group::build_group_instances(
+            group,
+            camera,
+            is_hov,
+            is_sel,
+            &ctx.settings.theme,
+        ));
     }
 
     // --- edit mode dimming overlay ---

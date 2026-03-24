@@ -69,6 +69,8 @@ pub enum CommandAction {
     SetWarpSemitone,
     OpenInstrumentGui,
     SetMidiClipColor(usize),
+    CreateGroup,
+    UngroupSelected,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -369,6 +371,20 @@ pub const COMMANDS: &[CommandDef] = &[
         category: "Debug",
         action: CommandAction::TestToast,
         dev_only: true,
+    },
+    CommandDef {
+        name: "Create Group",
+        shortcut: "⌘G",
+        category: "Canvas",
+        action: CommandAction::CreateGroup,
+        dev_only: false,
+    },
+    CommandDef {
+        name: "Ungroup Selected",
+        shortcut: "⇧⌘G",
+        category: "Canvas",
+        action: CommandAction::UngroupSelected,
+        dev_only: false,
     },
 ];
 

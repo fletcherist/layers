@@ -1,3 +1,4 @@
+- 2026-03-24: feat: group rendering, hit testing, Cmd+G creation, and Cmd+Shift+G ungroup (39.4k loc)
 - 2026-03-24: fix: non-exhaustive pattern errors from Group(EntityId) added to HitTarget, ClipboardItem, EntityBeforeState enums (39.0k loc)
 - 2026-03-24: feat: improved remote cursor rendering — pointer-arrow shape with colored name tag text (38.8k loc)
 - 2026-03-24: fix: remote mouse cursor not rendering — rebuild instances when connected so cursor updates are visible (38.8k loc)

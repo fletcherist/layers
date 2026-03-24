@@ -39,6 +39,7 @@ impl App {
             &self.component_instances,
             &self.midi_clips,
             &self.text_notes,
+            &self.groups,
             self.editing_component,
             world,
             &self.camera,

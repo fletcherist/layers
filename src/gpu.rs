@@ -303,6 +303,7 @@ pub(crate) struct Gpu {
     cached_er_label_bufs: Vec<(TextLabelCacheKey, TextBuffer)>,
     cached_text_note_bufs: Vec<(TextLabelCacheKey, TextBuffer)>,
     cached_plugin_block_bufs: Vec<(TextLabelCacheKey, TextBuffer)>,
+    cached_group_label_bufs: Vec<(TextLabelCacheKey, TextBuffer)>,
     cached_auto_dot_bufs: Vec<(TextLabelCacheKey, TextBuffer)>,
     cached_auto_lane_bufs: Vec<(TextLabelCacheKey, TextBuffer)>,
     cached_midi_note_label_bufs: Vec<(TextLabelCacheKey, TextBuffer)>,
@@ -675,6 +676,7 @@ impl Gpu {
             cached_er_label_bufs: Vec::new(),
             cached_text_note_bufs: Vec::new(),
             cached_plugin_block_bufs: Vec::new(),
+            cached_group_label_bufs: Vec::new(),
             cached_auto_dot_bufs: Vec::new(),
             cached_auto_lane_bufs: Vec::new(),
             cached_midi_note_label_bufs: Vec::new(),
@@ -732,6 +734,7 @@ impl Gpu {
         text_notes: &indexmap::IndexMap<crate::entity_id::EntityId, crate::text_note::TextNote>,
         editing_text_note: Option<(crate::entity_id::EntityId, usize)>,
         selected_ids: &std::collections::HashSet<crate::entity_id::EntityId>,
+        groups: &indexmap::IndexMap<crate::entity_id::EntityId, crate::group::Group>,
     ) {
         let w = self.config.width as f32;
         let h = self.config.height as f32;
@@ -1590,6 +1593,73 @@ impl Gpu {
         }
         self.cached_plugin_block_bufs = new_pb_cache;
 
+        // Group name labels (cached shaping, positions recomputed each frame)
+        let mut old_grp_cache = std::mem::take(&mut self.cached_group_label_bufs);
+        let mut new_grp_cache: Vec<(TextLabelCacheKey, TextBuffer)> = Vec::new();
+        let mut grp_label_meta: Vec<(f32, f32, TextColor, TextBounds)> = Vec::new();
+        if settings_window.is_none() && command_palette.is_none() {
+            for (_grp_id, grp) in groups.iter() {
+                let grp_right = grp.position[0] + grp.size[0];
+                let grp_bottom = grp.position[1] + grp.size[1];
+                if grp_right < world_left
+                    || grp.position[0] > world_right
+                    || grp_bottom < world_top
+                    || grp.position[1] > world_bottom
+                {
+                    continue;
+                }
+                let badge_h = 16.0 / camera.zoom;
+                let badge_w = (grp.name.len() as f32 * 7.0 + 16.0) / camera.zoom;
+                let badge_w = badge_w.min(grp.size[0]);
+                let badge_screen_w = badge_w * camera.zoom;
+                if badge_screen_w < 20.0 {
+                    continue;
+                }
+
+                let pad = 4.0 / camera.zoom;
+                let name_x_world = grp.position[0] + pad;
+                let name_y_world = grp.position[1] - badge_h - 2.0 / camera.zoom + (badge_h - 10.0 / camera.zoom) * 0.5;
+                let name_screen_x = (name_x_world - camera.position[0]) * camera.zoom;
+                let name_screen_y = (name_y_world - camera.position[1]) * camera.zoom;
+
+                let name_font = 10.0 * scale;
+                let name_line = 14.0 * scale;
+                let max_text_w = (badge_screen_w - 8.0 * scale).max(10.0);
+
+                let key = TextLabelCacheKey {
+                    text: grp.name.clone(),
+                    max_width_q: (max_text_w * 2.0) as i32,
+                    font_size_q: (name_font * 2.0) as i32,
+                };
+                if let Some(pos) = old_grp_cache.iter().position(|(k, _)| *k == key) {
+                    new_grp_cache.push(old_grp_cache.swap_remove(pos));
+                } else {
+                    let mut buf =
+                        TextBuffer::new(&mut self.font_system, Metrics::new(name_font, name_line));
+                    buf.set_size(&mut self.font_system, Some(max_text_w), Some(name_line));
+                    let attrs = Attrs::new()
+                        .family(Family::Name(".AppleSystemUIFont"))
+                        .weight(glyphon::Weight(500));
+                    buf.set_text(
+                        &mut self.font_system,
+                        &grp.name,
+                        attrs,
+                        Shaping::Advanced,
+                    );
+                    buf.shape_until_scroll(&mut self.font_system, false);
+                    new_grp_cache.push((key, buf));
+                }
+
+                grp_label_meta.push((
+                    name_screen_x,
+                    name_screen_y,
+                    TextColor::rgba(255, 255, 255, 200),
+                    full_bounds,
+                ));
+            }
+        }
+        self.cached_group_label_bufs = new_grp_cache;
+
         // Automation dot gain labels
         let mut old_auto_cache = std::mem::take(&mut self.cached_auto_dot_bufs);
         let mut new_auto_cache: Vec<(TextLabelCacheKey, TextBuffer)> = Vec::new();
@@ -2171,6 +2241,11 @@ impl Gpu {
             .iter()
             .zip(pb_label_meta.iter())
             .map(|(e, m)| cached_label_area(e, m));
+        let group_areas = self
+            .cached_group_label_bufs
+            .iter()
+            .zip(grp_label_meta.iter())
+            .map(|(e, m)| cached_label_area(e, m));
 
         let auto_dot_areas = self
             .cached_auto_dot_bufs
@@ -2208,6 +2283,7 @@ impl Gpu {
             .chain(wf_areas)
             .chain(er_areas)
             .chain(plugin_areas)
+            .chain(group_areas)
             .chain(auto_dot_areas)
             .chain(auto_lane_areas)
             .chain(midi_note_label_areas)

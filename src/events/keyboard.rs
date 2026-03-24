@@ -1599,6 +1599,13 @@ impl App {
                             "e" => {
                                 self.execute_command(CommandAction::SplitSample);
                             }
+                            "g" => {
+                                if self.modifiers.shift_key() {
+                                    self.execute_command(CommandAction::UngroupSelected);
+                                } else {
+                                    self.execute_command(CommandAction::CreateGroup);
+                                }
+                            }
                             "l" => {
                                 self.execute_command(CommandAction::AddLoopArea);
                             }

@@ -461,6 +461,82 @@ impl App {
                     self.open_instrument_gui(id);
                 }
             }
+            CommandAction::CreateGroup => {
+                if self.selected.len() >= 2 {
+                    let targets: Vec<HitTarget> = self.selected.clone();
+                    if let Some((pos, size)) = crate::group::bounding_box_of_selection(
+                        &targets,
+                        &self.waveforms,
+                        &self.midi_clips,
+                        &self.effect_regions,
+                        &self.text_notes,
+                        &self.objects,
+                        &self.loop_regions,
+                        &self.export_regions,
+                        &self.components,
+                        &self.component_instances,
+                    ) {
+                        let member_ids: Vec<crate::entity_id::EntityId> = targets.iter().filter_map(|t| match t {
+                            HitTarget::Object(id)
+                            | HitTarget::Waveform(id)
+                            | HitTarget::EffectRegion(id)
+                            | HitTarget::PluginBlock(id)
+                            | HitTarget::LoopRegion(id)
+                            | HitTarget::ExportRegion(id)
+                            | HitTarget::ComponentDef(id)
+                            | HitTarget::ComponentInstance(id)
+                            | HitTarget::MidiClip(id)
+                            | HitTarget::TextNote(id)
+                            | HitTarget::Group(id) => Some(*id),
+                        }).collect();
+                        let group_id = crate::entity_id::new_id();
+                        let group_name = format!("Group {}", self.groups.len() + 1);
+                        let group = crate::group::Group::new(group_id, group_name, pos, size, member_ids);
+                        self.groups.insert(group_id, group.clone());
+                        self.push_op(operations::Operation::CreateGroup { id: group_id, data: group });
+                        self.selected.clear();
+                        self.selected.push(HitTarget::Group(group_id));
+                        self.mark_dirty();
+                    }
+                }
+            }
+            CommandAction::UngroupSelected => {
+                let group_target = self.selected.iter().find_map(|t| {
+                    if let HitTarget::Group(id) = t { Some(*id) } else { None }
+                });
+                if let Some(group_id) = group_target {
+                    if let Some(group) = self.groups.shift_remove(&group_id) {
+                        let member_ids = group.member_ids.clone();
+                        self.push_op(operations::Operation::DeleteGroup { id: group_id, data: group });
+                        self.selected.clear();
+                        for mid in &member_ids {
+                            // Try to figure out the HitTarget type for each member
+                            if self.objects.contains_key(mid) {
+                                self.selected.push(HitTarget::Object(*mid));
+                            } else if self.waveforms.contains_key(mid) {
+                                self.selected.push(HitTarget::Waveform(*mid));
+                            } else if self.effect_regions.contains_key(mid) {
+                                self.selected.push(HitTarget::EffectRegion(*mid));
+                            } else if self.midi_clips.contains_key(mid) {
+                                self.selected.push(HitTarget::MidiClip(*mid));
+                            } else if self.text_notes.contains_key(mid) {
+                                self.selected.push(HitTarget::TextNote(*mid));
+                            } else if self.components.contains_key(mid) {
+                                self.selected.push(HitTarget::ComponentDef(*mid));
+                            } else if self.component_instances.contains_key(mid) {
+                                self.selected.push(HitTarget::ComponentInstance(*mid));
+                            } else if self.loop_regions.contains_key(mid) {
+                                self.selected.push(HitTarget::LoopRegion(*mid));
+                            } else if self.export_regions.contains_key(mid) {
+                                self.selected.push(HitTarget::ExportRegion(*mid));
+                            } else if self.groups.contains_key(mid) {
+                                self.selected.push(HitTarget::Group(*mid));
+                            }
+                        }
+                        self.mark_dirty();
+                    }
+                }
+            }
         }
         self.request_redraw();
     }
