@@ -1667,7 +1667,7 @@ impl App {
 
     /// Collect non-bypassed effect chain plugin handles for an entity,
     /// including its own chain and its parent group's chain (if any).
-    #[cfg(feature = "native")]
+    /// Used for instruments where group FX are still inlined (v1 scope).
     #[cfg(feature = "native")]
     fn collect_chain_latency(
         chain_plugins: &[std::sync::Arc<std::sync::Mutex<Option<effects::PluginGuiHandle>>>],
@@ -1709,10 +1709,63 @@ impl App {
         out
     }
 
+    /// Collect only the entity's own effect chain plugins (no group chain).
+    /// Used for waveform clips where group FX are processed on a separate bus.
+    fn collect_clip_chain_plugins(
+        &self,
+        own_chain_id: Option<EntityId>,
+    ) -> Vec<std::sync::Arc<std::sync::Mutex<Option<effects::PluginGuiHandle>>>> {
+        let mut out = Vec::new();
+        if let Some(chain_id) = own_chain_id {
+            if let Some(chain) = self.effect_chains.get(&chain_id) {
+                for slot in &chain.slots {
+                    if !slot.bypass {
+                        out.push(slot.gui.clone());
+                    }
+                }
+            }
+        }
+        out
+    }
+
+    /// Collect non-bypassed plugin handles for a group's own effect chain.
+    fn collect_group_chain_plugins(
+        &self,
+        group_id: EntityId,
+    ) -> Vec<std::sync::Arc<std::sync::Mutex<Option<effects::PluginGuiHandle>>>> {
+        let mut out = Vec::new();
+        if let Some(group) = self.groups.get(&group_id) {
+            if let Some(chain_id) = group.effect_chain_id {
+                if let Some(chain) = self.effect_chains.get(&chain_id) {
+                    for slot in &chain.slots {
+                        if !slot.bypass {
+                            out.push(slot.gui.clone());
+                        }
+                    }
+                }
+            }
+        }
+        out
+    }
+
     #[cfg(feature = "native")]
     fn sync_audio_clips(&self) {
         if let Some(engine) = &self.audio_engine {
             let group_of = self.build_group_membership();
+
+            // Build group → bus_index mapping and collect group bus data
+            let mut group_id_to_bus_idx: std::collections::HashMap<EntityId, usize> = std::collections::HashMap::new();
+            let mut group_buses: Vec<audio::GroupBus> = Vec::new();
+            for (&gid, _group) in &self.groups {
+                let plugins = self.collect_group_chain_plugins(gid);
+                if plugins.is_empty() {
+                    continue;
+                }
+                let latency = Self::collect_chain_latency(&plugins);
+                let bus_idx = group_buses.len();
+                group_id_to_bus_idx.insert(gid, bus_idx);
+                group_buses.push(audio::GroupBus { plugins, latency_samples: latency });
+            }
 
             let mut positions: Vec<[f32; 2]> = Vec::new();
             let mut sizes: Vec<[f32; 2]> = Vec::new();
@@ -1731,6 +1784,7 @@ impl App {
             let mut pitch_semitones_vec: Vec<f32> = Vec::new();
             let mut chain_plugins_per_clip: Vec<Vec<std::sync::Arc<std::sync::Mutex<Option<effects::PluginGuiHandle>>>>> = Vec::new();
             let mut chain_latencies: Vec<u32> = Vec::new();
+            let mut group_bus_indices: Vec<Option<usize>> = Vec::new();
 
             for (&wf_id, wf) in self.waveforms.iter() {
                 if wf.disabled {
@@ -1756,9 +1810,18 @@ impl App {
                 sample_bpms.push(wf.sample_bpm);
                 pitch_semitones_vec.push(wf.pitch_semitones);
 
-                let plugins = self.collect_chain_plugins(wf_id, wf.effect_chain_id, &group_of);
-                chain_latencies.push(Self::collect_chain_latency(&plugins));
-                chain_plugins_per_clip.push(plugins);
+                let clip_plugins = self.collect_clip_chain_plugins(wf.effect_chain_id);
+                let clip_latency = Self::collect_chain_latency(&clip_plugins);
+
+                let bus_idx = group_of.get(&wf_id)
+                    .and_then(|gid| group_id_to_bus_idx.get(gid).copied());
+                let group_latency = bus_idx
+                    .map(|idx| group_buses[idx].latency_samples)
+                    .unwrap_or(0);
+
+                chain_latencies.push(clip_latency + group_latency);
+                chain_plugins_per_clip.push(clip_plugins);
+                group_bus_indices.push(bus_idx);
             }
 
             // Add virtual clips for each component instance
@@ -1786,9 +1849,17 @@ impl App {
                                 warp_modes.push(match wf.warp_mode { ui::waveform::WarpMode::RePitch => 1, _ => 0 });
                                 sample_bpms.push(wf.sample_bpm);
 
-                                let plugins = self.collect_chain_plugins(wf_id, wf.effect_chain_id, &group_of);
-                                chain_latencies.push(Self::collect_chain_latency(&plugins));
-                                chain_plugins_per_clip.push(plugins);
+                                let clip_plugins = self.collect_clip_chain_plugins(wf.effect_chain_id);
+                                let clip_latency = Self::collect_chain_latency(&clip_plugins);
+                                let bus_idx = group_of.get(&wf_id)
+                                    .and_then(|gid| group_id_to_bus_idx.get(gid).copied());
+                                let group_latency = bus_idx
+                                    .map(|idx| group_buses[idx].latency_samples)
+                                    .unwrap_or(0);
+
+                                chain_latencies.push(clip_latency + group_latency);
+                                chain_plugins_per_clip.push(clip_plugins);
+                                group_bus_indices.push(bus_idx);
                             }
                         }
                     }
@@ -1796,7 +1867,8 @@ impl App {
             }
 
             let owned_clips: Vec<AudioClipData> = clips.iter().map(|c| (*c).clone()).collect();
-            engine.update_clips(&positions, &sizes, &owned_clips, &fade_ins, &fade_outs, &fade_in_curves, &fade_out_curves, &volumes, &pans, &sample_offsets, &vol_autos, &pan_autos, &warp_modes, &sample_bpms, self.bpm, &pitch_semitones_vec, &chain_plugins_per_clip, &chain_latencies);
+            engine.update_clips(&positions, &sizes, &owned_clips, &fade_ins, &fade_outs, &fade_in_curves, &fade_out_curves, &volumes, &pans, &sample_offsets, &vol_autos, &pan_autos, &warp_modes, &sample_bpms, self.bpm, &pitch_semitones_vec, &chain_plugins_per_clip, &chain_latencies, &group_bus_indices);
+            engine.update_group_buses(group_buses);
 
             let regions: Vec<audio::AudioEffectRegion> = self
                 .effect_regions

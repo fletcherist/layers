@@ -2353,9 +2353,9 @@ impl Gpu {
                     resolve_target: None,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Clear(wgpu::Color {
-                            r: (settings.theme.bg_base[0] * settings.brightness) as f64,
-                            g: (settings.theme.bg_base[1] * settings.brightness) as f64,
-                            b: (settings.theme.bg_base[2] * settings.brightness) as f64,
+                            r: settings.theme.bg_base[0] as f64,
+                            g: settings.theme.bg_base[1] as f64,
+                            b: settings.theme.bg_base[2] as f64,
                             a: 1.0,
                         }),
                         store: wgpu::StoreOp::Store,
