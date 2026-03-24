@@ -1348,7 +1348,7 @@ impl App {
     }
 
     /// Recompute a group's bounding box from its member entities.
-    fn update_group_bounds(&mut self, group_id: EntityId) {
+    pub(crate) fn update_group_bounds(&mut self, group_id: EntityId) {
         let member_ids = if let Some(g) = self.groups.get(&group_id) {
             g.member_ids.clone()
         } else {

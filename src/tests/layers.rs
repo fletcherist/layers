@@ -10,6 +10,10 @@ use crate::ui::waveform::{AudioData, WarpMode, WaveformPeaks, WaveformView, DEFA
 use crate::HitTarget;
 
 fn make_waveform(x: f32, y: f32) -> WaveformView {
+    make_waveform_sized(x, y, 200.0, 80.0)
+}
+
+fn make_waveform_sized(x: f32, y: f32, w: f32, h: f32) -> WaveformView {
     WaveformView {
         audio: Arc::new(AudioData {
             left_samples: Arc::new(Vec::new()),
@@ -21,7 +25,7 @@ fn make_waveform(x: f32, y: f32) -> WaveformView {
         }),
         filename: "test.wav".to_string(),
         position: [x, y],
-        size: [200.0, 80.0],
+        size: [w, h],
         color: [0.35, 0.75, 0.55, 1.0],
         border_radius: 4.0,
         fade_in_px: 0.0,
@@ -329,4 +333,33 @@ fn test_drag_between_groups() {
     let gb = app.layer_tree.iter().find(|n| n.entity_id == group_b).unwrap();
     assert_eq!(gb.children.len(), 1);
     assert_eq!(gb.children[0].entity_id, wf_id);
+}
+
+#[test]
+fn test_update_group_bounds_after_member_added() {
+    let mut app = App::new_headless();
+
+    let wf1 = new_id();
+    let wf2 = new_id();
+    app.waveforms.insert(wf1, make_waveform_sized(100.0, 50.0, 200.0, 80.0));
+    app.waveforms.insert(wf2, make_waveform_sized(400.0, 200.0, 150.0, 60.0));
+
+    let group_id = new_id();
+    app.groups.insert(group_id, Group::new(
+        group_id, "G".to_string(), [100.0, 50.0], [200.0, 80.0], vec![wf1],
+    ));
+
+    // Group starts with bounds of wf1 only
+    let g = &app.groups[&group_id];
+    assert_eq!(g.position, [100.0, 50.0]);
+    assert_eq!(g.size, [200.0, 80.0]);
+
+    // Simulate adding wf2 to the group (as the layer-drop code does)
+    app.groups.get_mut(&group_id).unwrap().member_ids.push(wf2);
+    app.update_group_bounds(group_id);
+
+    // Expected union: min=(100,50) max=(400+150, 200+60) => size=(450, 210)
+    let g = &app.groups[&group_id];
+    assert_eq!(g.position, [100.0, 50.0]);
+    assert_eq!(g.size, [450.0, 210.0]);
 }

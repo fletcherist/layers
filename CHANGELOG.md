@@ -1,3 +1,5 @@
+- fix: improve inspector/warp/effects label contrast — promote dim labels to text_secondary, lighten text_dim in Ableton & dark themes (42.8k loc)
+- fix: recalculate group bounds when a sample is moved into/out of a group in the layers window (42.8k loc)
 - 2026-03-24: feat: clicking/hovering/marquee-selecting a group now selects the group, not inner samples (42.8k loc)
 - 2026-03-24: fix: export window now renders — wired build_instances/get_text_entries into GPU pipeline; also fixed invisible hit zones stealing clicks (42.7k loc)
 - 2026-03-24: feat: export dialog window with format selection (WAV/MP3), progress bar, background encoding (42.6k loc)

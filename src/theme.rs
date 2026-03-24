@@ -276,7 +276,7 @@ impl RuntimeTheme {
         let is_light = perceived_brightness(bg_base) > 0.45;
         let text_primary   = if is_light { [0.08, 0.08, 0.10, 1.0] } else { [0.87, 0.87, 0.92, 1.0] };
         let text_secondary = if is_light { [0.30, 0.30, 0.36, 1.0] } else { [0.62, 0.62, 0.68, 1.0] };
-        let text_dim       = if is_light { [0.52, 0.52, 0.56, 1.0] } else { [0.40, 0.40, 0.45, 1.0] };
+        let text_dim       = if is_light { [0.52, 0.52, 0.56, 1.0] } else { [0.46, 0.46, 0.50, 1.0] };
         Self {
             bg_base,
             bg_surface:       c(h, 0.12, 0.145, 1.0),
@@ -408,7 +408,7 @@ impl RuntimeTheme {
             pill_effect:     [ac[0], ac[1], ac[2], 0.85],
             text_primary:   [0.87, 0.87, 0.82, 1.0],
             text_secondary: [0.62, 0.62, 0.58, 1.0],
-            text_dim:       [0.40, 0.40, 0.38, 1.0],
+            text_dim:       [0.50, 0.50, 0.47, 1.0],
             shadow:         [0.0, 0.0, 0.0, 0.40],
             shadow_strong:  [0.0, 0.0, 0.0, 0.50],
             divider:        [1.0, 1.0, 1.0, 0.06],

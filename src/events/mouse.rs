@@ -2642,11 +2642,13 @@ impl App {
                                 if let Some((src_id, src_before)) = &source_group_before {
                                     if let Some(g) = self.groups.get_mut(src_id) {
                                         g.member_ids.retain(|mid| *mid != entity_id);
-                                        let src_after = g.clone();
+                                    }
+                                    self.update_group_bounds(*src_id);
+                                    if let Some(g) = self.groups.get(src_id) {
                                         ops.push(crate::operations::Operation::UpdateGroup {
                                             id: *src_id,
                                             before: src_before.clone(),
-                                            after: src_after,
+                                            after: g.clone(),
                                         });
                                     }
                                 }
@@ -2654,17 +2656,18 @@ impl App {
                                 // If dropped into a destination group, update its member_ids
                                 if let crate::layers::DropTarget::InsideGroup { group_id, child_index } = &target {
                                     if let Some(g) = self.groups.get_mut(group_id) {
-                                        // Don't double-add if source == dest
                                         if !g.member_ids.contains(&entity_id) {
                                             let insert_at = (*child_index).min(g.member_ids.len());
                                             g.member_ids.insert(insert_at, entity_id);
                                         }
-                                        if let Some((_, dest_before)) = &dest_group_before {
-                                            let dest_after = g.clone();
+                                    }
+                                    self.update_group_bounds(*group_id);
+                                    if let Some((_, dest_before)) = &dest_group_before {
+                                        if let Some(g) = self.groups.get(group_id) {
                                             ops.push(crate::operations::Operation::UpdateGroup {
                                                 id: *group_id,
                                                 before: dest_before.clone(),
-                                                after: dest_after,
+                                                after: g.clone(),
                                             });
                                         }
                                     }

@@ -799,7 +799,7 @@ impl RightWindow {
             font_size: header_font,
             line_height: header_line,
             max_width: rw_w,
-            color: crate::theme::RuntimeTheme::text_u8(theme.text_dim, 200),
+            color: crate::theme::RuntimeTheme::text_u8(theme.text_secondary, 240),
             weight: 400,
             bounds: None,
             center: false,
@@ -834,7 +834,7 @@ impl RightWindow {
                 font_size: label_font,
                 line_height: label_line,
                 max_width: rw_w - 24.0 * scale,
-                color: crate::theme::RuntimeTheme::text_u8(theme.text_dim, 180),
+                color: crate::theme::RuntimeTheme::text_u8(theme.text_secondary, 220),
                 weight: 400,
                 bounds: None,
                 center: false,
@@ -875,7 +875,7 @@ impl RightWindow {
             font_size: label_font,
             line_height: label_line,
             max_width: rw_w,
-            color: crate::theme::RuntimeTheme::text_u8(theme.text_dim, 180),
+            color: crate::theme::RuntimeTheme::text_u8(theme.text_secondary, 235),
             weight: 400,
             bounds: None,
             center: true,
@@ -911,7 +911,7 @@ impl RightWindow {
             font_size: scale_font,
             line_height: scale_line,
             max_width: 30.0 * scale,
-            color: crate::theme::RuntimeTheme::text_u8(theme.text_dim, 160),
+            color: crate::theme::RuntimeTheme::text_u8(theme.text_dim, 220),
             weight: 400,
             bounds: label_bounds,
             center: false,
@@ -926,7 +926,7 @@ impl RightWindow {
             font_size: scale_font,
             line_height: scale_line,
             max_width: 30.0 * scale,
-            color: crate::theme::RuntimeTheme::text_u8(theme.text_dim, 160),
+            color: crate::theme::RuntimeTheme::text_u8(theme.text_dim, 220),
             weight: 400,
             bounds: label_bounds,
             center: false,
@@ -941,7 +941,7 @@ impl RightWindow {
             font_size: scale_font,
             line_height: scale_line,
             max_width: 30.0 * scale,
-            color: crate::theme::RuntimeTheme::text_u8(theme.text_dim, 160),
+            color: crate::theme::RuntimeTheme::text_u8(theme.text_dim, 220),
             weight: 400,
             bounds: label_bounds,
             center: false,
@@ -972,7 +972,7 @@ impl RightWindow {
             font_size: label_font,
             line_height: label_line,
             max_width: rw_w,
-            color: crate::theme::RuntimeTheme::text_u8(theme.text_dim, 180),
+            color: crate::theme::RuntimeTheme::text_u8(theme.text_secondary, 235),
             weight: 400,
             bounds: None,
             center: true,
@@ -1018,7 +1018,7 @@ impl RightWindow {
             font_size: label_font,
             line_height: label_line,
             max_width: rw_w,
-            color: crate::theme::RuntimeTheme::text_u8(theme.text_dim, 180),
+            color: crate::theme::RuntimeTheme::text_u8(theme.text_secondary, 235),
             weight: 400,
             bounds: None,
             center: false,
@@ -1067,7 +1067,7 @@ impl RightWindow {
                     font_size: label_font,
                     line_height: label_line,
                     max_width: rw_w,
-                    color: crate::theme::RuntimeTheme::text_u8(theme.text_dim, 180),
+                    color: crate::theme::RuntimeTheme::text_u8(theme.text_secondary, 235),
                     weight: 400,
                     bounds: None,
                     center: true,
@@ -1096,7 +1096,7 @@ impl RightWindow {
                     font_size: label_font,
                     line_height: label_line,
                     max_width: rw_w,
-                    color: crate::theme::RuntimeTheme::text_u8(theme.text_dim, 180),
+                    color: crate::theme::RuntimeTheme::text_u8(theme.text_secondary, 235),
                     weight: 400,
                     bounds: None,
                     center: true,
@@ -1332,7 +1332,7 @@ impl RightWindow {
             font_size: label_font,
             line_height: label_line,
             max_width: rw_w,
-            color: crate::theme::RuntimeTheme::text_u8(theme.text_dim, 200),
+            color: crate::theme::RuntimeTheme::text_u8(theme.text_secondary, 240),
             weight: 400,
             bounds: None,
             center: false,
@@ -1371,7 +1371,7 @@ impl RightWindow {
             color: if self.add_effect_hovered {
                 crate::theme::RuntimeTheme::text_u8(theme.text_primary, 255)
             } else {
-                crate::theme::RuntimeTheme::text_u8(theme.text_secondary, 180)
+                crate::theme::RuntimeTheme::text_u8(theme.text_secondary, 225)
             },
             weight: 400,
             bounds: None,
@@ -1474,7 +1474,7 @@ impl RightWindow {
             color: if self.add_effect_hovered {
                 crate::theme::RuntimeTheme::text_u8(settings.theme.text_primary, 255)
             } else {
-                crate::theme::RuntimeTheme::text_u8(settings.theme.text_secondary, 180)
+                crate::theme::RuntimeTheme::text_u8(settings.theme.text_secondary, 225)
             },
         });
 
