@@ -741,11 +741,7 @@ impl App {
                     .unwrap_or_else(|| state.name.clone());
                 let folders: Vec<PathBuf> =
                     state.browser_folders.iter().map(PathBuf::from).collect();
-                let bw = if state.browser_width >= 480.0 {
-                    state.browser_width
-                } else {
-                    480.0
-                };
+                let bw = state.browser_width;
                 let expanded: HashSet<PathBuf> =
                     state.browser_expanded.iter().map(PathBuf::from).collect();
 
@@ -866,8 +862,8 @@ impl App {
                     IndexMap::new(),
                     "Untitled".to_string(),
                     Vec::new(),
-                    260.0,
-                    false,
+                    0.0,
+                    true,
                     None,
                     Vec::new(),  // stored_loop_regions
                     Vec::new(),  // stored_components
@@ -917,7 +913,7 @@ impl App {
         } else {
             ui::browser::SampleBrowser::from_folders(browser_folders)
         };
-        sample_browser.width = browser_width;
+        sample_browser.restore_width(browser_width);
 
         let mut settings = settings;
 

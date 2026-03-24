@@ -53,6 +53,15 @@ private:
     NSView* container_;
 };
 
+// --- NSPanel subclass that never steals keyboard focus ---
+
+@interface NonKeyPanel : NSPanel
+@end
+
+@implementation NonKeyPanel
+- (BOOL)canBecomeKeyWindow { return NO; }
+@end
+
 // --- Platform helpers ---
 
 void platform_close_window(Vst3GuiHandle* handle) {
@@ -239,14 +248,13 @@ Vst3GuiHandle* vst3_gui_open(const char* vst3_path, const char* uid_str, const c
                          | NSWindowStyleMaskMiniaturizable
                          | NSWindowStyleMaskNonactivatingPanel;
 
-    NSPanel* window = [[NSPanel alloc] initWithContentRect:contentRect
+    NonKeyPanel* window = [[NonKeyPanel alloc] initWithContentRect:contentRect
                                                  styleMask:styleMask
                                                    backing:NSBackingStoreBuffered
                                                      defer:NO];
     [window setTitle:nsTitle];
     [window setReleasedWhenClosed:NO];
     [window setFloatingPanel:YES];
-    [window setBecomesKeyOnlyIfNeeded:YES];
 
     // 9. Create container view
     NSView* containerView = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, viewW, viewH)];

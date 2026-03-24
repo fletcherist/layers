@@ -141,7 +141,6 @@ impl App {
             if !path.is_empty() {
                 if let Some(gui) = vst3_gui::Vst3Gui::open(&path, plugin_id, plugin_name) {
                     gui.setup_processing(self.plugin_sample_rate(), _block_size as i32);
-                    gui.hide();
                     println!("  Opened effect chain plugin '{}'", plugin_name);
                     if let Ok(mut g) = slot.gui.lock() {
                         *g = Some(gui);
@@ -206,7 +205,6 @@ impl App {
             if !path.is_empty() {
                 if let Some(gui) = vst3_gui::Vst3Gui::open(&path, plugin_id, plugin_name) {
                     gui.setup_processing(self.plugin_sample_rate(), _block_size as i32);
-                    gui.hide();
                     if let Ok(mut g) = slot.gui.lock() {
                         *g = Some(gui);
                     }
@@ -266,7 +264,6 @@ impl App {
             if !path.is_empty() {
                 if let Some(gui) = vst3_gui::Vst3Gui::open(&path, plugin_id, plugin_name) {
                     gui.setup_processing(self.plugin_sample_rate(), _block_size as i32);
-                    gui.hide();
                     if let Ok(mut g) = slot.gui.lock() {
                         *g = Some(gui);
                     }

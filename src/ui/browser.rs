@@ -10,7 +10,7 @@ use crate::InstanceRaw;
 use crate::entity_id::EntityId;
 use crate::layers::{FlatLayerRow, LayerNodeKind};
 
-const DEFAULT_BROWSER_WIDTH: f32 = 480.0;
+pub const DEFAULT_BROWSER_WIDTH: f32 = 320.0;
 const MIN_BROWSER_WIDTH: f32 = 240.0;
 const MAX_BROWSER_WIDTH: f32 = 700.0;
 const RESIZE_HANDLE_PX: f32 = 5.0;
@@ -151,7 +151,7 @@ impl SampleBrowser {
             scroll_offset: 0.0,
             scroll_velocity: 0.0,
             hovered_entry: None,
-            visible: false,
+            visible: true,
             add_button_hovered: false,
             width: DEFAULT_BROWSER_WIDTH,
             resize_hovered: false,
@@ -205,6 +205,11 @@ impl SampleBrowser {
         }
         browser.rebuild_entries();
         browser
+    }
+
+    /// Restore saved width, clamping to at least DEFAULT_BROWSER_WIDTH.
+    pub fn restore_width(&mut self, saved: f32) {
+        self.width = saved.max(DEFAULT_BROWSER_WIDTH);
     }
 
     pub fn add_folder(&mut self, path: PathBuf) {

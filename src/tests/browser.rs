@@ -8,7 +8,7 @@ use std::collections::HashSet;
 fn test_add_folder_updates_browser_state() {
     let mut app = App::new_headless();
     assert!(app.sample_browser.root_folders.is_empty());
-    assert!(!app.sample_browser.visible);
+    assert!(app.sample_browser.visible);
 
     // Use a real directory so `add_folder` / `from_state` accept it
     let tmp = std::env::temp_dir();

@@ -223,6 +223,8 @@ fn test_computer_keyboard_state_and_project_browser() {
     assert_eq!(midi_keyboard::with_octave_offset(60, 3), Some(96));
 
     app.sample_browser.active_category = BrowserCategory::Layers;
+    // Browser starts visible; close then re-open to trigger entry refresh
+    app.execute_command(CommandAction::ToggleBrowser);
     app.execute_command(CommandAction::ToggleBrowser);
     // 1 instrument + 1 midi clip child = 2 entries when expanded
     assert!(app.sample_browser.entries.len() >= 1);
@@ -233,6 +235,7 @@ fn test_computer_keyboard_state_and_project_browser() {
     assert_eq!(app.keyboard_instrument_id, None);
 
     app.add_instrument("test-synth-2", "TestSynth2");
+    // Close and re-open to trigger entry refresh
     app.execute_command(CommandAction::ToggleBrowser);
     app.execute_command(CommandAction::ToggleBrowser);
     assert_eq!(app.sample_browser.active_category, BrowserCategory::Layers);

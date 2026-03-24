@@ -489,17 +489,11 @@ impl App {
                 state.browser_expanded.iter().map(PathBuf::from).collect();
             let mut b =
                 ui::browser::SampleBrowser::from_state(folders, expanded, state.browser_visible);
-            b.width = if state.browser_width >= 480.0 {
-                state.browser_width
-            } else {
-                480.0
-            };
+            b.restore_width(state.browser_width);
             b
         } else {
             let folders: Vec<PathBuf> = state.browser_folders.iter().map(PathBuf::from).collect();
-            let mut b = ui::browser::SampleBrowser::from_folders(folders);
-            b.width = 260.0;
-            b
+            ui::browser::SampleBrowser::from_folders(folders)
         };
 
         self.selected.clear();

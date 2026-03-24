@@ -1,3 +1,5 @@
+- fix: VST effect GUI auto-opens when added; spacebar works while plugin window is open (NonKeyPanel prevents focus steal) (42.4k loc)
+- refactor: browser width — single source of truth via DEFAULT_BROWSER_WIDTH (320px), restore_width() replaces scattered hardcoded values; browser open by default (42.4k loc)
 - 2026-03-24: fix: layers panel — takes now shown as indented children of parent waveform with "Take N" labels, sync_tree properly handles take hierarchy (42.3k loc)
 - fix: shared effect chains now process once on a summed ChainBus instead of per-clip, eliminating lag when duplicating clips with FX (42.3k loc)
 - 2026-03-24: feat: Enter key promotes selected take to active, labels as "Recording N" (Ableton-style), takes move with parent, half-height take lanes (42.2k loc)
