@@ -1363,6 +1363,8 @@ impl App {
                     pitch_focused,
                     sample_bpm_focused,
                     add_effect_hovered: false,
+                    group_name: String::new(),
+                    group_member_count: 0,
                     multi_target_ids: wf_ids,
                     drag_start_snapshots: Vec::new(),
                 });
@@ -1376,6 +1378,41 @@ impl App {
                     self.update_right_window_for_instrument(inst_id);
                     return;
                 }
+            }
+        }
+        // If a group is selected, open the right window for it
+        if let Some(HitTarget::Group(group_id)) = self.selected.first().copied() {
+            if let Some(g) = self.groups.get(&group_id) {
+                let name = g.name.clone();
+                let member_count = g.member_ids.len();
+                self.right_window = Some(ui::right_window::RightWindow {
+                    target: ui::right_window::RightWindowTarget::Group(group_id),
+                    volume: 1.0,
+                    pan: 0.5,
+                    warp_mode: ui::waveform::WarpMode::Off,
+                    sample_bpm: 120.0,
+                    pitch_semitones: 0.0,
+                    is_reversed: false,
+                    vol_dragging: false,
+                    pan_dragging: false,
+                    sample_bpm_dragging: false,
+                    pitch_dragging: false,
+                    drag_start_y: 0.0,
+                    drag_start_value: 0.0,
+                    vol_entry: ui::value_entry::ValueEntry::new(),
+                    sample_bpm_entry: ui::value_entry::ValueEntry::new(),
+                    pitch_entry: ui::value_entry::ValueEntry::new(),
+                    vol_fader_focused: false,
+                    pan_knob_focused: false,
+                    pitch_focused: false,
+                    sample_bpm_focused: false,
+                    add_effect_hovered: false,
+                    group_name: name,
+                    group_member_count: member_count,
+                    multi_target_ids: Vec::new(),
+                    drag_start_snapshots: Vec::new(),
+                });
+                return;
             }
         }
         self.right_window = None;
@@ -1406,6 +1443,8 @@ impl App {
                 pitch_focused: false,
                 sample_bpm_focused: false,
                 add_effect_hovered: false,
+                group_name: String::new(),
+                group_member_count: 0,
                 multi_target_ids: vec![wf_id],
                 drag_start_snapshots: Vec::new(),
             });
@@ -1444,6 +1483,8 @@ impl App {
                 pitch_focused: false,
                 sample_bpm_focused: false,
                 add_effect_hovered: false,
+                group_name: String::new(),
+                group_member_count: 0,
                 multi_target_ids: Vec::new(),
                 drag_start_snapshots: Vec::new(),
             });

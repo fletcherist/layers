@@ -10,6 +10,7 @@ use crate::ui::waveform::{WarpMode, WaveformView};
 pub enum RightWindowTarget {
     Waveform(EntityId),
     Instrument(EntityId),
+    Group(EntityId),
 }
 
 pub const RIGHT_WINDOW_WIDTH: f32 = 200.0;
@@ -110,6 +111,10 @@ pub struct RightWindow {
     pub pitch_focused: bool,
     pub sample_bpm_focused: bool,
     pub add_effect_hovered: bool,
+    /// Group name (populated when target is Group)
+    pub group_name: String,
+    /// Group member count (populated when target is Group)
+    pub group_member_count: usize,
     /// All selected waveform IDs (for multi-selection editing)
     pub multi_target_ids: Vec<EntityId>,
     /// Snapshots of waveforms at drag start (for batch undo)
@@ -119,7 +124,7 @@ pub struct RightWindow {
 impl RightWindow {
     pub fn target_id(&self) -> EntityId {
         match self.target {
-            RightWindowTarget::Waveform(id) | RightWindowTarget::Instrument(id) => id,
+            RightWindowTarget::Waveform(id) | RightWindowTarget::Instrument(id) | RightWindowTarget::Group(id) => id,
         }
     }
 
@@ -129,6 +134,10 @@ impl RightWindow {
 
     pub fn is_instrument(&self) -> bool {
         matches!(self.target, RightWindowTarget::Instrument(_))
+    }
+
+    pub fn is_group(&self) -> bool {
+        matches!(self.target, RightWindowTarget::Group(_))
     }
 
     pub fn is_multi(&self) -> bool {
@@ -455,6 +464,22 @@ impl RightWindow {
             border_radius: 0.0,
         });
 
+        // Group target: render export button only, skip volume/pan/warp controls
+        if self.is_group() {
+            let (ebp, ebs) = Self::export_button_rect(screen_w, screen_h, scale);
+            out.push(InstanceRaw {
+                position: ebp,
+                size: ebs,
+                color: if self.add_effect_hovered {
+                    settings.theme.bg_elevated
+                } else {
+                    crate::theme::with_alpha(settings.theme.bg_elevated, 0.85)
+                },
+                border_radius: 4.0 * scale,
+            });
+            return out;
+        }
+
         // Volume fader
         let vol_pos = gain_to_vol_fader_pos(self.volume);
         let layout = Self::vol_fader_layout(screen_w, screen_h, scale);
@@ -754,7 +779,9 @@ impl RightWindow {
         let rw_w = RIGHT_WINDOW_WIDTH * scale;
 
         // "INSPECTOR" header label (with selection count for multi-selection)
-        let header_text = if self.is_multi() {
+        let header_text = if self.is_group() {
+            "GROUP".to_string()
+        } else if self.is_multi() {
             format!("{} CLIPS", self.selection_count())
         } else {
             "INSPECTOR".to_string()
@@ -771,6 +798,64 @@ impl RightWindow {
             bounds: None,
             center: false,
         });
+
+        // Group target: render group name, member count, export button text
+        if self.is_group() {
+            // Group name
+            out.push(TextEntry {
+                text: self.group_name.clone(),
+                x: pp[0] + 12.0 * scale,
+                y: pp[1] + HEADER_HEIGHT * scale + 10.0 * scale,
+                font_size: val_font,
+                line_height: val_line,
+                max_width: rw_w - 24.0 * scale,
+                color: crate::theme::RuntimeTheme::text_u8(theme.text_primary, 240),
+                weight: 400,
+                bounds: None,
+                center: false,
+            });
+
+            // Member count
+            let count_text = if self.group_member_count == 1 {
+                "1 item".to_string()
+            } else {
+                format!("{} items", self.group_member_count)
+            };
+            out.push(TextEntry {
+                text: count_text,
+                x: pp[0] + 12.0 * scale,
+                y: pp[1] + HEADER_HEIGHT * scale + 30.0 * scale,
+                font_size: label_font,
+                line_height: label_line,
+                max_width: rw_w - 24.0 * scale,
+                color: crate::theme::RuntimeTheme::text_u8(theme.text_dim, 180),
+                weight: 400,
+                bounds: None,
+                center: false,
+            });
+
+            // "Export WAV" button text
+            let (ebp, ebs) = Self::export_button_rect(screen_w, screen_h, scale);
+            let icon_size = 14.0 * scale;
+            let padding = 12.0 * scale;
+            out.push(TextEntry {
+                text: "Export WAV".to_string(),
+                x: ebp[0] + padding + icon_size + 6.0 * scale,
+                y: ebp[1] + (ebs[1] - 12.0 * scale) * 0.5,
+                font_size: 12.0 * scale,
+                line_height: 14.0 * scale,
+                max_width: ebs[0] - padding - icon_size - 6.0 * scale,
+                color: if self.add_effect_hovered {
+                    crate::theme::RuntimeTheme::text_u8(theme.text_primary, 255)
+                } else {
+                    crate::theme::RuntimeTheme::text_u8(theme.text_secondary, 180)
+                },
+                weight: 400,
+                bounds: None,
+                center: false,
+            });
+            return out;
+        }
 
         // Fader geometry helpers
         let vol_fader_pos_val = gain_to_vol_fader_pos(self.volume);
@@ -1430,6 +1515,27 @@ impl RightWindow {
     /// Hit test: is pos on the "Add Effect" button?
     pub fn hit_test_add_effect_button(&self, pos: [f32; 2], slot_count: usize, screen_w: f32, screen_h: f32, scale: f32) -> bool {
         let (bp, bs) = Self::add_effect_button_rect(slot_count, screen_w, screen_h, scale);
+        pos[0] >= bp[0] && pos[0] <= bp[0] + bs[0]
+            && pos[1] >= bp[1] && pos[1] <= bp[1] + bs[1]
+    }
+
+    // ---- Group panel helpers ----
+
+    /// Y offset for the "Export WAV" button inside the group panel.
+    const GROUP_EXPORT_BTN_Y: f32 = 90.0;
+
+    /// Rectangle for the "Export WAV" button when target is a Group.
+    pub fn export_button_rect(screen_w: f32, screen_h: f32, scale: f32) -> ([f32; 2], [f32; 2]) {
+        let (pp, ps) = Self::panel_rect(screen_w, screen_h, scale);
+        let margin = 8.0 * scale;
+        let btn_y = pp[1] + Self::GROUP_EXPORT_BTN_Y * scale;
+        ([pp[0] + margin, btn_y], [ps[0] - margin * 2.0, EFFECT_ADD_BUTTON_H * scale])
+    }
+
+    /// Hit test: is pos on the group "Export WAV" button?
+    pub fn hit_test_export_button(&self, pos: [f32; 2], screen_w: f32, screen_h: f32, scale: f32) -> bool {
+        if !self.is_group() { return false; }
+        let (bp, bs) = Self::export_button_rect(screen_w, screen_h, scale);
         pos[0] >= bp[0] && pos[0] <= bp[0] + bs[0]
             && pos[1] >= bp[1] && pos[1] <= bp[1] + bs[1]
     }

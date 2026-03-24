@@ -772,12 +772,23 @@ impl App {
                             return;
                         }
 
+                        // --- Group export button click ---
+                        if rw.hit_test_export_button(self.mouse_pos, sw, sh, scale) {
+                            self.toast_manager.push(
+                                "Export coming soon".to_string(),
+                                crate::ui::toast::ToastKind::Info,
+                            );
+                            self.request_redraw();
+                            return;
+                        }
+
                         // --- Effect chain slot clicks ---
                         {
                             let target = rw.target;
                             let chain_id = match target {
                                 ui::right_window::RightWindowTarget::Waveform(wf_id) => self.waveforms.get(&wf_id).and_then(|w| w.effect_chain_id),
                                 ui::right_window::RightWindowTarget::Instrument(inst_id) => self.instruments.get(&inst_id).and_then(|i| i.effect_chain_id),
+                                ui::right_window::RightWindowTarget::Group(_) => None,
                             };
                             let slot_count = chain_id
                                 .and_then(|cid| self.effect_chains.get(&cid))
@@ -791,6 +802,7 @@ impl App {
                                 match target {
                                     ui::right_window::RightWindowTarget::Waveform(wf_id) => self.detach_effect_chain(wf_id),
                                     ui::right_window::RightWindowTarget::Instrument(inst_id) => self.detach_instrument_effect_chain(inst_id),
+                                    ui::right_window::RightWindowTarget::Group(_) => {}
                                 }
                                 self.request_redraw();
                                 return;
@@ -2093,6 +2105,7 @@ impl App {
                                         });
                                     }
                                 }
+                                ui::right_window::RightWindowTarget::Group(_) => {}
                             }
                         }
                         self.request_redraw();

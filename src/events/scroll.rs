@@ -100,6 +100,7 @@ impl App {
                         }
                         self.sync_instrument_regions();
                     }
+                    ui::right_window::RightWindowTarget::Group(_) => {}
                 }
                 self.request_redraw();
                 return;
@@ -137,6 +138,7 @@ impl App {
                         }
                         self.sync_instrument_regions();
                     }
+                    ui::right_window::RightWindowTarget::Group(_) => {}
                 }
                 self.request_redraw();
                 return;

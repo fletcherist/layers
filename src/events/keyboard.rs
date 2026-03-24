@@ -317,6 +317,7 @@ impl App {
                             }
                             self.sync_instrument_regions();
                         }
+                        ui::right_window::RightWindowTarget::Group(_) => {}
                     }
                     self.mark_dirty();
                     self.request_redraw();
@@ -375,6 +376,7 @@ impl App {
                             }
                             self.sync_instrument_regions();
                         }
+                        ui::right_window::RightWindowTarget::Group(_) => {}
                     }
                     self.mark_dirty();
                     self.request_redraw();

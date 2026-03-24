@@ -222,6 +222,7 @@ impl App {
                             crate::ui::right_window::RightWindowTarget::Instrument(inst_id) => {
                                 self.instruments.get(&inst_id).and_then(|i| i.effect_chain_id)
                             }
+                            crate::ui::right_window::RightWindowTarget::Group(_) => None,
                         };
                         if let Some(cid) = chain_id {
                             self.effect_chains.get(&cid).map(|c| {
