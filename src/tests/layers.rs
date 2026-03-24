@@ -133,7 +133,7 @@ fn test_flatten_respects_expanded() {
     let rows = layers::flatten_tree(
         &app.layer_tree,
         &app.instruments, &app.midi_clips,
-        &app.waveforms, &app.plugin_blocks, &app.groups,
+        &app.waveforms, &app.groups,
     );
     assert_eq!(rows.len(), 2);
 
@@ -143,7 +143,7 @@ fn test_flatten_respects_expanded() {
     let rows = layers::flatten_tree(
         &app.layer_tree,
         &app.instruments, &app.midi_clips,
-        &app.waveforms, &app.plugin_blocks, &app.groups,
+        &app.waveforms, &app.groups,
     );
     assert_eq!(rows.len(), 1);
 }
@@ -182,7 +182,7 @@ fn test_flat_layer_row_color() {
     let rows = layers::flatten_tree(
         &app.layer_tree,
         &app.instruments, &app.midi_clips,
-        &app.waveforms, &app.plugin_blocks, &app.groups,
+        &app.waveforms, &app.groups,
     );
 
     let wf_row = rows.iter().find(|r| r.kind == LayerNodeKind::Waveform)

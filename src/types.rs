@@ -4,7 +4,6 @@ use indexmap::IndexMap;
 
 use crate::automation::AutomationParam;
 use crate::component;
-use crate::effects;
 use crate::entity_id::EntityId;
 use crate::midi;
 use crate::regions::{ExportRegion, LoopRegion};
@@ -27,7 +26,6 @@ pub struct CanvasObject {
 pub(crate) enum HitTarget {
     Object(EntityId),
     Waveform(EntityId),
-    PluginBlock(EntityId),
     LoopRegion(EntityId),
     ExportRegion(EntityId),
     ComponentDef(EntityId),
@@ -210,7 +208,6 @@ pub(crate) enum DragState {
 pub(crate) enum EntityBeforeState {
     Object(CanvasObject),
     Waveform(WaveformView),
-    PluginBlock(effects::PluginBlockSnapshot),
     LoopRegion(LoopRegion),
     ExportRegion(ExportRegion),
     ComponentDef(component::ComponentDef),
@@ -251,7 +248,6 @@ pub(crate) enum GroupHover {
 pub(crate) enum ClipboardItem {
     Object(CanvasObject),
     Waveform(WaveformView, Option<AudioClipData>),
-    PluginBlock(effects::PluginBlock),
     LoopRegion(LoopRegion),
     ExportRegion(ExportRegion),
     ComponentDef(

@@ -41,29 +41,6 @@ pub(crate) struct PendingRemoteAudioFetch {
 impl App {
     pub(crate) fn save_project_state(&mut self) {
         if let Some(storage) = &self.storage {
-            let stored_plugin_blocks: Vec<storage::StoredPluginBlock> = self
-                .plugin_blocks
-                .iter()
-                .map(|(id, pb)| storage::StoredPluginBlock {
-                    id: id.to_string(),
-                    position: pb.position,
-                    size: pb.size,
-                    color: pb.color,
-                    plugin_id: pb.plugin_id.clone(),
-                    plugin_name: pb.plugin_name.clone(),
-                    bypass: pb.bypass,
-                    state: pb.gui.lock().ok()
-                        .and_then(|g| g.as_ref().and_then(|gui| gui.get_state()))
-                        .unwrap_or_default(),
-                    params: {
-                        let vals = pb.gui.lock().ok()
-                            .and_then(|g| g.as_ref().map(|gui| gui.get_all_parameters()))
-                            .unwrap_or_default();
-                        vals.iter().flat_map(|v| v.to_le_bytes()).collect()
-                    },
-                })
-                .collect();
-
             let stored_components: Vec<storage::StoredComponent> = self
                 .components
                 .iter()
@@ -131,7 +108,6 @@ impl App {
                     .map(|p| p.to_string_lossy().to_string())
                     .collect(),
                 effect_regions: Vec::new(),
-                plugin_blocks: stored_plugin_blocks,
                 loop_regions: self
                     .loop_regions
                     .iter()
@@ -309,7 +285,6 @@ impl App {
         self.objects = IndexMap::new();
         self.waveforms.clear();
         self.audio_clips.clear();
-        self.plugin_blocks.clear();
         self.components.clear();
         self.component_instances.clear();
         self.next_component_id = entity_id::new_id();
@@ -469,30 +444,6 @@ impl App {
             }
         }
 
-        self.plugin_blocks = storage::plugin_blocks_from_stored(state.plugin_blocks)
-            .into_iter()
-            .map(|(id, spb)| {
-                let mut pb = effects::PluginBlock::new(
-                    spb.position,
-                    spb.plugin_id,
-                    spb.plugin_name,
-                    std::path::PathBuf::new(),
-                );
-                pb.size = spb.size;
-                pb.color = spb.color;
-                pb.bypass = spb.bypass;
-                if !spb.state.is_empty() {
-                    pb.pending_state = Some(spb.state);
-                }
-                if !spb.params.is_empty() && spb.params.len() % 8 == 0 {
-                    pb.pending_params = Some(spb.params.chunks_exact(8)
-                        .map(|c| f64::from_le_bytes(c.try_into().unwrap()))
-                        .collect());
-                }
-                (id, pb)
-            })
-            .collect();
-
         self.components = storage::components_from_stored(state.components)
             .into_iter()
             .map(|(id, sc)| {
@@ -588,7 +539,6 @@ impl App {
                 &self.instruments,
                 &self.midi_clips,
                 &self.waveforms,
-                &self.plugin_blocks,
                 &self.groups,
             );
             self.layer_tree = tree;
@@ -611,40 +561,6 @@ impl App {
         }
         self.command_palette = None;
         self.context_menu = None;
-
-        // If plugins are already scanned, open vst3-gui instances for restored plugin blocks
-        #[cfg(any(target_os = "macos", target_os = "windows"))]
-        let (load_sr, load_bs) = (self.plugin_sample_rate(), self.settings.buffer_size as i32);
-        #[cfg(any(target_os = "macos", target_os = "windows"))]
-        if self.plugin_registry.is_scanned() {
-            for (_pb_id, pb) in &mut self.plugin_blocks {
-                let has_gui = pb.gui.lock().ok().map_or(false, |g| g.is_some());
-                if !has_gui {
-                    if let Some(entry) = self.plugin_registry.plugins.iter().find(|e| e.info.unique_id == pb.plugin_id) {
-                        pb.plugin_path = entry.info.path.clone();
-                    }
-                    let path = pb.plugin_path.to_string_lossy().to_string();
-                    if !path.is_empty() {
-                        if let Some(gui) = vst3_gui::Vst3Gui::open(&path, &pb.plugin_id, &pb.plugin_name) {
-                            gui.hide();
-                            gui.setup_processing(load_sr, load_bs);
-                            if let Some(state) = &pb.pending_state {
-                                gui.set_state(state);
-                                println!("  Restored plugin state ({} bytes)", state.len());
-                            }
-                            if let Some(params) = &pb.pending_params {
-                                gui.set_all_parameters(params);
-                                println!("  Restored {} plugin parameters", params.len());
-                            }
-                            if let Ok(mut g) = pb.gui.lock() {
-                                *g = Some(gui);
-                            }
-                            println!("  Loaded plugin '{}', path='{}'", pb.plugin_name, pb.plugin_path.display());
-                        }
-                    }
-                }
-            }
-        }
 
         self.sync_audio_clips();
         println!("Project '{}' loaded", self.current_project_name);

@@ -4,7 +4,6 @@ use indexmap::IndexMap;
 
 use crate::automation::AutomationParam;
 use crate::component;
-use crate::effects;
 use crate::entity_id::EntityId;
 use crate::grid::snap_to_grid;
 use crate::midi;
@@ -191,7 +190,6 @@ pub(crate) fn hit_test_fade_curve_dot(
 pub(crate) fn hit_test(
     objects: &IndexMap<EntityId, CanvasObject>,
     waveforms: &IndexMap<EntityId, WaveformView>,
-    plugin_blocks: &IndexMap<EntityId, effects::PluginBlock>,
     loop_regions: &IndexMap<EntityId, LoopRegion>,
     export_regions: &IndexMap<EntityId, ExportRegion>,
     components: &IndexMap<EntityId, component::ComponentDef>,
@@ -256,11 +254,6 @@ pub(crate) fn hit_test(
             return Some(HitTarget::ComponentDef(id));
         }
     }
-    for (&id, pb) in plugin_blocks.iter().rev() {
-        if pb.contains(world_pos) {
-            return Some(HitTarget::PluginBlock(id));
-        }
-    }
     for (&id, mc) in midi_clips.iter().rev() {
         if mc.contains(world_pos) {
             return Some(HitTarget::MidiClip(id));
@@ -310,7 +303,6 @@ pub(crate) fn hit_test(
 pub(crate) fn targets_in_rect(
     objects: &IndexMap<EntityId, CanvasObject>,
     waveforms: &IndexMap<EntityId, WaveformView>,
-    plugin_blocks: &IndexMap<EntityId, effects::PluginBlock>,
     loop_regions: &IndexMap<EntityId, LoopRegion>,
     export_regions: &IndexMap<EntityId, ExportRegion>,
     components: &IndexMap<EntityId, component::ComponentDef>,
@@ -353,11 +345,6 @@ pub(crate) fn targets_in_rect(
         }
         if rects_overlap(rect_pos, rect_size, wf.position, wf.size) {
             result.push(HitTarget::Waveform(id));
-        }
-    }
-    for (&id, pb) in plugin_blocks.iter() {
-        if rects_overlap(rect_pos, rect_size, pb.position, pb.size) {
-            result.push(HitTarget::PluginBlock(id));
         }
     }
     for (&id, lr) in loop_regions.iter() {

@@ -380,8 +380,7 @@ impl App {
                 if let Some(target) = self.selected.first() {
                     let id = match target {
                         HitTarget::Waveform(id) |
-                        HitTarget::MidiClip(id) |
-                        HitTarget::PluginBlock(id) => Some(*id),
+                        HitTarget::MidiClip(id) => Some(*id),
                         _ => None,
                     };
                     if let Some(id) = id {
@@ -396,8 +395,7 @@ impl App {
                 if let Some(target) = self.selected.first() {
                     let id = match target {
                         HitTarget::Waveform(id) |
-                        HitTarget::MidiClip(id) |
-                        HitTarget::PluginBlock(id) => Some(*id),
+                        HitTarget::MidiClip(id) => Some(*id),
                         _ => None,
                     };
                     if let Some(id) = id {
@@ -460,7 +458,6 @@ impl App {
                         let member_ids: Vec<crate::entity_id::EntityId> = targets.iter().filter_map(|t| match t {
                             HitTarget::Object(id)
                             | HitTarget::Waveform(id)
-                            | HitTarget::PluginBlock(id)
                             | HitTarget::LoopRegion(id)
                             | HitTarget::ExportRegion(id)
                             | HitTarget::ComponentDef(id)

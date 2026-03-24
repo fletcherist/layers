@@ -153,7 +153,6 @@ fn test_hit_test_priority_order() {
     instances.insert(inst_id, inst);
 
     let camera = Camera::new();
-    let empty_pb = IndexMap::new();
     let empty_lr = IndexMap::new();
     let empty_xr = IndexMap::new();
     let empty_mc = IndexMap::new();
@@ -161,7 +160,6 @@ fn test_hit_test_priority_order() {
     let result = hit_test(
         &objects,
         &waveforms,
-        &empty_pb,
         &empty_lr,
         &empty_xr,
         &components,
@@ -183,7 +181,6 @@ fn test_hit_test_priority_order() {
     let result = hit_test(
         &objects,
         &waveforms,
-        &empty_pb,
         &empty_lr,
         &empty_xr,
         &components,
@@ -204,7 +201,6 @@ fn test_hit_test_priority_order() {
     let result = hit_test(
         &objects,
         &empty_wf,
-        &empty_pb,
         &empty_lr,
         &empty_xr,
         &components,
@@ -244,7 +240,6 @@ fn test_targets_in_rect_skips_component_waveforms() {
     components.insert(comp_id, comp);
 
     let empty_obj = IndexMap::new();
-    let empty_pb = IndexMap::new();
     let empty_lr = IndexMap::new();
     let empty_xr = IndexMap::new();
     let empty_inst = IndexMap::new();
@@ -253,7 +248,6 @@ fn test_targets_in_rect_skips_component_waveforms() {
     let targets = targets_in_rect(
         &empty_obj,
         &waveforms,
-        &empty_pb,
         &empty_lr,
         &empty_xr,
         &components,
@@ -325,7 +319,6 @@ fn test_loop_region_marquee_x_only() {
 
     let empty_obj = IndexMap::new();
     let empty_wf: IndexMap<EntityId, WaveformView> = IndexMap::new();
-    let empty_pb = IndexMap::new();
     let empty_xr = IndexMap::new();
     let empty_comp = IndexMap::new();
     let empty_inst = IndexMap::new();
@@ -335,7 +328,6 @@ fn test_loop_region_marquee_x_only() {
     let targets = targets_in_rect(
         &empty_obj,
         &empty_wf,
-        &empty_pb,
         &loop_regions,
         &empty_xr,
         &empty_comp,

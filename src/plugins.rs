@@ -64,34 +64,6 @@ impl App {
         // Reload any saved plugin blocks that were waiting for the scanner.
         #[cfg(any(target_os = "macos", target_os = "windows"))]
         let (reload_sr, reload_bs) = (self.plugin_sample_rate(), self.settings.buffer_size as i32);
-        #[cfg(any(target_os = "macos", target_os = "windows"))]
-        for pb in self.plugin_blocks.values_mut() {
-            let has_gui = pb.gui.lock().ok().map_or(false, |g| g.is_some());
-            if !has_gui {
-                if let Some(entry) = self.plugin_registry.plugins.iter().find(|e| e.info.unique_id == pb.plugin_id) {
-                    pb.plugin_path = entry.info.path.clone();
-                }
-                let path = pb.plugin_path.to_string_lossy().to_string();
-                if !path.is_empty() {
-                    if let Some(gui) = vst3_gui::Vst3Gui::open(&path, &pb.plugin_id, &pb.plugin_name) {
-                        gui.hide();
-                        gui.setup_processing(reload_sr, reload_bs);
-                        if let Some(state) = &pb.pending_state {
-                            gui.set_state(state);
-                            println!("  Restored plugin state ({} bytes)", state.len());
-                        }
-                        if let Some(params) = &pb.pending_params {
-                            gui.set_all_parameters(params);
-                            println!("  Restored {} plugin parameters", params.len());
-                        }
-                        if let Ok(mut g) = pb.gui.lock() {
-                            *g = Some(gui);
-                        }
-                        println!("  Reloaded plugin '{}'", pb.plugin_name);
-                    }
-                }
-            }
-        }
         // Reload lightweight instruments waiting for the scanner
         #[cfg(any(target_os = "macos", target_os = "windows"))]
         for inst in self.instruments.values_mut() {
@@ -141,44 +113,6 @@ impl App {
             });
         }
         entries
-    }
-
-    pub(crate) fn add_plugin_block(&mut self, position: [f32; 2], plugin_id: &str, plugin_name: &str) {
-        self.ensure_plugins_scanned();
-        let _block_size = self.settings.buffer_size;
-
-        let plugin_path = self
-            .plugin_registry
-            .plugins
-            .iter()
-            .find(|e| e.info.unique_id == plugin_id)
-            .map(|e| e.info.path.clone())
-            .unwrap_or_default();
-
-        let pb = effects::PluginBlock::new(
-            position,
-            plugin_id.to_string(),
-            plugin_name.to_string(),
-            plugin_path,
-        );
-
-        #[cfg(any(target_os = "macos", target_os = "windows"))]
-        {
-            let path = pb.plugin_path.to_string_lossy().to_string();
-            if !path.is_empty() {
-                if let Some(gui) = vst3_gui::Vst3Gui::open(&path, plugin_id, plugin_name) {
-                    gui.setup_processing(self.plugin_sample_rate(), _block_size as i32);
-                    println!("  Opened native GUI for '{}'", plugin_name);
-                    if let Ok(mut g) = pb.gui.lock() {
-                        *g = Some(gui);
-                    }
-                }
-            }
-        }
-
-        self.plugin_blocks.insert(new_id(), pb);
-        println!("  Added plugin block '{}'", plugin_name);
-        self.sync_audio_clips();
     }
 
     /// Add a VST3 effect plugin to a waveform's shared effect chain.
@@ -382,92 +316,6 @@ impl App {
                 gui.show();
             }
         };
-    }
-
-    #[cfg(any(target_os = "macos", target_os = "windows"))]
-    pub(crate) fn open_plugin_block_gui(&mut self, id: EntityId) {
-        let Some(pb) = self.plugin_blocks.get(&id) else {
-            return;
-        };
-
-        self.ensure_plugins_scanned();
-        {
-            let pb = self.plugin_blocks.get_mut(&id).unwrap();
-            if pb.plugin_path.as_os_str().is_empty() {
-                if let Some(entry) = self.plugin_registry.plugins.iter().find(|e| e.info.unique_id == pb.plugin_id) {
-                    pb.plugin_path = entry.info.path.clone();
-                }
-            }
-        }
-
-        let pb = self.plugin_blocks.get_mut(&id).unwrap();
-        let saved_state = pb.pending_state.take();
-        let saved_params = pb.pending_params.take();
-        let pb = self.plugin_blocks.get(&id).unwrap();
-        let path = pb.plugin_path.to_string_lossy().to_string();
-        let uid = pb.plugin_id.clone();
-        let name = pb.plugin_name.clone();
-
-        if !path.is_empty() {
-            let has_gui = pb.gui.lock().ok().map_or(false, |g| g.is_some());
-            if has_gui {
-                let is_visible = pb.gui.lock()
-                    .ok()
-                    .map_or(false, |g| g.as_ref().map_or(false, |gui| gui.is_open()));
-                if !is_visible {
-                    if let Ok(g) = pb.gui.lock() {
-                        if let Some(gui) = g.as_ref() {
-                            gui.show();
-                            println!("  Showed native GUI for '{}'", name);
-                        }
-                    }
-                }
-                return;
-            }
-
-            if let Some(gui) = vst3_gui::Vst3Gui::open(&path, &uid, &name) {
-                gui.setup_processing(self.plugin_sample_rate(), self.settings.buffer_size as i32);
-                if let Some(state) = saved_state {
-                    if !state.is_empty() {
-                        gui.set_state(&state);
-                    }
-                }
-                if let Some(params) = saved_params {
-                    gui.set_all_parameters(&params);
-                    println!("  Restored {} GUI parameters", params.len());
-                }
-                println!("  Opened native GUI for '{}'", name);
-                if let Ok(mut g) = pb.gui.lock() {
-                    *g = Some(gui);
-                }
-                return;
-            }
-        }
-
-        // Fallback: open parameter editor using gui instance
-        let mut params = Vec::new();
-        if let Ok(guard) = pb.gui.lock() {
-            if let Some(gui) = guard.as_ref() {
-                let count = gui.parameter_count();
-                for param_idx in 0..count {
-                    let val = gui.get_parameter(param_idx).unwrap_or(0.0);
-                    params.push(ui::plugin_editor::ParamEntry {
-                        name: format!("Param {}", param_idx),
-                        unit: String::new(),
-                        value: val as f32,
-                        default: 0.0,
-                    });
-                }
-            }
-        }
-        self.plugin_editor = Some(ui::plugin_editor::PluginEditorWindow::new(
-            id, 0, name, params,
-        ));
-    }
-
-    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-    pub(crate) fn open_plugin_block_gui(&mut self, _id: EntityId) {
-        // VST3 plugin GUIs are not available on this platform
     }
 
     pub(crate) fn add_instrument(&mut self, plugin_id: &str, plugin_name: &str) {

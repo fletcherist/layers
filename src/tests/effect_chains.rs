@@ -249,3 +249,26 @@ fn copy_paste_shares_chain() {
     let ref_count = crate::ui::right_window::RightWindow::chain_ref_count(chain_id, &app.waveforms);
     assert_eq!(ref_count, 2);
 }
+
+#[test]
+fn drop_plugin_on_right_window_adds_to_chain() {
+    let mut app = App::new_headless();
+    let wf_id = new_id();
+    app.waveforms.insert(wf_id, make_waveform(100.0, 100.0));
+
+    // No chain initially
+    assert!(app.waveforms[&wf_id].effect_chain_id.is_none());
+
+    // Add plugin via the method that the right-window drop calls
+    app.add_plugin_to_waveform_chain(wf_id, "test_reverb_id", "TestReverb");
+
+    // Chain should be created with one slot
+    let chain_id = app.waveforms[&wf_id].effect_chain_id.unwrap();
+    assert_eq!(app.effect_chains[&chain_id].slots.len(), 1);
+    assert_eq!(app.effect_chains[&chain_id].slots[0].plugin_name, "TestReverb");
+
+    // Add a second plugin — should append
+    app.add_plugin_to_waveform_chain(wf_id, "test_delay_id", "TestDelay");
+    assert_eq!(app.effect_chains[&chain_id].slots.len(), 2);
+    assert_eq!(app.effect_chains[&chain_id].slots[1].plugin_name, "TestDelay");
+}

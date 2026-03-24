@@ -78,21 +78,6 @@ surreal_derive! {
 
 surreal_derive! {
     #[derive(Clone)]
-    pub struct StoredPluginBlock {
-        pub id: String,
-        pub position: [f32; 2],
-        pub size: [f32; 2],
-        pub color: [f32; 4],
-        pub plugin_id: String,
-        pub plugin_name: String,
-        pub bypass: bool,
-        pub state: Vec<u8>,
-        pub params: Vec<u8>,
-    }
-}
-
-surreal_derive! {
-    #[derive(Clone)]
     pub struct StoredLoopRegion {
         pub id: String,
         pub position: [f32; 2],
@@ -200,7 +185,6 @@ surreal_derive! {
         pub browser_visible: bool,
         pub browser_expanded: Vec<String>,
         pub effect_regions: Vec<StoredEffectRegion>,
-        pub plugin_blocks: Vec<StoredPluginBlock>,
         pub loop_regions: Vec<StoredLoopRegion>,
         pub components: Vec<StoredComponent>,
         pub component_instances: Vec<StoredComponentInstance>,

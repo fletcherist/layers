@@ -579,22 +579,6 @@ fn test_serde_roundtrip_create_midi_note() {
 }
 
 #[test]
-fn test_serde_roundtrip_plugin_block() {
-    serde_roundtrip_op(Operation::CreatePluginBlock {
-        id: new_id(),
-        data: crate::effects::PluginBlockSnapshot {
-            position: [10.0, 20.0],
-            size: [120.0, 40.0],
-            color: [0.25, 0.50, 0.90, 0.70],
-            plugin_id: "com.example.eq".to_string(),
-            plugin_name: "EQ".to_string(),
-            plugin_path: std::path::PathBuf::from("/Library/Audio/Plug-Ins/VST3/EQ.vst3"),
-            bypass: false,
-        },
-    });
-}
-
-#[test]
 fn test_serde_roundtrip_loop_region() {
     serde_roundtrip_op(Operation::CreateLoopRegion {
         id: new_id(),

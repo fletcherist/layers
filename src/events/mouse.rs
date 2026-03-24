@@ -65,7 +65,6 @@ impl App {
                                             self.keyboard_instrument_id = Some(*id);
                                             None
                                         },
-                                        crate::layers::LayerNodeKind::PluginBlock => Some(HitTarget::PluginBlock(*id)),
                                         crate::layers::LayerNodeKind::MidiClip => Some(HitTarget::MidiClip(*id)),
                                         crate::layers::LayerNodeKind::TextNote => Some(HitTarget::TextNote(*id)),
                                         crate::layers::LayerNodeKind::Group => Some(HitTarget::Group(*id)),
@@ -112,7 +111,6 @@ impl App {
                 let hit = hit_test(
                     &self.objects,
                     &self.waveforms,
-                    &self.plugin_blocks,
                     &self.loop_regions,
                     &self.export_regions,
                     &self.components,
@@ -290,17 +288,7 @@ impl App {
                                     scr_h,
                                     scale,
                                 );
-                                #[cfg(feature = "native")]
-                                {
-                                    let pb_idx = pe.region_id; // repurposed as plugin_block index
-                                    if let Some(pb) = self.plugin_blocks.get(&pb_idx) {
-                                        if let Ok(guard) = pb.gui.lock() {
-                                            if let Some(gui) = guard.as_ref() {
-                                                gui.set_parameter(idx, _new_val as f64);
-                                            }
-                                        }
-                                    }
-                                }
+                                // plugin parameter update via effect chain handled elsewhere
                             }
                         }
                     } else {
@@ -1243,20 +1231,6 @@ impl App {
                                             self.selected.push(HitTarget::Waveform(*id));
                                             self.update_right_window();
                                         }
-                                        crate::layers::LayerNodeKind::PluginBlock => {
-                                            if let Some(pb) = self.plugin_blocks.get(id) {
-                                                let (sw, sh, _) = self.screen_info();
-                                                let cx = pb.position[0] + pb.size[0] * 0.5;
-                                                let cy = pb.position[1] + pb.size[1] * 0.5;
-                                                self.camera.position = [
-                                                    cx - sw * 0.5 / self.camera.zoom,
-                                                    cy - sh * 0.5 / self.camera.zoom,
-                                                ];
-                                            }
-                                            self.selected.clear();
-                                            self.selected.push(HitTarget::PluginBlock(*id));
-                                            self.update_right_window();
-                                        }
                                         crate::layers::LayerNodeKind::TextNote => {
                                             if let Some(tn) = self.text_notes.get(id) {
                                                 let (sw, sh, _) = self.screen_info();
@@ -1286,8 +1260,8 @@ impl App {
                                             self.update_right_window();
                                         }
                                     }
-                                    // Initiate layer reorder drag (not for MidiClip/PluginBlock)
-                                    if !matches!(kind, crate::layers::LayerNodeKind::MidiClip | crate::layers::LayerNodeKind::PluginBlock) && !is_dbl {
+                                    // Initiate layer reorder drag (not for MidiClip)
+                                    if !matches!(kind, crate::layers::LayerNodeKind::MidiClip) && !is_dbl {
                                         self.drag = DragState::ReorderingLayerNode {
                                             entity_id: *id,
                                             kind: *kind,
@@ -1698,7 +1672,6 @@ impl App {
                 let hit = hit_test(
                     &self.objects,
                     &self.waveforms,
-                    &self.plugin_blocks,
                     &self.loop_regions,
                     &self.export_regions,
                     &self.components,
@@ -1743,12 +1716,6 @@ impl App {
                             "Entered component edit mode: {}",
                             self.components[&ci].name
                         );
-                        self.request_redraw();
-                        return;
-                    }
-                    if let Some(HitTarget::PluginBlock(_idx)) = hit {
-                        #[cfg(feature = "native")]
-                        self.open_plugin_block_gui(_idx);
                         self.request_redraw();
                         return;
                     }
@@ -2041,7 +2008,6 @@ impl App {
                             let hit2 = hit_test(
                                 &self.objects,
                                 &self.waveforms,
-                                &self.plugin_blocks,
                                 &self.loop_regions,
                                 &self.export_regions,
                                 &self.components,
@@ -2744,14 +2710,6 @@ impl App {
                             }
                             if let Some(wf_id) = target_wf {
                                 self.add_plugin_to_waveform_chain(wf_id, &plugin_id, &plugin_name);
-                            } else {
-                                self.add_plugin_block(world, &plugin_id, &plugin_name);
-                                if let Some(&pb_id) = self.plugin_blocks.keys().last() {
-                                    let snap = self.plugin_blocks[&pb_id].snapshot();
-                                    self.push_op(crate::operations::Operation::CreatePluginBlock { id: pb_id, data: snap });
-                                    self.selected.clear();
-                                    self.selected.push(HitTarget::PluginBlock(pb_id));
-                                }
                             }
                         }
                     }
@@ -2822,12 +2780,6 @@ impl App {
                             (HitTarget::Waveform(id), EntityBeforeState::Waveform(before)) => {
                                 if let Some(after) = self.waveforms.get(&id) {
                                     ops.push(crate::operations::Operation::UpdateWaveform { id, before, after: after.clone() });
-                                }
-                            }
-                            (HitTarget::PluginBlock(id), EntityBeforeState::PluginBlock(before)) => {
-                                if let Some(after) = self.plugin_blocks.get(&id) {
-                                    ops.push(crate::operations::Operation::DeletePluginBlock { id, data: before });
-                                    ops.push(crate::operations::Operation::CreatePluginBlock { id, data: after.snapshot() });
                                 }
                             }
                             (HitTarget::LoopRegion(id), EntityBeforeState::LoopRegion(before)) => {
@@ -2930,7 +2882,6 @@ impl App {
                         let raw_targets = targets_in_rect(
                             &self.objects,
                             &self.waveforms,
-                            &self.plugin_blocks,
                             &self.loop_regions,
                             &self.export_regions,
                             &self.components,

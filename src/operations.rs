@@ -1,6 +1,5 @@
 use crate::ui::waveform::AudioClipData;
 use crate::component::{ComponentDef, ComponentInstance};
-use crate::effects::PluginBlockSnapshot;
 use crate::entity_id::EntityId;
 use crate::instruments::InstrumentSnapshot;
 use crate::midi::{MidiClip, MidiNote};
@@ -41,10 +40,6 @@ pub enum Operation {
     CreateMidiNote { clip_id: EntityId, note_idx: usize, data: MidiNote },
     DeleteMidiNote { clip_id: EntityId, note_idx: usize, data: MidiNote },
     UpdateMidiNotes { clip_id: EntityId, before: Vec<MidiNote>, after: Vec<MidiNote> },
-
-    // --- PluginBlock ---
-    CreatePluginBlock { id: EntityId, data: PluginBlockSnapshot },
-    DeletePluginBlock { id: EntityId, data: PluginBlockSnapshot },
 
     // --- LoopRegion ---
     CreateLoopRegion { id: EntityId, data: LoopRegion },
@@ -104,8 +99,6 @@ impl Operation {
             Operation::CreateMidiNote { .. } => "CreateMidiNote",
             Operation::DeleteMidiNote { .. } => "DeleteMidiNote",
             Operation::UpdateMidiNotes { .. } => "UpdateMidiNotes",
-            Operation::CreatePluginBlock { .. } => "CreatePluginBlock",
-            Operation::DeletePluginBlock { .. } => "DeletePluginBlock",
             Operation::CreateLoopRegion { .. } => "CreateLoopRegion",
             Operation::DeleteLoopRegion { .. } => "DeleteLoopRegion",
             Operation::UpdateLoopRegion { .. } => "UpdateLoopRegion",
@@ -154,10 +147,6 @@ impl Operation {
             Operation::CreateMidiNote { clip_id, note_idx, data } => Operation::DeleteMidiNote { clip_id: *clip_id, note_idx: *note_idx, data: data.clone() },
             Operation::DeleteMidiNote { clip_id, note_idx, data } => Operation::CreateMidiNote { clip_id: *clip_id, note_idx: *note_idx, data: data.clone() },
             Operation::UpdateMidiNotes { clip_id, before, after } => Operation::UpdateMidiNotes { clip_id: *clip_id, before: after.clone(), after: before.clone() },
-
-            // PluginBlocks
-            Operation::CreatePluginBlock { id, data } => Operation::DeletePluginBlock { id: *id, data: data.clone() },
-            Operation::DeletePluginBlock { id, data } => Operation::CreatePluginBlock { id: *id, data: data.clone() },
 
             // LoopRegions
             Operation::CreateLoopRegion { id, data } => Operation::DeleteLoopRegion { id: *id, data: data.clone() },
@@ -316,26 +305,6 @@ impl Operation {
                 }
             }
 
-            // --- PluginBlock (snapshot-based create/delete) ---
-            Operation::CreatePluginBlock { id, data } => {
-                use std::sync::{Arc, Mutex};
-                app.plugin_blocks.insert(*id, crate::effects::PluginBlock {
-                    position: data.position,
-                    size: data.size,
-                    color: data.color,
-                    plugin_id: data.plugin_id.clone(),
-                    plugin_name: data.plugin_name.clone(),
-                    plugin_path: data.plugin_path.clone(),
-                    bypass: data.bypass,
-                    gui: Arc::new(Mutex::new(None)),
-                    pending_state: None,
-                    pending_params: None,
-                });
-            }
-            Operation::DeletePluginBlock { id, .. } => {
-                app.plugin_blocks.shift_remove(id);
-            }
-
             // --- LoopRegion ---
             Operation::CreateLoopRegion { id, data } => {
                 app.loop_regions.insert(*id, data.clone());
@@ -486,12 +455,6 @@ impl App {
                         (HitTarget::Waveform(id), EntityBeforeState::Waveform(before)) => {
                             if let Some(after) = self.waveforms.get(&id) {
                                 nudge_ops.push(Operation::UpdateWaveform { id, before, after: after.clone() });
-                            }
-                        }
-                        (HitTarget::PluginBlock(id), EntityBeforeState::PluginBlock(before)) => {
-                            if let Some(after) = self.plugin_blocks.get(&id) {
-                                nudge_ops.push(Operation::DeletePluginBlock { id, data: before });
-                                nudge_ops.push(Operation::CreatePluginBlock { id, data: after.snapshot() });
                             }
                         }
                         (HitTarget::LoopRegion(id), EntityBeforeState::LoopRegion(before)) => {
@@ -657,14 +620,10 @@ impl App {
                     Operation::UpdateComponentInstance { id, .. } => targets.push(HitTarget::ComponentInstance(*id)),
                     Operation::UpdateMidiClip { id, .. } => targets.push(HitTarget::MidiClip(*id)),
                     Operation::UpdateTextNote { id, .. } => targets.push(HitTarget::TextNote(*id)),
-                    // PluginBlock uses Delete+Create pair for updates
-                    Operation::DeletePluginBlock { id, .. } => targets.push(HitTarget::PluginBlock(*id)),
-                    Operation::CreatePluginBlock { .. } => { /* paired with Delete above */ }
                     _ => return None, // non-update op → don't preserve selection
                 }
             }
             if !targets.is_empty() {
-                // Deduplicate (PluginBlock has two ops per entity)
                 targets.dedup();
                 return Some(targets);
             }

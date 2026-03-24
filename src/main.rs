@@ -256,7 +256,6 @@ struct App {
     arrow_nudge_overlap_temp_splits: Vec<EntityId>,
     current_project_name: String,
     effect_chains: IndexMap<EntityId, effects::EffectChain>,
-    plugin_blocks: IndexMap<EntityId, effects::PluginBlock>,
     components: IndexMap<EntityId, component::ComponentDef>,
     component_instances: IndexMap<EntityId, component::ComponentInstance>,
     next_component_id: component::ComponentId,
@@ -391,7 +390,6 @@ impl App {
             arrow_nudge_overlap_temp_splits: Vec::new(),
             current_project_name: project_name.into(),
             effect_chains: IndexMap::new(),
-            plugin_blocks: IndexMap::new(),
             components: IndexMap::new(),
             component_instances: IndexMap::new(),
             next_component_id: new_id(),
@@ -506,7 +504,7 @@ impl App {
             HitTarget::Waveform(id) | HitTarget::MidiClip(id)
             | HitTarget::TextNote(id) | HitTarget::Object(id) | HitTarget::LoopRegion(id)
             | HitTarget::ExportRegion(id) | HitTarget::ComponentDef(id)
-            | HitTarget::ComponentInstance(id) | HitTarget::PluginBlock(id) => id,
+            | HitTarget::ComponentInstance(id) => id,
             HitTarget::Group(_) => return target,
         };
         for (gid, group) in &self.groups {
@@ -545,7 +543,6 @@ impl App {
             &self.instruments,
             &self.midi_clips,
             &self.waveforms,
-            &self.plugin_blocks,
             &self.groups,
         );
         let rows = layers::flatten_tree(
@@ -553,7 +550,6 @@ impl App {
             &self.instruments,
             &self.midi_clips,
             &self.waveforms,
-            &self.plugin_blocks,
             &self.groups,
         );
         self.sample_browser.layer_rows = rows;
@@ -663,12 +659,6 @@ impl App {
         // Stop audio engine first so the audio thread releases plugin locks
         self.audio_engine = None;
 
-        // Destroy plugin block GUIs
-        for pb in self.plugin_blocks.values_mut() {
-            if let Ok(mut g) = pb.gui.lock() {
-                *g = None;
-            }
-        }
     }
 
     #[cfg(feature = "native")]
@@ -723,7 +713,6 @@ impl App {
             browser_width,
             browser_visible,
             browser_expanded,
-            stored_plugin_blocks,
             stored_loop_regions,
             stored_components,
             stored_component_instances,
@@ -855,7 +844,6 @@ impl App {
                     bw,
                     state.browser_visible,
                     Some(expanded),
-                    storage::plugin_blocks_from_stored(state.plugin_blocks),
                     storage::loop_regions_from_stored(state.loop_regions),
                     storage::components_from_stored(state.components),
                     storage::component_instances_from_stored(state.component_instances),
@@ -877,7 +865,6 @@ impl App {
                     260.0,
                     false,
                     None,
-                    Vec::new(),  // stored_plugin_blocks
                     Vec::new(),  // stored_loop_regions
                     Vec::new(),  // stored_components
                     Vec::new(),  // stored_component_instances
@@ -969,31 +956,6 @@ impl App {
 
         let plugin_registry = effects::PluginRegistry::new();
 
-        // Restore plugin blocks; instances will be loaded lazily on first scan
-        let restored_plugin_blocks: IndexMap<EntityId, effects::PluginBlock> = stored_plugin_blocks
-            .into_iter()
-            .map(|(id, spb)| {
-                let mut pb = effects::PluginBlock::new(
-                    spb.position,
-                    spb.plugin_id,
-                    spb.plugin_name,
-                    std::path::PathBuf::new(),
-                );
-                pb.size = spb.size;
-                pb.color = spb.color;
-                pb.bypass = spb.bypass;
-                if !spb.state.is_empty() {
-                    pb.pending_state = Some(spb.state);
-                }
-                if !spb.params.is_empty() && spb.params.len() % 8 == 0 {
-                    pb.pending_params = Some(spb.params.chunks_exact(8)
-                        .map(|c| f64::from_le_bytes(c.try_into().unwrap()))
-                        .collect());
-                }
-                (id, pb)
-            })
-            .collect();
-
         let restored_loop_regions: IndexMap<EntityId, LoopRegion> = stored_loop_regions
             .into_iter()
             .map(|(id, slr)| (id, LoopRegion {
@@ -1058,7 +1020,6 @@ impl App {
                 &IndexMap::new(), // no instruments in old format yet
                 &restored_midi_clips,
                 &waveforms,
-                &restored_plugin_blocks,
                 &IndexMap::new(), // no groups in old format
             );
             tree
@@ -1111,7 +1072,6 @@ impl App {
             arrow_nudge_overlap_temp_splits: Vec::new(),
             current_project_name: project_name,
             effect_chains: IndexMap::new(),
-            plugin_blocks: restored_plugin_blocks,
             components: restored_components,
             component_instances: restored_instances,
             next_component_id,
@@ -1821,24 +1781,7 @@ impl App {
             engine.update_clips(&positions, &sizes, &owned_clips, &fade_ins, &fade_outs, &fade_in_curves, &fade_out_curves, &volumes, &pans, &sample_offsets, &vol_autos, &pan_autos, &warp_modes, &sample_bpms, self.bpm, &pitch_semitones_vec, &chain_plugins_per_clip, &chain_latencies, &group_bus_indices);
             engine.update_group_buses(group_buses);
 
-            let regions: Vec<audio::AudioEffectRegion> = self
-                .groups
-                .values()
-                .map(|g| {
-                    let block_ids = effects::collect_plugins_for_rect(g.position, g.size, &self.plugin_blocks);
-                    audio::AudioEffectRegion {
-                        x_start_px: g.position[0],
-                        x_end_px: g.position[0] + g.size[0],
-                        y_start: g.position[1],
-                        y_end: g.position[1] + g.size[1],
-                        plugins: block_ids
-                            .iter()
-                            .filter_map(|id| self.plugin_blocks.get(id))
-                            .map(|pb| pb.gui.clone())
-                            .collect(),
-                    }
-                })
-                .collect();
+            let regions: Vec<audio::AudioEffectRegion> = Vec::new();
             engine.update_effect_regions(regions);
         }
         self.sync_instrument_regions();
@@ -2265,19 +2208,7 @@ impl App {
         let wf_y = wf.position[1];
         let wf_y_end = wf_y + wf.size[1];
 
-        let mut plugins = Vec::new();
-        for g in self.groups.values() {
-            let ey = g.position[1];
-            let ey_end = ey + g.size[1];
-            if wf_y < ey_end && wf_y_end > ey {
-                let block_ids = effects::collect_plugins_for_rect(g.position, g.size, &self.plugin_blocks);
-                for id in &block_ids {
-                    if let Some(pb) = self.plugin_blocks.get(id) {
-                        plugins.push(pb.gui.clone());
-                    }
-                }
-            }
-        }
+        let plugins = Vec::new();
         engine.update_monitor_effects(plugins);
     }
 
@@ -2539,11 +2470,7 @@ impl App {
     #[cfg(not(feature = "native"))]
     fn add_instrument(&mut self, _plugin_id: &str, _plugin_name: &str) {}
     #[cfg(not(feature = "native"))]
-    fn add_plugin_block(&mut self, _position: [f32; 2], _plugin_id: &str, _plugin_name: &str) {}
-    #[cfg(not(feature = "native"))]
     fn build_palette_plugin_entries(&self) -> Vec<PluginPickerEntry> { Vec::new() }
-    #[cfg(not(feature = "native"))]
-    fn open_plugin_block_gui(&mut self, _id: EntityId) {}
     #[cfg(not(feature = "native"))]
     fn open_instrument_region_gui(&mut self, _id: EntityId) {}
     #[cfg(not(feature = "native"))]
@@ -2611,24 +2538,7 @@ impl App {
             })
             .collect();
 
-        let effect_regions: Vec<audio::AudioEffectRegion> = self
-            .groups
-            .values()
-            .map(|g| {
-                let block_ids = effects::collect_plugins_for_rect(g.position, g.size, &self.plugin_blocks);
-                audio::AudioEffectRegion {
-                    x_start_px: g.position[0],
-                    x_end_px: g.position[0] + g.size[0],
-                    y_start: g.position[1],
-                    y_end: g.position[1] + g.size[1],
-                    plugins: block_ids
-                        .iter()
-                        .filter_map(|id| self.plugin_blocks.get(id))
-                        .map(|pb| pb.gui.clone())
-                        .collect(),
-                }
-            })
-            .collect();
+        let effect_regions: Vec<audio::AudioEffectRegion> = Vec::new();
 
         match audio::render_to_wav(
             &path,
@@ -2667,7 +2577,6 @@ impl App {
         match target {
             HitTarget::Object(i) => { if let Some(o) = self.objects.get_mut(i) { o.position = pos; } }
             HitTarget::Waveform(i) => { if let Some(w) = self.waveforms.get_mut(i) { w.position = pos; } }
-            HitTarget::PluginBlock(i) => { if let Some(p) = self.plugin_blocks.get_mut(i) { p.position = pos; } }
             HitTarget::LoopRegion(i) => { if let Some(l) = self.loop_regions.get_mut(i) { l.position[0] = pos[0]; } }
             HitTarget::ExportRegion(i) => { if let Some(e) = self.export_regions.get_mut(i) { e.position = pos; } }
             HitTarget::TextNote(i) => { if let Some(tn) = self.text_notes.get_mut(i) { tn.position = pos; } }
@@ -2719,7 +2628,6 @@ impl App {
         match target {
             HitTarget::Object(i) => self.objects.get(i).map(|o| o.position).unwrap_or([0.0; 2]),
             HitTarget::Waveform(i) => self.waveforms.get(i).map(|w| w.position).unwrap_or([0.0; 2]),
-            HitTarget::PluginBlock(i) => self.plugin_blocks.get(i).map(|p| p.position).unwrap_or([0.0; 2]),
             HitTarget::LoopRegion(i) => self.loop_regions.get(i).map(|l| l.position).unwrap_or([0.0; 2]),
             HitTarget::ExportRegion(i) => self.export_regions.get(i).map(|e| e.position).unwrap_or([0.0; 2]),
             HitTarget::ComponentDef(i) => self.components.get(i).map(|c| c.position).unwrap_or([0.0; 2]),
@@ -2734,7 +2642,6 @@ impl App {
         match target {
             HitTarget::Object(i) => self.objects.get(i).map(|o| o.size).unwrap_or([50.0; 2]),
             HitTarget::Waveform(i) => self.waveforms.get(i).map(|w| w.size).unwrap_or([50.0; 2]),
-            HitTarget::PluginBlock(i) => self.plugin_blocks.get(i).map(|p| p.size).unwrap_or([50.0; 2]),
             HitTarget::LoopRegion(i) => self.loop_regions.get(i).map(|l| l.size).unwrap_or([50.0; 2]),
             HitTarget::ExportRegion(i) => self.export_regions.get(i).map(|e| e.size).unwrap_or([50.0; 2]),
             HitTarget::ComponentDef(i) => self.components.get(i).map(|c| c.size).unwrap_or([50.0; 2]),
@@ -2807,15 +2714,6 @@ impl App {
                             self.objects.insert(nid, obj.clone());
                             copy_ops.push(operations::Operation::CreateObject { id: nid, data: obj });
                             new_selected.push(HitTarget::Object(nid));
-                        }
-                    }
-                    HitTarget::PluginBlock(i) => {
-                        if let Some(pb) = self.plugin_blocks.get(&i).cloned() {
-                            let nid = new_id();
-                            let snap = pb.snapshot();
-                            self.plugin_blocks.insert(nid, pb);
-                            copy_ops.push(operations::Operation::CreatePluginBlock { id: nid, data: snap });
-                            new_selected.push(HitTarget::PluginBlock(nid));
                         }
                     }
                     HitTarget::LoopRegion(i) => {
@@ -2909,7 +2807,6 @@ impl App {
             match t {
                 HitTarget::Object(id) => self.objects.get(id).map(|o| (*t, EntityBeforeState::Object(o.clone()))),
                 HitTarget::Waveform(id) => self.waveforms.get(id).map(|w| (*t, EntityBeforeState::Waveform(w.clone()))),
-                HitTarget::PluginBlock(id) => self.plugin_blocks.get(id).map(|p| (*t, EntityBeforeState::PluginBlock(p.snapshot()))),
                 HitTarget::LoopRegion(id) => self.loop_regions.get(id).map(|l| (*t, EntityBeforeState::LoopRegion(l.clone()))),
                 HitTarget::ExportRegion(id) => self.export_regions.get(id).map(|x| (*t, EntityBeforeState::ExportRegion(x.clone()))),
                 HitTarget::ComponentDef(id) => self.components.get(id).map(|c| (*t, EntityBeforeState::ComponentDef(c.clone()))),
@@ -2982,12 +2879,6 @@ impl App {
                     (HitTarget::Waveform(id), EntityBeforeState::Waveform(before)) => {
                         if let Some(after) = self.waveforms.get(&id) {
                             ops.push(crate::operations::Operation::UpdateWaveform { id, before, after: after.clone() });
-                        }
-                    }
-                    (HitTarget::PluginBlock(id), EntityBeforeState::PluginBlock(before)) => {
-                        if let Some(after) = self.plugin_blocks.get(&id) {
-                            ops.push(crate::operations::Operation::DeletePluginBlock { id, data: before });
-                            ops.push(crate::operations::Operation::CreatePluginBlock { id, data: after.snapshot() });
                         }
                     }
                     (HitTarget::LoopRegion(id), EntityBeforeState::LoopRegion(before)) => {
@@ -3082,7 +2973,6 @@ impl App {
                 match t {
                     HitTarget::Object(id) => self.objects.get(id).map(|o| (*t, EntityBeforeState::Object(o.clone()))),
                     HitTarget::Waveform(id) => self.waveforms.get(id).map(|w| (*t, EntityBeforeState::Waveform(w.clone()))),
-                    HitTarget::PluginBlock(id) => self.plugin_blocks.get(id).map(|p| (*t, EntityBeforeState::PluginBlock(p.snapshot()))),
                     HitTarget::LoopRegion(id) => self.loop_regions.get(id).map(|l| (*t, EntityBeforeState::LoopRegion(l.clone()))),
                     HitTarget::ExportRegion(id) => self.export_regions.get(id).map(|x| (*t, EntityBeforeState::ExportRegion(x.clone()))),
                     HitTarget::ComponentDef(id) => self.components.get(id).map(|c| (*t, EntityBeforeState::ComponentDef(c.clone()))),

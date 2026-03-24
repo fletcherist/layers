@@ -301,7 +301,6 @@ pub(crate) struct Gpu {
 
     cached_wf_label_bufs: Vec<(TextLabelCacheKey, TextBuffer)>,
     cached_text_note_bufs: Vec<(TextLabelCacheKey, TextBuffer)>,
-    cached_plugin_block_bufs: Vec<(TextLabelCacheKey, TextBuffer)>,
     cached_group_label_bufs: Vec<(TextLabelCacheKey, TextBuffer)>,
     cached_auto_dot_bufs: Vec<(TextLabelCacheKey, TextBuffer)>,
     cached_auto_lane_bufs: Vec<(TextLabelCacheKey, TextBuffer)>,
@@ -673,7 +672,6 @@ impl Gpu {
             browser_text_generation: 0,
             cached_wf_label_bufs: Vec::new(),
             cached_text_note_bufs: Vec::new(),
-            cached_plugin_block_bufs: Vec::new(),
             cached_group_label_bufs: Vec::new(),
             cached_auto_dot_bufs: Vec::new(),
             cached_auto_lane_bufs: Vec::new(),
@@ -706,7 +704,6 @@ impl Gpu {
         playback_position: f64,
         export_regions: &indexmap::IndexMap<crate::entity_id::EntityId, ExportRegion>,
         loop_regions: &indexmap::IndexMap<crate::entity_id::EntityId, crate::regions::LoopRegion>,
-        plugin_blocks: &indexmap::IndexMap<crate::entity_id::EntityId, effects::PluginBlock>,
         _editing_effect_name: Option<(crate::entity_id::EntityId, &str)>,
         waveforms: &indexmap::IndexMap<crate::entity_id::EntityId, waveform::WaveformView>,
         editing_waveform_name: Option<(crate::entity_id::EntityId, &str)>,
@@ -1508,72 +1505,7 @@ impl Gpu {
             );
         }
 
-        // Plugin block name labels (cached shaping, positions recomputed each frame)
-        let mut old_pb_cache = std::mem::take(&mut self.cached_plugin_block_bufs);
-        let mut new_pb_cache: Vec<(TextLabelCacheKey, TextBuffer)> = Vec::new();
-        let mut pb_label_meta: Vec<(f32, f32, TextColor, TextBounds)> = Vec::new();
-        if settings_window.is_none() && command_palette.is_none() {
-            for (_pb_id, pb) in plugin_blocks {
-                let pb_right = pb.position[0] + pb.size[0];
-                let pb_bottom = pb.position[1] + pb.size[1];
-                if pb_right < world_left
-                    || pb.position[0] > world_right
-                    || pb_bottom < world_top
-                    || pb.position[1] > world_bottom
-                {
-                    continue;
-                }
-                let screen_x = (pb.position[0] - camera.position[0]) * camera.zoom;
-                let screen_y = (pb.position[1] - camera.position[1]) * camera.zoom;
-                let block_w_screen = pb.size[0] * camera.zoom;
-                let block_h_screen = pb.size[1] * camera.zoom;
-
-                if let Some((cm_pos, cm_size)) = ctx_menu_rect {
-                    if screen_x + block_w_screen > cm_pos[0]
-                        && screen_x < cm_pos[0] + cm_size[0]
-                        && screen_y + block_h_screen > cm_pos[1]
-                        && screen_y < cm_pos[1] + cm_size[1]
-                    {
-                        continue;
-                    }
-                }
-
-                let name = &pb.plugin_name;
-                let label_font = 12.0 * scale;
-                let label_line = 18.0 * scale;
-                let pad = 8.0;
-                let max_w = ((block_w_screen - pad * 2.0) * scale).max(10.0);
-
-                let key = TextLabelCacheKey {
-                    text: name.clone(),
-                    max_width_q: (max_w * 2.0) as i32,
-                    font_size_q: (label_font * 2.0) as i32,
-                };
-                if let Some(pos) = old_pb_cache.iter().position(|(k, _)| *k == key) {
-                    new_pb_cache.push(old_pb_cache.swap_remove(pos));
-                } else {
-                    let mut buf = TextBuffer::new(
-                        &mut self.font_system,
-                        Metrics::new(label_font, label_line),
-                    );
-                    buf.set_size(&mut self.font_system, Some(max_w), Some(label_line));
-                    let attrs = Attrs::new()
-                        .family(Family::Name(".AppleSystemUIFont"))
-                        .weight(glyphon::Weight(500));
-                    buf.set_text(&mut self.font_system, name, attrs, Shaping::Advanced);
-                    buf.shape_until_scroll(&mut self.font_system, false);
-                    new_pb_cache.push((key, buf));
-                }
-
-                pb_label_meta.push((
-                    screen_x + pad,
-                    screen_y + (block_h_screen - label_line / scale) * 0.5,
-                    TextColor::rgba(255, 255, 255, 230),
-                    full_bounds,
-                ));
-            }
-        }
-        self.cached_plugin_block_bufs = new_pb_cache;
+        let pb_label_meta: Vec<(f32, f32, TextColor, TextBounds)> = Vec::new();
 
         // Group name labels (cached shaping, positions recomputed each frame)
         let mut old_grp_cache = std::mem::take(&mut self.cached_group_label_bufs);
@@ -2211,11 +2143,6 @@ impl Gpu {
             .iter()
             .zip(wf_label_meta.iter())
             .map(|(e, m)| cached_label_area(e, m));
-        let plugin_areas = self
-            .cached_plugin_block_bufs
-            .iter()
-            .zip(pb_label_meta.iter())
-            .map(|(e, m)| cached_label_area(e, m));
         let group_areas = self
             .cached_group_label_bufs
             .iter()
@@ -2256,8 +2183,6 @@ impl Gpu {
             .into_iter()
             .chain(other_areas)
             .chain(wf_areas)
-
-            .chain(plugin_areas)
             .chain(group_areas)
             .chain(auto_dot_areas)
             .chain(auto_lane_areas)

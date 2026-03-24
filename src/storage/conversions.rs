@@ -115,22 +115,6 @@ pub fn waveforms_from_stored(stored: Vec<StoredWaveform>) -> Vec<(EntityId, Stor
         .collect()
 }
 
-pub fn plugin_blocks_from_stored(
-    stored: Vec<StoredPluginBlock>,
-) -> Vec<(EntityId, StoredPluginBlock)> {
-    stored
-        .into_iter()
-        .map(|s| {
-            let id = if s.id.is_empty() {
-                new_id()
-            } else {
-                entity_id_from_string(&s.id)
-            };
-            (id, s)
-        })
-        .collect()
-}
-
 pub fn loop_regions_from_stored(
     stored: Vec<StoredLoopRegion>,
 ) -> Vec<(EntityId, StoredLoopRegion)> {

@@ -3,7 +3,6 @@ use std::collections::HashSet;
 use indexmap::IndexMap;
 
 use crate::component;
-use crate::effects;
 use crate::entity_id::EntityId;
 use crate::grid::{grid_spacing_for_settings, pixels_per_beat};
 use crate::ui::hit_testing::canonical_rect;
@@ -25,7 +24,6 @@ pub(crate) struct RenderContext<'a> {
     pub(crate) screen_h: f32,
     pub(crate) objects: &'a IndexMap<EntityId, CanvasObject>,
     pub(crate) waveforms: &'a IndexMap<EntityId, WaveformView>,
-    pub(crate) plugin_blocks: &'a IndexMap<EntityId, effects::PluginBlock>,
     pub(crate) hovered: Option<HitTarget>,
     pub(crate) selected: &'a HashSet<HitTarget>,
     pub(crate) selection_rect: Option<([f32; 2], [f32; 2])>,
@@ -120,24 +118,6 @@ pub(crate) fn build_instances(out: &mut Vec<InstanceRaw>, ctx: &RenderContext) {
         }
     }
 
-
-    // --- plugin blocks ---
-    for (&id, pb) in ctx.plugin_blocks.iter() {
-        let pb_right = pb.position[0] + pb.size[0];
-        let pb_bottom = pb.position[1] + pb.size[1];
-        if pb_right < world_left
-            || pb.position[0] > world_right
-            || pb_bottom < world_top
-            || pb.position[1] > world_bottom
-        {
-            continue;
-        }
-        let is_sel = ctx.selected.contains(&HitTarget::PluginBlock(id));
-        let is_hov = ctx.hovered == Some(HitTarget::PluginBlock(id));
-        out.extend(effects::build_plugin_block_instances(
-            pb, camera, is_hov, is_sel, &ctx.settings.theme,
-        ));
-    }
 
     // --- midi clips ---
     for (&id, mc) in ctx.midi_clips.iter() {
@@ -569,7 +549,6 @@ pub(crate) fn build_instances(out: &mut Vec<InstanceRaw>, ctx: &RenderContext) {
         let Some((pos, size)) = target_rect(
             ctx.objects,
             ctx.waveforms,
-            ctx.plugin_blocks,
             ctx.loop_regions,
             ctx.export_regions,
             ctx.components,
@@ -857,7 +836,6 @@ pub(crate) fn build_waveform_vertices(verts: &mut Vec<WaveformVertex>, ctx: &Ren
 pub(crate) fn target_rect(
     objects: &IndexMap<EntityId, CanvasObject>,
     waveforms: &IndexMap<EntityId, WaveformView>,
-    plugin_blocks: &IndexMap<EntityId, effects::PluginBlock>,
     loop_regions: &IndexMap<EntityId, LoopRegion>,
     export_regions: &IndexMap<EntityId, ExportRegion>,
     components: &IndexMap<EntityId, component::ComponentDef>,
@@ -875,10 +853,6 @@ pub(crate) fn target_rect(
         HitTarget::Waveform(id) => {
             let w = waveforms.get(id)?;
             Some((w.position, w.size))
-        }
-        HitTarget::PluginBlock(id) => {
-            let p = plugin_blocks.get(id)?;
-            Some((p.position, p.size))
         }
         HitTarget::LoopRegion(id) => {
             let l = loop_regions.get(id)?;

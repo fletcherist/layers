@@ -1,3 +1,6 @@
+- 2026-03-24: refactor: remove PluginBlock feature entirely — standalone VST blocks on canvas, all related structs, ops, rendering, tests, and serialization deleted (41.6k loc)
+- feat: drag VST plugins from browser and drop onto right inspector panel to add to effect chain (42.8k loc)
+- add "Loop" text label on loop region badge (42.7k loc)
 - add volume and pan controls for groups in right inspector panel, with undo, keyboard/scroll/drag support, and export parity (42.7k loc)
 - loop region now spans full viewport height like the playhead; resize/move are horizontal-only (42.5k loc)
 - refactor: remove EffectRegion entity — groups now serve as spatial FX rectangles; added collect_plugins_for_rect helper (42.3k loc)

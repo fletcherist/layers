@@ -1347,16 +1347,6 @@ impl App {
                 }
             }
 
-            #[cfg(feature = "native")]
-            if matches!(event.logical_key, Key::Named(NamedKey::Enter)) {
-                // Double-click on plugin block: open GUI
-                if let Some(HitTarget::PluginBlock(idx)) = self.selected.first().copied() {
-                    if self.plugin_blocks.contains_key(&idx) {
-                        self.open_plugin_block_gui(idx);
-                    }
-                    self.request_redraw();
-                }
-            }
 
             #[cfg(feature = "native")]
             {

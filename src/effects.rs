@@ -3,7 +3,6 @@ use std::sync::{Arc, Mutex};
 
 use serde::{Deserialize, Serialize};
 
-use crate::{point_in_rect, push_border, rects_overlap, Camera, InstanceRaw};
 
 // ---------------------------------------------------------------------------
 // Plugin cache (native only)
@@ -87,14 +86,6 @@ fn save_cache(plugins: &[vst3_gui::ScannedPlugin]) {
 pub const EFFECT_REGION_DEFAULT_WIDTH: f32 = 600.0;
 pub const EFFECT_REGION_DEFAULT_HEIGHT: f32 = 250.0;
 
-// ---------------------------------------------------------------------------
-// PluginBlock — first-class canvas object for a single plugin
-// ---------------------------------------------------------------------------
-
-pub const PLUGIN_BLOCK_DEFAULT_SIZE: [f32; 2] = [120.0, 40.0];
-pub use crate::theme::PLUGIN_BLOCK_DEFAULT_COLOR;
-pub const PLUGIN_BLOCK_BORDER_RADIUS: f32 = 6.0;
-
 /// Native GUI handle type — vst3_gui::Vst3Gui on macOS, stub elsewhere.
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 pub type PluginGuiHandle = vst3_gui::Vst3Gui;
@@ -128,85 +119,6 @@ impl PluginGuiStub {
     pub fn audio_output_channels(&self) -> usize { 0 }
     pub fn get_latency_samples(&self) -> u32 { 0 }
     pub fn latency_changed(&self) -> bool { false }
-}
-
-#[derive(Clone)]
-pub struct PluginBlock {
-    pub position: [f32; 2],
-    pub size: [f32; 2],
-    pub color: [f32; 4],
-    pub plugin_id: String,
-    pub plugin_name: String,
-    pub plugin_path: PathBuf,
-    pub bypass: bool,
-    pub gui: Arc<Mutex<Option<PluginGuiHandle>>>,
-    pub pending_state: Option<Vec<u8>>,
-    pub pending_params: Option<Vec<f64>>,
-}
-
-impl PluginBlock {
-    pub fn new(position: [f32; 2], plugin_id: String, plugin_name: String, plugin_path: PathBuf) -> Self {
-        Self {
-            position,
-            size: PLUGIN_BLOCK_DEFAULT_SIZE,
-            color: PLUGIN_BLOCK_DEFAULT_COLOR,
-            plugin_id,
-            plugin_name,
-            plugin_path,
-            bypass: false,
-            gui: Arc::new(Mutex::new(None)),
-            pending_state: None,
-            pending_params: None,
-        }
-    }
-
-    pub fn snapshot(&self) -> PluginBlockSnapshot {
-        PluginBlockSnapshot {
-            position: self.position,
-            size: self.size,
-            color: self.color,
-            plugin_id: self.plugin_id.clone(),
-            plugin_name: self.plugin_name.clone(),
-            plugin_path: self.plugin_path.clone(),
-            bypass: self.bypass,
-        }
-    }
-
-    pub fn contains(&self, world_pos: [f32; 2]) -> bool {
-        point_in_rect(world_pos, self.position, self.size)
-    }
-}
-
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
-pub struct PluginBlockSnapshot {
-    pub position: [f32; 2],
-    pub size: [f32; 2],
-    pub color: [f32; 4],
-    pub plugin_id: String,
-    pub plugin_name: String,
-    pub plugin_path: PathBuf,
-    pub bypass: bool,
-}
-
-/// Returns EntityIds of non-bypassed plugin_blocks that spatially overlap the
-/// given rectangle, sorted by X position (left-to-right chaining order).
-pub fn collect_plugins_for_rect(
-    position: [f32; 2],
-    size: [f32; 2],
-    blocks: &indexmap::IndexMap<crate::entity_id::EntityId, PluginBlock>,
-) -> Vec<crate::entity_id::EntityId> {
-    let mut overlapping: Vec<(crate::entity_id::EntityId, f32)> = blocks
-        .iter()
-        .filter(|(_, b)| {
-            !b.bypass
-                && rects_overlap(position, size, b.position, b.size)
-        })
-        .map(|(&id, b)| (id, b.position[0]))
-        .collect();
-    overlapping.sort_by(|a, b| {
-        a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal)
-    });
-    overlapping.into_iter().map(|(id, _)| id).collect()
 }
 
 // ---------------------------------------------------------------------------
@@ -277,41 +189,6 @@ impl EffectChain {
         self.slots.len()
     }
 }
-
-pub fn build_plugin_block_instances(
-    block: &PluginBlock,
-    camera: &Camera,
-    is_hovered: bool,
-    is_selected: bool,
-    theme: &crate::theme::RuntimeTheme,
-) -> Vec<InstanceRaw> {
-    let mut out = Vec::new();
-
-    let mut color = block.color;
-    if block.bypass {
-        color[3] *= 0.4;
-    }
-    if is_hovered && !is_selected {
-        color[3] = (color[3] + 0.10).min(1.0);
-    }
-
-    // Main block rectangle
-    out.push(InstanceRaw {
-        position: block.position,
-        size: block.size,
-        color,
-        border_radius: PLUGIN_BLOCK_BORDER_RADIUS / camera.zoom,
-    });
-
-    // Selection border
-    if is_selected {
-        let bw = 2.0 / camera.zoom;
-        push_border(&mut out, block.position, block.size, bw, [0.35, 0.65, 1.0, 0.8]);
-    }
-
-    out
-}
-
 
 // ---------------------------------------------------------------------------
 // PluginRegistry (native only)

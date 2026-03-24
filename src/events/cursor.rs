@@ -17,17 +17,6 @@ impl App {
                 if let Some(pe) = &mut self.plugin_editor {
                     let idx = pe.dragging_slider.unwrap();
                     let _new_val = pe.slider_drag(idx, mx, scr_w, scr_h, scale);
-                    #[cfg(feature = "native")]
-                    {
-                        let pb_idx = pe.region_id; // now repurposed as plugin_block index
-                        if let Some(pb) = self.plugin_blocks.get(&pb_idx) {
-                            if let Ok(guard) = pb.gui.lock() {
-                                if let Some(gui) = guard.as_ref() {
-                                    gui.set_parameter(idx, _new_val as f64);
-                                }
-                            }
-                        }
-                    }
                 }
                 self.request_redraw();
                 return;
@@ -894,7 +883,6 @@ impl App {
                         self.selected = targets_in_rect(
                             &self.objects,
                             &self.waveforms,
-                            &self.plugin_blocks,
                             &self.loop_regions,
                             &self.export_regions,
                             &self.components,
@@ -1390,7 +1378,6 @@ impl App {
         let raw_hover = hit_test(
             &self.objects,
             &self.waveforms,
-            &self.plugin_blocks,
             &self.loop_regions,
             &self.export_regions,
             &self.components,

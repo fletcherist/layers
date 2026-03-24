@@ -8,7 +8,6 @@ mod midi_and_instruments;
 mod operations;
 mod palette;
 mod playhead_indicator;
-mod plugins;
 mod state_mutations;
 mod storage_roundtrip;
 mod vertical_snap;
