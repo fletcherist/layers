@@ -1325,6 +1325,52 @@ impl App {
         }
     }
 
+    /// Recompute a group's bounding box from its member entities.
+    fn update_group_bounds(&mut self, group_id: EntityId) {
+        let member_ids = if let Some(g) = self.groups.get(&group_id) {
+            g.member_ids.clone()
+        } else {
+            return;
+        };
+        if member_ids.is_empty() {
+            return;
+        }
+        // Build HitTargets from member IDs by checking entity maps
+        let targets: Vec<HitTarget> = member_ids.iter().filter_map(|id| {
+            if self.waveforms.contains_key(id) { Some(HitTarget::Waveform(*id)) }
+            else if self.midi_clips.contains_key(id) { Some(HitTarget::MidiClip(*id)) }
+            else if self.effect_regions.contains_key(id) { Some(HitTarget::EffectRegion(*id)) }
+            else if self.text_notes.contains_key(id) { Some(HitTarget::TextNote(*id)) }
+            else if self.objects.contains_key(id) { Some(HitTarget::Object(*id)) }
+            else if self.loop_regions.contains_key(id) { Some(HitTarget::LoopRegion(*id)) }
+            else if self.export_regions.contains_key(id) { Some(HitTarget::ExportRegion(*id)) }
+            else if self.components.contains_key(id) { Some(HitTarget::ComponentDef(*id)) }
+            else { None }
+        }).collect();
+        if let Some((pos, size)) = group::bounding_box_of_selection(
+            &targets,
+            &self.waveforms, &self.midi_clips, &self.effect_regions,
+            &self.text_notes, &self.objects, &self.loop_regions,
+            &self.export_regions, &self.components, &self.component_instances,
+        ) {
+            if let Some(g) = self.groups.get_mut(&group_id) {
+                g.position = pos;
+                g.size = size;
+            }
+        }
+    }
+
+    /// Update bounds for all groups that contain the given entity.
+    fn update_groups_containing(&mut self, entity_id: EntityId) {
+        let group_ids: Vec<EntityId> = self.groups.iter()
+            .filter(|(_, g)| g.member_ids.contains(&entity_id))
+            .map(|(gid, _)| *gid)
+            .collect();
+        for gid in group_ids {
+            self.update_group_bounds(gid);
+        }
+    }
+
     pub(crate) fn update_right_window(&mut self) {
         // Collect all selected waveform IDs
         let wf_ids: Vec<EntityId> = self.selected.iter().filter_map(|t| {
@@ -2714,6 +2760,15 @@ impl App {
                 self.push_op(crate::operations::Operation::Batch(ops));
             }
             self.sync_audio_clips();
+            // Update group bounds for any nudged members
+            let nudged_ids: Vec<EntityId> = self.selected.iter().filter_map(|t| match t {
+                HitTarget::Waveform(id) | HitTarget::MidiClip(id) | HitTarget::EffectRegion(id)
+                | HitTarget::TextNote(id) | HitTarget::Object(id) => Some(*id),
+                _ => None,
+            }).collect();
+            for id in nudged_ids {
+                self.update_groups_containing(id);
+            }
             self.arrow_nudge_last = None;
         }
     }

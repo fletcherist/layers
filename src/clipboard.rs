@@ -840,6 +840,21 @@ impl App {
             self.push_op(operations::Operation::Batch(del_ops));
         }
 
+        // Remove deleted entities from group member lists and update bounds
+        let all_deleted: Vec<EntityId> = [&obj_ids, &wf_ids, &er_ids, &pb_ids, &lr_ids, &xr_ids, &mc_ids, &tn_ids]
+            .iter().flat_map(|v| v.iter().copied()).collect();
+        let mut groups_to_update: Vec<EntityId> = Vec::new();
+        for (gid, group) in self.groups.iter_mut() {
+            let before_len = group.member_ids.len();
+            group.member_ids.retain(|mid| !all_deleted.contains(mid));
+            if group.member_ids.len() != before_len {
+                groups_to_update.push(*gid);
+            }
+        }
+        for gid in groups_to_update {
+            self.update_group_bounds(gid);
+        }
+
         self.selected.clear();
         #[cfg(feature = "native")]
         {

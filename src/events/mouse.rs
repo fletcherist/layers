@@ -2666,6 +2666,7 @@ impl App {
                             self.push_op(crate::operations::Operation::Batch(ops));
                         }
                         self.sync_audio_clips();
+                        self.update_groups_containing(waveform_id);
                         self.update_hover();
                         self.update_cursor();
                         self.request_redraw();
@@ -2759,6 +2760,15 @@ impl App {
                         self.push_op(crate::operations::Operation::Batch(ops));
                     }
                         self.sync_audio_clips();
+                        // Update group bounds for any moved members
+                        let moved_ids: Vec<EntityId> = self.selected.iter().filter_map(|t| match t {
+                            HitTarget::Waveform(id) | HitTarget::MidiClip(id) | HitTarget::EffectRegion(id)
+                            | HitTarget::TextNote(id) | HitTarget::Object(id) => Some(*id),
+                            _ => None,
+                        }).collect();
+                        for id in moved_ids {
+                            self.update_groups_containing(id);
+                        }
                         self.update_hover();
                         self.update_cursor();
                         self.request_redraw();
