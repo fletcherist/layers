@@ -609,6 +609,7 @@ impl App {
                 &self.waveforms,
                 &self.effect_regions,
                 &self.plugin_blocks,
+                &self.groups,
             );
             self.layer_tree = tree;
         }

@@ -1019,6 +1019,7 @@ impl SampleBrowser {
                             LayerNodeKind::EffectRegion => settings.theme.pill_effect,
                             LayerNodeKind::PluginBlock => settings.theme.pill_effect,
                             LayerNodeKind::TextNote => settings.theme.category_dot,
+                            LayerNodeKind::Group => settings.theme.component_border_color,
                             _ => *color,
                         },
                         _ => settings.theme.pill_instrument,
@@ -1267,6 +1268,7 @@ impl SampleBrowser {
                             LayerNodeKind::EffectRegion => crate::theme::RuntimeTheme::text_u8(theme.text_secondary, 240),
                             LayerNodeKind::PluginBlock => crate::theme::RuntimeTheme::text_u8(theme.text_secondary, 230),
                             LayerNodeKind::TextNote => crate::theme::RuntimeTheme::text_u8(theme.text_dim, 255),
+                            LayerNodeKind::Group => crate::theme::RuntimeTheme::text_u8(theme.text_primary, 230),
                         },
                         _ => crate::theme::RuntimeTheme::text_u8(theme.text_primary, 230),
                     };

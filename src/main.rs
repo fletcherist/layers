@@ -503,6 +503,7 @@ impl App {
             &self.waveforms,
             &self.effect_regions,
             &self.plugin_blocks,
+            &self.groups,
         );
         let rows = layers::flatten_tree(
             &self.layer_tree,
@@ -511,6 +512,7 @@ impl App {
             &self.waveforms,
             &self.effect_regions,
             &self.plugin_blocks,
+            &self.groups,
         );
         self.sample_browser.layer_rows = rows;
         if self.sample_browser.active_category == ui::browser::BrowserCategory::Layers {
@@ -1063,6 +1065,7 @@ impl App {
                 &waveforms,
                 &restored_effect_regions,
                 &restored_plugin_blocks,
+                &IndexMap::new(), // no groups in old format
             );
             tree
         };

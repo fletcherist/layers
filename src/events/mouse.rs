@@ -69,6 +69,7 @@ impl App {
                                         crate::layers::LayerNodeKind::PluginBlock => Some(HitTarget::PluginBlock(*id)),
                                         crate::layers::LayerNodeKind::MidiClip => Some(HitTarget::MidiClip(*id)),
                                         crate::layers::LayerNodeKind::TextNote => Some(HitTarget::TextNote(*id)),
+                                        crate::layers::LayerNodeKind::Group => Some(HitTarget::Group(*id)),
                                     };
                                     if let Some(target) = target {
                                         self.selected.push(target);
@@ -1161,6 +1162,20 @@ impl App {
                                             }
                                             self.selected.clear();
                                             self.selected.push(HitTarget::TextNote(*id));
+                                            self.update_right_window();
+                                        }
+                                        crate::layers::LayerNodeKind::Group => {
+                                            if let Some(g) = self.groups.get(id) {
+                                                let (sw, sh, _) = self.screen_info();
+                                                let cx = g.position[0] + g.size[0] * 0.5;
+                                                let cy = g.position[1] + g.size[1] * 0.5;
+                                                self.camera.position = [
+                                                    cx - sw * 0.5 / self.camera.zoom,
+                                                    cy - sh * 0.5 / self.camera.zoom,
+                                                ];
+                                            }
+                                            self.selected.clear();
+                                            self.selected.push(HitTarget::Group(*id));
                                             self.update_right_window();
                                         }
                                     }

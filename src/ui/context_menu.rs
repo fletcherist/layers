@@ -533,6 +533,7 @@ impl ContextMenu {
                         }));
                         entries.push(ContextMenuEntry::Separator);
                     }
+                    LayerNodeKind::Group => {}
                     _ => {}
                 }
                 entries.push(ContextMenuEntry::Item(ContextMenuItem {

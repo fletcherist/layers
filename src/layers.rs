@@ -10,6 +10,7 @@ pub enum LayerNodeKind {
     EffectRegion,
     PluginBlock,
     TextNote,
+    Group,
 }
 
 impl LayerNodeKind {
@@ -21,6 +22,7 @@ impl LayerNodeKind {
             Self::EffectRegion => "effect_region",
             Self::PluginBlock => "plugin_block",
             Self::TextNote => "text_note",
+            Self::Group => "group",
         }
     }
 
@@ -32,6 +34,7 @@ impl LayerNodeKind {
             "effect_region" => Some(Self::EffectRegion),
             "plugin_block" => Some(Self::PluginBlock),
             "text_note" => Some(Self::TextNote),
+            "group" => Some(Self::Group),
             _ => None,
         }
     }
@@ -57,6 +60,23 @@ pub struct FlatLayerRow {
     pub color: [f32; 4],
 }
 
+/// Determine the LayerNodeKind for a member entity by checking which map contains it.
+fn member_kind(
+    id: EntityId,
+    instruments: &IndexMap<EntityId, crate::instruments::Instrument>,
+    midi_clips: &IndexMap<EntityId, crate::midi::MidiClip>,
+    waveforms: &IndexMap<EntityId, crate::ui::waveform::WaveformView>,
+    effect_regions: &IndexMap<EntityId, crate::effects::EffectRegion>,
+    plugin_blocks: &IndexMap<EntityId, crate::effects::PluginBlock>,
+) -> Option<LayerNodeKind> {
+    if instruments.contains_key(&id) { Some(LayerNodeKind::Instrument) }
+    else if midi_clips.contains_key(&id) { Some(LayerNodeKind::MidiClip) }
+    else if waveforms.contains_key(&id) { Some(LayerNodeKind::Waveform) }
+    else if effect_regions.contains_key(&id) { Some(LayerNodeKind::EffectRegion) }
+    else if plugin_blocks.contains_key(&id) { Some(LayerNodeKind::PluginBlock) }
+    else { None }
+}
+
 /// Build the default layer tree from current App entity maps.
 /// Instruments (sorted by Y) with MIDI children; waveforms (sorted by Y);
 /// effect regions (sorted by Y) with plugin block children.
@@ -66,6 +86,7 @@ pub fn build_default_tree(
     waveforms: &IndexMap<EntityId, crate::ui::waveform::WaveformView>,
     effect_regions: &IndexMap<EntityId, crate::effects::EffectRegion>,
     plugin_blocks: &IndexMap<EntityId, crate::effects::PluginBlock>,
+    groups: &IndexMap<EntityId, crate::group::Group>,
 ) -> Vec<LayerNode> {
     let mut tree = Vec::new();
 
@@ -130,6 +151,20 @@ pub fn build_default_tree(
         });
     }
 
+    // Groups
+    for (&group_id, group) in groups.iter() {
+        let children: Vec<LayerNode> = group.member_ids.iter().filter_map(|mid| {
+            let kind = member_kind(*mid, instruments, midi_clips, waveforms, effect_regions, plugin_blocks);
+            kind.map(|k| LayerNode { entity_id: *mid, kind: k, expanded: false, children: Vec::new() })
+        }).collect();
+        tree.push(LayerNode {
+            entity_id: group_id,
+            kind: LayerNodeKind::Group,
+            expanded: true,
+            children,
+        });
+    }
+
     tree
 }
 
@@ -141,10 +176,11 @@ pub fn flatten_tree(
     waveforms: &IndexMap<EntityId, crate::ui::waveform::WaveformView>,
     effect_regions: &IndexMap<EntityId, crate::effects::EffectRegion>,
     plugin_blocks: &IndexMap<EntityId, crate::effects::PluginBlock>,
+    groups: &IndexMap<EntityId, crate::group::Group>,
 ) -> Vec<FlatLayerRow> {
     let mut rows = Vec::new();
     for node in tree {
-        flatten_node(node, 0, &mut rows, instruments, midi_clips, waveforms, effect_regions, plugin_blocks);
+        flatten_node(node, 0, &mut rows, instruments, midi_clips, waveforms, effect_regions, plugin_blocks, groups);
     }
     rows
 }
@@ -158,6 +194,7 @@ fn flatten_node(
     waveforms: &IndexMap<EntityId, crate::ui::waveform::WaveformView>,
     effect_regions: &IndexMap<EntityId, crate::effects::EffectRegion>,
     plugin_blocks: &IndexMap<EntityId, crate::effects::PluginBlock>,
+    groups: &IndexMap<EntityId, crate::group::Group>,
 ) {
     let label = match node.kind {
         LayerNodeKind::Instrument => {
@@ -189,6 +226,10 @@ fn flatten_node(
                 .unwrap_or_else(|| "Plugin".to_string())
         }
         LayerNodeKind::TextNote => "Text Note".to_string(),
+        LayerNodeKind::Group => {
+            groups.get(&node.entity_id).map(|g| g.name.clone())
+                .unwrap_or_else(|| "Group".to_string())
+        }
     };
 
     let color = match node.kind {
@@ -204,6 +245,7 @@ fn flatten_node(
         LayerNodeKind::Instrument => [0.5, 0.5, 0.5, 1.0],
         LayerNodeKind::EffectRegion => [0.5, 0.5, 0.5, 1.0],
         LayerNodeKind::TextNote => [0.6, 0.6, 0.5, 1.0],
+        LayerNodeKind::Group => [0.5, 0.5, 0.5, 1.0],
     };
 
     rows.push(FlatLayerRow {
@@ -218,7 +260,7 @@ fn flatten_node(
 
     if node.expanded {
         for child in &node.children {
-            flatten_node(child, depth + 1, rows, instruments, midi_clips, waveforms, effect_regions, plugin_blocks);
+            flatten_node(child, depth + 1, rows, instruments, midi_clips, waveforms, effect_regions, plugin_blocks, groups);
         }
     }
 }
@@ -232,6 +274,7 @@ pub fn sync_tree(
     waveforms: &IndexMap<EntityId, crate::ui::waveform::WaveformView>,
     effect_regions: &IndexMap<EntityId, crate::effects::EffectRegion>,
     plugin_blocks: &IndexMap<EntityId, crate::effects::PluginBlock>,
+    groups: &IndexMap<EntityId, crate::group::Group>,
 ) {
     let mut seen_ids: std::collections::HashSet<EntityId> = std::collections::HashSet::new();
 
@@ -244,6 +287,7 @@ pub fn sync_tree(
             LayerNodeKind::MidiClip => midi_clips.contains_key(&node.entity_id),
             LayerNodeKind::PluginBlock => plugin_blocks.contains_key(&node.entity_id),
             LayerNodeKind::TextNote => true, // text notes not tracked in tree yet
+            LayerNodeKind::Group => groups.contains_key(&node.entity_id),
         }
     });
 
@@ -273,6 +317,22 @@ pub fn sync_tree(
                         node.children.push(LayerNode {
                             entity_id: pb_id, kind: LayerNodeKind::PluginBlock, expanded: false, children: Vec::new(),
                         });
+                    }
+                }
+                for c in &node.children { seen_ids.insert(c.entity_id); }
+            }
+        } else if node.kind == LayerNodeKind::Group {
+            if let Some(group) = groups.get(&node.entity_id) {
+                // Retain only children whose member still exists in some entity map
+                node.children.retain(|c| {
+                    member_kind(c.entity_id, instruments, midi_clips, waveforms, effect_regions, plugin_blocks).is_some()
+                });
+                let existing: std::collections::HashSet<EntityId> = node.children.iter().map(|c| c.entity_id).collect();
+                for mid in &group.member_ids {
+                    if !existing.contains(mid) {
+                        if let Some(k) = member_kind(*mid, instruments, midi_clips, waveforms, effect_regions, plugin_blocks) {
+                            node.children.push(LayerNode { entity_id: *mid, kind: k, expanded: false, children: Vec::new() });
+                        }
                     }
                 }
                 for c in &node.children { seen_ids.insert(c.entity_id); }
@@ -312,6 +372,18 @@ pub fn sync_tree(
                 }
             }
             tree.push(LayerNode { entity_id: id, kind: LayerNodeKind::EffectRegion, expanded: true, children });
+            seen_ids.insert(id);
+        }
+    }
+    for (&id, group) in groups.iter() {
+        if !seen_ids.contains(&id) {
+            let children: Vec<LayerNode> = group.member_ids.iter().filter_map(|mid| {
+                if seen_ids.contains(mid) { return None; }
+                let k = member_kind(*mid, instruments, midi_clips, waveforms, effect_regions, plugin_blocks)?;
+                seen_ids.insert(*mid);
+                Some(LayerNode { entity_id: *mid, kind: k, expanded: false, children: Vec::new() })
+            }).collect();
+            tree.push(LayerNode { entity_id: id, kind: LayerNodeKind::Group, expanded: true, children });
             seen_ids.insert(id);
         }
     }
