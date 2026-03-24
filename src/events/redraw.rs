@@ -167,7 +167,7 @@ impl App {
                 .filter_map(|t| match t {
                     HitTarget::Waveform(id) |
                     HitTarget::MidiClip(id) | HitTarget::TextNote(id) |
-                    HitTarget::Group(id) => Some(*id),
+                    HitTarget::Group(id) | HitTarget::Instrument(id) => Some(*id),
                     _ => None,
                 })
                 .collect();

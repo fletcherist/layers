@@ -1378,12 +1378,10 @@ impl App {
                         #[cfg(feature = "native")]
                         if let Some(engine) = &self.audio_engine {
                             if !engine.is_playing() {
-                                let seek_target = self.selected.first().and_then(|t| {
-                                    if let HitTarget::Waveform(id) = t {
-                                        self.waveforms.get(id).map(|wf| wf.position[0])
-                                    } else {
-                                        None
-                                    }
+                                let seek_target = self.selected.first().and_then(|t| match t {
+                                    HitTarget::Waveform(id) => self.waveforms.get(id).map(|wf| wf.position[0]),
+                                    HitTarget::Group(id) => self.groups.get(id).map(|g| g.position[0]),
+                                    _ => None,
                                 });
                                 if let Some(x) = seek_target {
                                     let secs = x as f64 / PIXELS_PER_SECOND as f64;

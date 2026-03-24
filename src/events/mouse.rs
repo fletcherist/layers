@@ -1196,72 +1196,79 @@ impl App {
                                             self.refresh_project_browser_entries();
                                         }
                                     }
+                                    let shift = self.modifiers.shift_key();
                                     match kind {
                                         crate::layers::LayerNodeKind::Instrument => {
+                                            self.select_with_shift(HitTarget::Instrument(*id), shift);
                                             self.keyboard_instrument_id = Some(*id);
+                                            self.computer_keyboard_armed = true;
                                             #[cfg(feature = "native")]
                                             self.sync_computer_keyboard_to_engine();
                                             self.update_right_window_for_instrument(*id);
                                         }
                                         crate::layers::LayerNodeKind::MidiClip => {
-                                            if let Some(mc) = self.midi_clips.get(id) {
-                                                let (sw, sh, _) = self.screen_info();
-                                                let cx = mc.position[0] + mc.size[0] * 0.5;
-                                                let cy = mc.position[1] + mc.size[1] * 0.5;
-                                                self.camera.position = [
-                                                    cx - sw * 0.5 / self.camera.zoom,
-                                                    cy - sh * 0.5 / self.camera.zoom,
-                                                ];
+                                            if !shift {
+                                                if let Some(mc) = self.midi_clips.get(id) {
+                                                    let (sw, sh, _) = self.screen_info();
+                                                    let cx = mc.position[0] + mc.size[0] * 0.5;
+                                                    let cy = mc.position[1] + mc.size[1] * 0.5;
+                                                    self.camera.position = [
+                                                        cx - sw * 0.5 / self.camera.zoom,
+                                                        cy - sh * 0.5 / self.camera.zoom,
+                                                    ];
+                                                }
                                             }
-                                            self.selected.clear();
-                                            self.selected.push(HitTarget::MidiClip(*id));
+                                            self.select_with_shift(HitTarget::MidiClip(*id), shift);
                                             self.update_right_window();
                                         }
                                         crate::layers::LayerNodeKind::Waveform => {
-                                            if let Some(wf) = self.waveforms.get(id) {
-                                                let (sw, sh, _) = self.screen_info();
-                                                let cx = wf.position[0] + wf.size[0] * 0.5;
-                                                let cy = wf.position[1] + wf.size[1] * 0.5;
-                                                self.camera.position = [
-                                                    cx - sw * 0.5 / self.camera.zoom,
-                                                    cy - sh * 0.5 / self.camera.zoom,
-                                                ];
+                                            if !shift {
+                                                if let Some(wf) = self.waveforms.get(id) {
+                                                    let (sw, sh, _) = self.screen_info();
+                                                    let cx = wf.position[0] + wf.size[0] * 0.5;
+                                                    let cy = wf.position[1] + wf.size[1] * 0.5;
+                                                    self.camera.position = [
+                                                        cx - sw * 0.5 / self.camera.zoom,
+                                                        cy - sh * 0.5 / self.camera.zoom,
+                                                    ];
+                                                }
                                             }
-                                            self.selected.clear();
-                                            self.selected.push(HitTarget::Waveform(*id));
+                                            self.select_with_shift(HitTarget::Waveform(*id), shift);
                                             self.update_right_window();
                                         }
                                         crate::layers::LayerNodeKind::TextNote => {
-                                            if let Some(tn) = self.text_notes.get(id) {
-                                                let (sw, sh, _) = self.screen_info();
-                                                let cx = tn.position[0] + tn.size[0] * 0.5;
-                                                let cy = tn.position[1] + tn.size[1] * 0.5;
-                                                self.camera.position = [
-                                                    cx - sw * 0.5 / self.camera.zoom,
-                                                    cy - sh * 0.5 / self.camera.zoom,
-                                                ];
+                                            if !shift {
+                                                if let Some(tn) = self.text_notes.get(id) {
+                                                    let (sw, sh, _) = self.screen_info();
+                                                    let cx = tn.position[0] + tn.size[0] * 0.5;
+                                                    let cy = tn.position[1] + tn.size[1] * 0.5;
+                                                    self.camera.position = [
+                                                        cx - sw * 0.5 / self.camera.zoom,
+                                                        cy - sh * 0.5 / self.camera.zoom,
+                                                    ];
+                                                }
                                             }
-                                            self.selected.clear();
-                                            self.selected.push(HitTarget::TextNote(*id));
+                                            self.select_with_shift(HitTarget::TextNote(*id), shift);
                                             self.update_right_window();
                                         }
                                         crate::layers::LayerNodeKind::Group => {
-                                            if let Some(g) = self.groups.get(id) {
-                                                let (sw, sh, _) = self.screen_info();
-                                                let cx = g.position[0] + g.size[0] * 0.5;
-                                                let cy = g.position[1] + g.size[1] * 0.5;
-                                                self.camera.position = [
-                                                    cx - sw * 0.5 / self.camera.zoom,
-                                                    cy - sh * 0.5 / self.camera.zoom,
-                                                ];
+                                            if !shift {
+                                                if let Some(g) = self.groups.get(id) {
+                                                    let (sw, sh, _) = self.screen_info();
+                                                    let cx = g.position[0] + g.size[0] * 0.5;
+                                                    let cy = g.position[1] + g.size[1] * 0.5;
+                                                    self.camera.position = [
+                                                        cx - sw * 0.5 / self.camera.zoom,
+                                                        cy - sh * 0.5 / self.camera.zoom,
+                                                    ];
+                                                }
                                             }
-                                            self.selected.clear();
-                                            self.selected.push(HitTarget::Group(*id));
+                                            self.select_with_shift(HitTarget::Group(*id), shift);
                                             self.update_right_window();
                                         }
                                     }
-                                    // Initiate layer reorder drag (not for MidiClip)
-                                    if !matches!(kind, crate::layers::LayerNodeKind::MidiClip) && !is_dbl {
+                                    // Initiate layer reorder drag (not for MidiClip, not when shift-selecting)
+                                    if !matches!(kind, crate::layers::LayerNodeKind::MidiClip) && !is_dbl && !shift {
                                         self.drag = DragState::ReorderingLayerNode {
                                             entity_id: *id,
                                             kind: *kind,
@@ -2062,14 +2069,23 @@ impl App {
                         }
                         let target = self.redirect_to_group(raw_target);
                         self.select_area = None;
-                        if self.selected.contains(&target) {
-                            // Already selected -> drag whole selection
-                        } else {
-                            self.selected.clear();
-                            self.selected.push(target);
+                        let shift = self.modifiers.shift_key();
+                        if shift {
+                            let is_selected = self.select_with_shift(target, true);
                             self.update_right_window();
+                            if is_selected {
+                                self.begin_move_selection(world, self.modifiers.alt_key(), Some(target));
+                            }
+                        } else {
+                            if self.selected.contains(&target) {
+                                // Already selected -> drag whole selection
+                            } else {
+                                self.selected.clear();
+                                self.selected.push(target);
+                                self.update_right_window();
+                            }
+                            self.begin_move_selection(world, self.modifiers.alt_key(), Some(target));
                         }
-                        self.begin_move_selection(world, self.modifiers.alt_key(), Some(target));
                     }
                     None => {
                         self.drag = DragState::Selecting { start_world: world };
@@ -2475,6 +2491,7 @@ impl App {
                             self.push_op(crate::operations::Operation::Batch(ops));
                         }
                         self.sync_audio_clips();
+                        self.update_groups_containing(clip_id);
                         self.update_cursor();
                         self.request_redraw();
                         return;
@@ -2915,6 +2932,7 @@ impl App {
                             rs,
                         );
                         self.selected = self.normalize_group_selection(raw_targets);
+                        self.include_paired_instruments();
                         self.select_area = Some(SelectArea { position: rp, size: rs });
                     }
                 }

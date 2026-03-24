@@ -38,6 +38,12 @@ impl App {
                 for &id in self.component_instances.keys() {
                     self.selected.push(HitTarget::ComponentInstance(id));
                 }
+                for &id in self.instruments.keys() {
+                    self.selected.push(HitTarget::Instrument(id));
+                }
+                for &id in self.midi_clips.keys() {
+                    self.selected.push(HitTarget::MidiClip(id));
+                }
             }
             CommandAction::Undo => { self.undo_op(); }
             CommandAction::Redo => { self.redo_op(); }
@@ -442,7 +448,7 @@ impl App {
                 }
             }
             CommandAction::CreateGroup => {
-                if self.selected.len() >= 2 {
+                if self.selected.len() >= 1 {
                     let targets: Vec<HitTarget> = self.selected.clone();
                     if let Some((pos, size)) = crate::group::bounding_box_of_selection(
                         &targets,
@@ -464,7 +470,8 @@ impl App {
                             | HitTarget::ComponentInstance(id)
                             | HitTarget::MidiClip(id)
                             | HitTarget::TextNote(id)
-                            | HitTarget::Group(id) => Some(*id),
+                            | HitTarget::Group(id)
+                            | HitTarget::Instrument(id) => Some(*id),
                         }).collect();
                         let group_id = crate::entity_id::new_id();
                         let group_name = format!("Group {}", self.groups.len() + 1);
@@ -506,6 +513,8 @@ impl App {
                                 self.selected.push(HitTarget::ExportRegion(*mid));
                             } else if self.groups.contains_key(mid) {
                                 self.selected.push(HitTarget::Group(*mid));
+                            } else if self.instruments.contains_key(mid) {
+                                self.selected.push(HitTarget::Instrument(*mid));
                             }
                         }
                         self.mark_dirty();

@@ -112,7 +112,8 @@ fn test_add_instrument_one_step() {
     // Should select the MIDI clip (not the instrument region)
     let mc_id = *app.midi_clips.keys().next().unwrap();
     assert!(app.selected.contains(&HitTarget::MidiClip(mc_id)));
-    assert_eq!(app.editing_midi_clip, Some(mc_id));
+    // MIDI editor should NOT auto-open so keyboard playing works immediately
+    assert_eq!(app.editing_midi_clip, None);
 
     // Instrument should have plugin assigned
     let inst_id = *app.instruments.keys().next().unwrap();
@@ -125,8 +126,11 @@ fn test_add_instrument_one_step() {
     let mc = app.midi_clips.get(&mc_id).unwrap();
     assert_eq!(mc.instrument_id, Some(inst_id));
 
-    // Keyboard should target the instrument
+    // Keyboard should target the instrument and be ready to play immediately
     assert_eq!(app.keyboard_instrument_id, Some(inst_id));
+    assert!(app.computer_keyboard_armed);
+    // No modal/editor blocking keyboard: editing_midi_clip must be None
+    assert!(app.editing_midi_clip.is_none());
 }
 
 // ---------------------------------------------------------------------------
@@ -318,4 +322,36 @@ fn test_instrument_volume_undo_redo() {
     // Redo
     app.redo_op();
     assert!((app.instruments.get(&inst_id).unwrap().volume - 0.5).abs() < f32::EPSILON, "redo should reapply volume");
+}
+
+#[test]
+fn test_instrument_selection_in_layers_panel() {
+    let mut app = App::new_headless();
+
+    // Add two instruments
+    app.add_instrument("synth-a", "SynthA");
+    let inst_a = *app.instruments.keys().next().unwrap();
+    app.add_instrument("synth-b", "SynthB");
+    let inst_b = *app.instruments.keys().last().unwrap();
+
+    // Simulate clicking instrument A in layers panel
+    app.selected.clear();
+    app.selected.push(HitTarget::Instrument(inst_a));
+    app.keyboard_instrument_id = Some(inst_a);
+    app.computer_keyboard_armed = true;
+
+    assert_eq!(app.selected.len(), 1);
+    assert_eq!(app.selected[0], HitTarget::Instrument(inst_a));
+    assert_eq!(app.keyboard_instrument_id, Some(inst_a));
+    assert!(app.computer_keyboard_armed);
+
+    // Switch to instrument B
+    app.selected.clear();
+    app.selected.push(HitTarget::Instrument(inst_b));
+    app.keyboard_instrument_id = Some(inst_b);
+
+    assert_eq!(app.selected.len(), 1);
+    assert_eq!(app.selected[0], HitTarget::Instrument(inst_b));
+    assert_eq!(app.keyboard_instrument_id, Some(inst_b));
+    assert!(app.computer_keyboard_armed);
 }

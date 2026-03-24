@@ -1014,11 +1014,7 @@ impl SampleBrowser {
                     }
                     // Category dot
                     let dot_sz = 5.0 * scale;
-                    let dot_offset = if matches!(&entry.kind, EntryKind::LayerNode { has_children: true, .. }) {
-                        indent + 20.0 * scale
-                    } else {
-                        indent + 8.0 * scale
-                    };
+                    let dot_offset = indent + 20.0 * scale;
                     let dot_x = cx + dot_offset;
                     let dot_y = y + (item_h - dot_sz) * 0.5;
                     let dot_color = match &entry.kind {
@@ -1295,11 +1291,7 @@ impl SampleBrowser {
                 }
                 EntryKind::ProjectInstrument { .. } | EntryKind::LayerNode { .. } => {
                     let indent = entry.depth as f32 * INDENT_PX * scale;
-                    let text_offset = if matches!(&entry.kind, EntryKind::LayerNode { has_children: true, .. }) {
-                        indent + 28.0 * scale
-                    } else {
-                        indent + 16.0 * scale
-                    };
+                    let text_offset = indent + 28.0 * scale;
                     let text_x = cx + text_offset;
                     let font_sz = 12.0 * scale;
                     let line_h = 16.0 * scale;

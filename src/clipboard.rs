@@ -14,6 +14,7 @@ impl App {
                 HitTarget::MidiClip(id) => { if let Some(d) = self.midi_clips.get(id) { ops.push(operations::Operation::CreateMidiClip { id: *id, data: d.clone() }); } }
                 HitTarget::TextNote(id) => { if let Some(d) = self.text_notes.get(id) { ops.push(operations::Operation::CreateTextNote { id: *id, data: d.clone() }); } }
                 HitTarget::Group(id) => { if let Some(d) = self.groups.get(id) { ops.push(operations::Operation::CreateGroup { id: *id, data: d.clone() }); } }
+                HitTarget::Instrument(_) => {}
             }
         }
         ops
@@ -63,29 +64,9 @@ impl App {
         let split_x = snap_to_grid(world[0], &self.settings, self.camera.zoom, self.bpm);
         let t = ((split_x - pos[0]) / size[0]).clamp(0.01, 0.99);
 
-        let audio = Arc::clone(&wf.audio);
-        let mono_samples = Arc::clone(&clip.samples);
-        let total_mono = mono_samples.len();
-        if total_mono == 0 {
+        if clip.samples.is_empty() {
             return;
         }
-
-        let full_w = full_audio_width_px(wf);
-        let vis_start_frac = if full_w > 0.0 { offset_px / full_w } else { 0.0 };
-        let vis_end_frac = if full_w > 0.0 { (offset_px + size[0]) / full_w } else { 1.0 };
-        let split_frac = vis_start_frac + t * (vis_end_frac - vis_start_frac);
-
-        let vis_start_mono = (vis_start_frac * total_mono as f32) as usize;
-        let vis_end_mono = (vis_end_frac * total_mono as f32).min(total_mono as f32) as usize;
-        let split_mono = (split_frac * total_mono as f32) as usize;
-
-        let vis_start_left = (vis_start_frac * audio.left_samples.len() as f32) as usize;
-        let vis_end_left = (vis_end_frac * audio.left_samples.len() as f32).min(audio.left_samples.len() as f32) as usize;
-        let split_left = (split_frac * audio.left_samples.len() as f32) as usize;
-
-        let vis_start_right = (vis_start_frac * audio.right_samples.len() as f32) as usize;
-        let vis_end_right = (vis_end_frac * audio.right_samples.len() as f32).min(audio.right_samples.len() as f32) as usize;
-        let split_right = (split_frac * audio.right_samples.len() as f32) as usize;
 
         let orig_color = wf.color;
         let orig_border_radius = wf.border_radius;
@@ -98,37 +79,19 @@ impl App {
 
         let before_wf = self.waveforms[&wf_id].clone();
 
-        let sample_rate = audio.sample_rate;
-        let filename = audio.filename.clone();
-
-        let left_mono: Vec<f32> = mono_samples[vis_start_mono..split_mono].to_vec();
-        let right_mono: Vec<f32> = mono_samples[split_mono..vis_end_mono].to_vec();
-        let left_l: Vec<f32> = audio.left_samples[vis_start_left..split_left].to_vec();
-        let left_r: Vec<f32> = audio.right_samples[vis_start_right..split_right].to_vec();
-        let right_l: Vec<f32> = audio.left_samples[split_left..vis_end_left].to_vec();
-        let right_r: Vec<f32> = audio.right_samples[split_right..vis_end_right].to_vec();
-
-        let left_duration = left_mono.len() as f32 / sample_rate as f32;
-        let right_duration = right_mono.len() as f32 / sample_rate as f32;
-        let left_width = left_duration * PIXELS_PER_SECOND;
-        let right_width = right_duration * PIXELS_PER_SECOND;
+        // Non-destructive split: share the same full audio data via Arc
+        let left_width = t * size[0];
+        let right_width = size[0] - left_width;
+        let right_offset_px = offset_px + left_width;
 
         let left_clip = AudioClipData {
-            samples: Arc::new(left_mono.clone()),
-            sample_rate,
-            duration_secs: left_duration,
+            samples: Arc::clone(&clip.samples),
+            sample_rate: clip.sample_rate,
+            duration_secs: clip.duration_secs,
         };
-        let left_audio = Arc::new(AudioData {
-            left_peaks: Arc::new(WaveformPeaks::build(&left_l)),
-            right_peaks: Arc::new(WaveformPeaks::build(&left_r)),
-            left_samples: Arc::new(left_l),
-            right_samples: Arc::new(left_r),
-            sample_rate,
-            filename: filename.clone(),
-        });
         let left_waveform = WaveformView {
-            audio: left_audio,
-            filename: filename.clone(),
+            audio: Arc::clone(&wf.audio),
+            filename: wf.filename.clone(),
             position: pos,
             size: [left_width, size[1]],
             color: orig_color,
@@ -144,28 +107,20 @@ impl App {
             pitch_semitones: 0.0,
             is_reversed: false,
             disabled: false,
-            sample_offset_px: 0.0,
+            sample_offset_px: offset_px,
             automation: AutomationData::new(),
             effect_chain_id: None,
             take_group: None,
         };
 
         let right_clip = AudioClipData {
-            samples: Arc::new(right_mono.clone()),
-            sample_rate,
-            duration_secs: right_duration,
+            samples: Arc::clone(&clip.samples),
+            sample_rate: clip.sample_rate,
+            duration_secs: clip.duration_secs,
         };
-        let right_audio = Arc::new(AudioData {
-            left_peaks: Arc::new(WaveformPeaks::build(&right_l)),
-            right_peaks: Arc::new(WaveformPeaks::build(&right_r)),
-            left_samples: Arc::new(right_l),
-            right_samples: Arc::new(right_r),
-            sample_rate,
-            filename: filename.clone(),
-        });
         let right_waveform = WaveformView {
-            audio: right_audio,
-            filename,
+            audio: Arc::clone(&wf.audio),
+            filename: wf.filename.clone(),
             position: [pos[0] + left_width, pos[1]],
             size: [right_width, size[1]],
             color: orig_color,
@@ -181,7 +136,7 @@ impl App {
             pitch_semitones: 0.0,
             is_reversed: false,
             disabled: false,
-            sample_offset_px: 0.0,
+            sample_offset_px: right_offset_px,
             automation: AutomationData::new(),
             effect_chain_id: None,
             take_group: None,
@@ -457,6 +412,7 @@ impl App {
                         new_selected.push(HitTarget::Group(nid));
                     }
                 }
+                HitTarget::Instrument(_) => {}
             }
         }
 
@@ -560,6 +516,7 @@ impl App {
                         self.clipboard.items.push(ClipboardItem::Group(g.clone()));
                     }
                 }
+                HitTarget::Instrument(_) => {}
             }
         }
     }

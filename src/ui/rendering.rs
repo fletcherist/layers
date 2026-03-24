@@ -889,6 +889,7 @@ pub(crate) fn target_rect(
             let g = groups.get(id)?;
             Some((g.position, g.size))
         }
+        HitTarget::Instrument(_) => None,
     }
 }
 

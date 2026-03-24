@@ -212,6 +212,71 @@ fn test_split_waveform_inserts_both_halves() {
     );
 }
 
+#[test]
+fn test_split_is_non_destructive_preserves_full_audio() {
+    use crate::ui::hit_testing::full_audio_width_px;
+
+    let mut app = App::new_headless();
+    let num_samples = 48000;
+    let id = new_id();
+    let original_wf = make_waveform_with_samples(0.0, 0.0, num_samples);
+    let original_size_w = original_wf.size[0];
+    let original_audio_ptr = Arc::as_ptr(&original_wf.audio);
+    app.waveforms.insert(id, original_wf);
+    app.audio_clips.insert(id, make_audio_clip_with_samples(num_samples));
+
+    // Split roughly in the middle (same coords as test_split_waveform_inserts_both_halves)
+    app.mouse_pos = [200.0, 90.0];
+    app.split_sample_at_cursor();
+
+    assert_eq!(app.waveforms.len(), 2);
+
+    let left = &app.waveforms[&id];
+    let right_id = *app.waveforms.keys().find(|&&k| k != id).unwrap();
+    let right = &app.waveforms[&right_id];
+
+    // Both halves share the same full audio data
+    assert!(
+        Arc::ptr_eq(&left.audio, &right.audio),
+        "both halves should share the same Arc<AudioData>"
+    );
+    assert_eq!(
+        Arc::as_ptr(&left.audio), original_audio_ptr,
+        "audio data should be the original Arc"
+    );
+
+    // Full audio preserved in both halves
+    assert_eq!(left.audio.left_samples.len(), num_samples);
+    assert_eq!(right.audio.left_samples.len(), num_samples);
+    let full_w_left = full_audio_width_px(left);
+    let full_w_right = full_audio_width_px(right);
+    assert_eq!(full_w_left, full_w_right, "both halves should report same full audio width");
+
+    // Widths sum to original
+    let width_sum = left.size[0] + right.size[0];
+    assert!(
+        (width_sum - original_size_w).abs() < 0.1,
+        "left width {} + right width {} should equal original {}",
+        left.size[0], right.size[0], original_size_w
+    );
+
+    // Right half has correct offset
+    assert!(
+        (right.sample_offset_px - (left.sample_offset_px + left.size[0])).abs() < 0.1,
+        "right offset {} should equal left offset {} + left width {}",
+        right.sample_offset_px, left.sample_offset_px, left.size[0]
+    );
+
+    // AudioClipData also shares full samples
+    let left_clip = &app.audio_clips[&id];
+    let right_clip = &app.audio_clips[&right_id];
+    assert!(
+        Arc::ptr_eq(&left_clip.samples, &right_clip.samples),
+        "both audio clips should share the same sample data"
+    );
+    assert_eq!(left_clip.samples.len(), num_samples);
+}
+
 // ---- Duplicate tests ----
 
 #[test]

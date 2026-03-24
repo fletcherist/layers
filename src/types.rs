@@ -33,6 +33,7 @@ pub(crate) enum HitTarget {
     MidiClip(EntityId),
     TextNote(EntityId),
     Group(EntityId),
+    Instrument(EntityId),
 }
 
 #[derive(Clone, Copy)]

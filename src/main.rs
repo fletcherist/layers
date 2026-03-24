@@ -469,7 +469,7 @@ impl App {
             last_rendered_camera_zoom: f32::NAN,
             last_rendered_hovered: None,
             last_rendered_selected_len: 0,
-            computer_keyboard_armed: false,
+            computer_keyboard_armed: true,
             computer_keyboard_octave_offset: 0,
             computer_keyboard_velocity: midi_keyboard::DEFAULT_VELOCITY,
             keyboard_instrument_id: None,
@@ -505,7 +505,7 @@ impl App {
             | HitTarget::TextNote(id) | HitTarget::Object(id) | HitTarget::LoopRegion(id)
             | HitTarget::ExportRegion(id) | HitTarget::ComponentDef(id)
             | HitTarget::ComponentInstance(id) => id,
-            HitTarget::Group(_) => return target,
+            HitTarget::Group(_) | HitTarget::Instrument(_) => return target,
         };
         for (gid, group) in &self.groups {
             if group.member_ids.contains(&entity_id) && self.editing_group != Some(*gid) {
@@ -513,6 +513,44 @@ impl App {
             }
         }
         target
+    }
+
+    /// If shift is held, toggle `target` in selection; otherwise clear and set.
+    /// Returns whether the target is now selected.
+    pub(crate) fn select_with_shift(&mut self, target: HitTarget, shift: bool) -> bool {
+        if shift {
+            if let Some(pos) = self.selected.iter().position(|t| *t == target) {
+                self.selected.remove(pos);
+                false
+            } else {
+                self.selected.push(target);
+                true
+            }
+        } else {
+            if !self.selected.contains(&target) {
+                self.selected.clear();
+                self.selected.push(target);
+            }
+            true
+        }
+    }
+
+    /// Enrich a selection with instruments whose paired MIDI clips are already selected.
+    pub(crate) fn include_paired_instruments(&mut self) {
+        let mut to_add = Vec::new();
+        for t in self.selected.iter() {
+            if let HitTarget::MidiClip(mc_id) = t {
+                if let Some(mc) = self.midi_clips.get(mc_id) {
+                    if let Some(inst_id) = mc.instrument_id {
+                        let inst_target = HitTarget::Instrument(inst_id);
+                        if !self.selected.contains(&inst_target) && !to_add.contains(&inst_target) {
+                            to_add.push(inst_target);
+                        }
+                    }
+                }
+            }
+        }
+        self.selected.extend(to_add);
     }
 
     /// Map each target through `redirect_to_group` and deduplicate, preserving order.
@@ -1151,7 +1189,7 @@ impl App {
             last_rendered_camera_zoom: f32::NAN,
             last_rendered_hovered: None,
             last_rendered_selected_len: 0,
-            computer_keyboard_armed: false,
+            computer_keyboard_armed: true,
             computer_keyboard_octave_offset: 0,
             computer_keyboard_velocity: midi_keyboard::DEFAULT_VELOCITY,
             keyboard_instrument_id: None,
@@ -1258,15 +1296,22 @@ impl App {
             return;
         }
         // Build HitTargets from member IDs by checking entity maps
-        let targets: Vec<HitTarget> = member_ids.iter().filter_map(|id| {
-            if self.waveforms.contains_key(id) { Some(HitTarget::Waveform(*id)) }
-            else if self.midi_clips.contains_key(id) { Some(HitTarget::MidiClip(*id)) }
-            else if self.text_notes.contains_key(id) { Some(HitTarget::TextNote(*id)) }
-            else if self.objects.contains_key(id) { Some(HitTarget::Object(*id)) }
-            else if self.loop_regions.contains_key(id) { Some(HitTarget::LoopRegion(*id)) }
-            else if self.export_regions.contains_key(id) { Some(HitTarget::ExportRegion(*id)) }
-            else if self.components.contains_key(id) { Some(HitTarget::ComponentDef(*id)) }
-            else { None }
+        let targets: Vec<HitTarget> = member_ids.iter().flat_map(|id| {
+            if self.waveforms.contains_key(id) { vec![HitTarget::Waveform(*id)] }
+            else if self.midi_clips.contains_key(id) { vec![HitTarget::MidiClip(*id)] }
+            else if self.text_notes.contains_key(id) { vec![HitTarget::TextNote(*id)] }
+            else if self.objects.contains_key(id) { vec![HitTarget::Object(*id)] }
+            else if self.loop_regions.contains_key(id) { vec![HitTarget::LoopRegion(*id)] }
+            else if self.export_regions.contains_key(id) { vec![HitTarget::ExportRegion(*id)] }
+            else if self.components.contains_key(id) { vec![HitTarget::ComponentDef(*id)] }
+            else if self.instruments.contains_key(id) {
+                // Instrument has no position/size — use its child MIDI clips instead
+                self.midi_clips.iter()
+                    .filter(|(_, mc)| mc.instrument_id == Some(*id))
+                    .map(|(mc_id, _)| HitTarget::MidiClip(*mc_id))
+                    .collect()
+            }
+            else { vec![] }
         }).collect();
         if let Some((pos, size)) = group::bounding_box_of_selection(
             &targets,
@@ -1861,6 +1906,24 @@ impl App {
             let x0 = snap_to_grid(sa.position[0], &self.settings, self.camera.zoom, self.bpm);
             let x1 = snap_to_grid(sa.position[0] + sa.size[0], &self.settings, self.camera.zoom, self.bpm);
             ([x0, sa.position[1]], [x1 - x0, sa.size[1]])
+        } else if !self.selected.is_empty()
+            && self.selected.iter().any(|t| !matches!(t, HitTarget::LoopRegion(_)))
+        {
+            // From selected entities — use bounding box x/width
+            let mut min_x = f32::MAX;
+            let mut max_x = f32::MIN;
+            for target in self.selected.iter().filter(|t| !matches!(t, HitTarget::LoopRegion(_))) {
+                let p = self.get_target_pos(target);
+                let s = self.get_target_size(target);
+                min_x = min_x.min(p[0]);
+                max_x = max_x.max(p[0] + s[0]);
+            }
+            let x0 = snap_to_grid(min_x, &self.settings, self.camera.zoom, self.bpm);
+            let x1 = snap_to_grid(max_x, &self.settings, self.camera.zoom, self.bpm);
+            let (_, sh, _) = self.screen_info();
+            let h = LOOP_REGION_DEFAULT_HEIGHT;
+            let center_y = self.camera.screen_to_world([0.0, sh * 0.5])[1];
+            ([x0, center_y - h * 0.5], [x1 - x0, h])
         } else {
             let (sw, sh, _) = self.screen_info();
             let center = self.camera.screen_to_world([sw * 0.5, sh * 0.5]);
@@ -1872,8 +1935,6 @@ impl App {
         let data = LoopRegion { position: pos, size, enabled: true };
         self.loop_regions.insert(id, data.clone());
         self.push_op(operations::Operation::CreateLoopRegion { id, data });
-        self.selected.clear();
-        self.selected.push(HitTarget::LoopRegion(id));
         self.sync_loop_region();
         self.request_redraw();
     }
@@ -2428,7 +2489,7 @@ impl App {
                     .unwrap_or(0);
                 format!("Take {}", num_children + 1)
             } else {
-                "Recording".to_string()
+                format!("Recording {}", self.waveforms.len() + 1)
             };
 
             let wf_id = new_id();
@@ -2724,6 +2785,7 @@ impl App {
                     else if let Some(c) = self.components.get_mut(mid) { c.position[0] += dx; c.position[1] += dy; }
                 }
             }
+            HitTarget::Instrument(_) => {}
         }
     }
 
@@ -2738,6 +2800,7 @@ impl App {
             HitTarget::MidiClip(i) => self.midi_clips.get(i).map(|m| m.position).unwrap_or([0.0; 2]),
             HitTarget::TextNote(i) => self.text_notes.get(i).map(|t| t.position).unwrap_or([0.0; 2]),
             HitTarget::Group(i) => self.groups.get(i).map(|g| g.position).unwrap_or([0.0; 2]),
+            HitTarget::Instrument(_) => [0.0; 2],
         }
     }
 
@@ -2757,6 +2820,7 @@ impl App {
             HitTarget::MidiClip(i) => self.midi_clips.get(i).map(|m| m.size).unwrap_or([50.0; 2]),
             HitTarget::TextNote(i) => self.text_notes.get(i).map(|t| t.size).unwrap_or([50.0; 2]),
             HitTarget::Group(i) => self.groups.get(i).map(|g| g.size).unwrap_or([50.0; 2]),
+            HitTarget::Instrument(_) => [0.0; 2],
         }
     }
 
@@ -2897,6 +2961,7 @@ impl App {
                             new_selected.push(HitTarget::ComponentDef(comp_nid));
                         }
                     }
+                    HitTarget::Instrument(_) => {}
                 }
             }
             self.selected = new_selected;
@@ -2917,6 +2982,7 @@ impl App {
                 HitTarget::MidiClip(id) => self.midi_clips.get(id).map(|m| (*t, EntityBeforeState::MidiClip(m.clone()))),
                 HitTarget::TextNote(id) => self.text_notes.get(id).map(|tn| (*t, EntityBeforeState::TextNote(tn.clone()))),
                 HitTarget::Group(id) => self.groups.get(id).map(|g| (*t, EntityBeforeState::Group(g.clone()))),
+                HitTarget::Instrument(_) => None,
             }
         }).collect();
 
@@ -3098,6 +3164,7 @@ impl App {
                     HitTarget::MidiClip(id) => self.midi_clips.get(id).map(|m| (*t, EntityBeforeState::MidiClip(m.clone()))),
                     HitTarget::TextNote(id) => self.text_notes.get(id).map(|tn| (*t, EntityBeforeState::TextNote(tn.clone()))),
                     HitTarget::Group(id) => self.groups.get(id).map(|g| (*t, EntityBeforeState::Group(g.clone()))),
+                    HitTarget::Instrument(_) => None,
                 }
             }).collect();
             self.arrow_nudge_before = Some(before_states);

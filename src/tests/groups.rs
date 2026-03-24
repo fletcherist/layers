@@ -1,7 +1,43 @@
+use std::sync::Arc;
 use crate::entity_id::new_id;
 use crate::storage;
 use crate::ui::palette::CommandAction;
+use crate::ui::waveform::{AudioData, WarpMode, WaveformPeaks, WaveformView};
+use crate::automation::AutomationData;
 use crate::{App, CanvasObject, HitTarget};
+
+fn make_waveform(x: f32, y: f32) -> WaveformView {
+    WaveformView {
+        audio: Arc::new(AudioData {
+            left_samples: Arc::new(Vec::new()),
+            right_samples: Arc::new(Vec::new()),
+            left_peaks: Arc::new(WaveformPeaks::empty()),
+            right_peaks: Arc::new(WaveformPeaks::empty()),
+            sample_rate: 48000,
+            filename: "test.wav".to_string(),
+        }),
+        filename: "test.wav".to_string(),
+        position: [x, y],
+        size: [200.0, 80.0],
+        color: [0.0, 1.0, 0.0, 1.0],
+        border_radius: 4.0,
+        fade_in_px: 0.0,
+        fade_out_px: 0.0,
+        fade_in_curve: 0.5,
+        fade_out_curve: 0.5,
+        volume: 1.0,
+        pan: 0.5,
+        warp_mode: WarpMode::Off,
+        sample_bpm: 120.0,
+        pitch_semitones: 0.0,
+        is_reversed: false,
+        disabled: false,
+        sample_offset_px: 0.0,
+        automation: AutomationData::new(),
+        effect_chain_id: None,
+        take_group: None,
+    }
+}
 
 #[test]
 fn create_group_from_selection() {
@@ -81,7 +117,7 @@ fn ungroup_selected_restores_members() {
 }
 
 #[test]
-fn create_group_requires_at_least_two() {
+fn create_group_allows_single_item() {
     let mut app = App::new_headless();
 
     let id1 = new_id();
@@ -96,8 +132,8 @@ fn create_group_requires_at_least_two() {
     app.selected.push(HitTarget::Object(id1));
     app.execute_command(CommandAction::CreateGroup);
 
-    // No group should be created
-    assert_eq!(app.groups.len(), 0);
+    // Group should be created with a single item
+    assert_eq!(app.groups.len(), 1);
 }
 
 #[test]
@@ -429,4 +465,179 @@ fn group_volume_pan_roundtrip_serialization() {
     let rg = &restored[&group_id];
     assert!((rg.volume - 0.3).abs() < 1e-5);
     assert!((rg.pan - 0.8).abs() < 1e-5);
+}
+
+#[test]
+fn group_bounds_include_instrument_midi_clips() {
+    let mut app = App::new_headless();
+
+    // Add an instrument (creates a paired MIDI clip)
+    app.add_instrument("test-synth", "TestSynth");
+    let inst_id = *app.instruments.keys().next().unwrap();
+    let mc_id = *app.midi_clips.keys().next().unwrap();
+
+    // Set known position/size on the MIDI clip
+    let mc = app.midi_clips.get_mut(&mc_id).unwrap();
+    mc.position = [100.0, 200.0];
+    mc.size = [300.0, 150.0];
+
+    // Create a group containing the instrument
+    let group_id = new_id();
+    let group = crate::group::Group::new(
+        group_id,
+        "Test Group".to_string(),
+        [0.0, 0.0],
+        [10.0, 10.0],
+        vec![inst_id],
+    );
+    app.groups.insert(group_id, group);
+
+    // Recalculate bounds — should expand to encompass the instrument's MIDI clip
+    app.update_group_bounds(group_id);
+
+    let g = app.groups.get(&group_id).unwrap();
+    assert!((g.position[0] - 100.0).abs() < 1e-3, "group x should match MIDI clip x");
+    assert!((g.position[1] - 200.0).abs() < 1e-3, "group y should match MIDI clip y");
+    assert!((g.size[0] - 300.0).abs() < 1e-3, "group width should match MIDI clip width");
+    assert!((g.size[1] - 150.0).abs() < 1e-3, "group height should match MIDI clip height");
+}
+
+#[test]
+fn instrument_inside_group_shows_midi_clip_children_in_layer_tree() {
+    let mut app = App::new_headless();
+
+    // Add an instrument (creates a paired MIDI clip)
+    app.add_instrument("test-synth", "TestSynth");
+    let inst_id = *app.instruments.keys().next().unwrap();
+    let mc_id = *app.midi_clips.keys().next().unwrap();
+
+    // Create a group containing the instrument
+    let group_id = new_id();
+    let group = crate::group::Group::new(
+        group_id, "G".to_string(), [0.0, 0.0], [10.0, 10.0], vec![inst_id],
+    );
+    app.groups.insert(group_id, group);
+
+    // Sync and flatten the layer tree
+    crate::layers::sync_tree(
+        &mut app.layer_tree, &app.instruments, &app.midi_clips, &app.waveforms, &app.groups,
+    );
+    let rows = crate::layers::flatten_tree(
+        &app.layer_tree, &app.instruments, &app.midi_clips, &app.waveforms, &app.groups,
+    );
+
+    // Should have: Group (depth 0) → Instrument (depth 1) → MIDI clip (depth 2)
+    assert!(rows.len() >= 3, "expected at least 3 rows, got {}", rows.len());
+    let group_row = rows.iter().find(|r| r.entity_id == group_id).expect("group row");
+    let inst_row = rows.iter().find(|r| r.entity_id == inst_id).expect("instrument row");
+    let mc_row = rows.iter().find(|r| r.entity_id == mc_id).expect("midi clip row");
+    assert_eq!(group_row.depth, 0);
+    assert_eq!(inst_row.depth, 1, "instrument should be indented under group");
+    assert_eq!(mc_row.depth, 2, "midi clip should be indented under instrument");
+}
+
+#[test]
+fn group_includes_instrument_when_selected() {
+    let mut app = App::new_headless();
+
+    // Add an instrument (creates a paired MIDI clip)
+    app.add_instrument("test-synth", "TestSynth");
+    let inst_id = *app.instruments.keys().next().unwrap();
+    let mc_id = *app.midi_clips.keys().next().unwrap();
+
+    // Add a waveform
+    let wf_id = new_id();
+    app.waveforms.insert(wf_id, make_waveform(100.0, 100.0));
+
+    // Select instrument + midi clip + waveform
+    app.selected.clear();
+    app.selected.push(HitTarget::Instrument(inst_id));
+    app.selected.push(HitTarget::MidiClip(mc_id));
+    app.selected.push(HitTarget::Waveform(wf_id));
+
+    // Group them
+    app.execute_command(CommandAction::CreateGroup);
+
+    // Should have one group containing all three
+    assert_eq!(app.groups.len(), 1);
+    let group = app.groups.values().next().unwrap();
+    assert_eq!(group.member_ids.len(), 3);
+    assert!(group.member_ids.contains(&inst_id), "instrument should be in group");
+    assert!(group.member_ids.contains(&mc_id), "midi clip should be in group");
+    assert!(group.member_ids.contains(&wf_id), "waveform should be in group");
+}
+
+#[test]
+fn select_all_includes_instruments_and_midi_clips() {
+    let mut app = App::new_headless();
+
+    // Add an instrument (creates a paired MIDI clip)
+    app.add_instrument("test-synth", "TestSynth");
+    let inst_id = *app.instruments.keys().next().unwrap();
+    let mc_id = *app.midi_clips.keys().next().unwrap();
+
+    // Add a waveform
+    let wf_id = new_id();
+    app.waveforms.insert(wf_id, make_waveform(0.0, 0.0));
+
+    // SelectAll
+    app.execute_command(CommandAction::SelectAll);
+
+    assert!(app.selected.contains(&HitTarget::Instrument(inst_id)), "SelectAll should include instrument");
+    assert!(app.selected.contains(&HitTarget::MidiClip(mc_id)), "SelectAll should include midi clip");
+    assert!(app.selected.contains(&HitTarget::Waveform(wf_id)), "SelectAll should include waveform");
+}
+
+#[test]
+fn ungroup_restores_instrument_to_selection() {
+    let mut app = App::new_headless();
+
+    // Add an instrument
+    app.add_instrument("test-synth", "TestSynth");
+    let inst_id = *app.instruments.keys().next().unwrap();
+
+    // Add a waveform
+    let wf_id = new_id();
+    app.waveforms.insert(wf_id, make_waveform(0.0, 0.0));
+
+    // Create group with instrument + waveform
+    app.selected.clear();
+    app.selected.push(HitTarget::Instrument(inst_id));
+    app.selected.push(HitTarget::Waveform(wf_id));
+    app.execute_command(CommandAction::CreateGroup);
+    let group_id = app.groups.keys().next().copied().unwrap();
+
+    // Ungroup
+    app.selected.clear();
+    app.selected.push(HitTarget::Group(group_id));
+    app.execute_command(CommandAction::UngroupSelected);
+
+    // Instrument should be restored to selection
+    assert!(app.selected.contains(&HitTarget::Instrument(inst_id)), "instrument should be in selection after ungroup");
+    assert!(app.selected.contains(&HitTarget::Waveform(wf_id)), "waveform should be in selection after ungroup");
+}
+
+#[test]
+fn marquee_selecting_midi_clip_auto_includes_instrument() {
+    let mut app = App::new_headless();
+
+    // Add an instrument (creates a paired MIDI clip)
+    app.add_instrument("test-synth", "TestSynth");
+    let inst_id = *app.instruments.keys().next().unwrap();
+    let mc_id = *app.midi_clips.keys().next().unwrap();
+
+    // Simulate marquee selection that only caught the MIDI clip (instrument is non-spatial)
+    app.selected.clear();
+    app.selected.push(HitTarget::MidiClip(mc_id));
+    app.include_paired_instruments();
+
+    // Instrument should be auto-included
+    assert!(app.selected.contains(&HitTarget::Instrument(inst_id)), "instrument should be auto-included when its MIDI clip is marquee-selected");
+
+    // Now group — instrument should be a member
+    app.execute_command(CommandAction::CreateGroup);
+    assert_eq!(app.groups.len(), 1);
+    let group = app.groups.values().next().unwrap();
+    assert!(group.member_ids.contains(&inst_id), "instrument should be in group");
+    assert!(group.member_ids.contains(&mc_id), "midi clip should be in group");
 }

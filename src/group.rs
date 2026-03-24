@@ -61,7 +61,7 @@ pub(crate) fn bounding_box_of_selection(
                         .map(|def| (inst.position, def.size))
                 })
             }
-            HitTarget::Group(_) => None,
+            HitTarget::Group(_) | HitTarget::Instrument(_) => None,
         };
         if let Some((p, s)) = pos_size {
             found = true;

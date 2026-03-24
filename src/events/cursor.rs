@@ -893,6 +893,7 @@ impl App {
                             rp,
                             rs,
                         );
+                        self.include_paired_instruments();
                         self.update_right_window();
                     }
                 }
@@ -1047,6 +1048,7 @@ impl App {
                         });
                         self.mark_dirty();
                         self.sync_audio_clips();
+                        self.update_groups_containing(clip_id);
                     }
                 }
                 if let DragState::SelectingMidiNotes { clip_id, start_world } = &self.drag {

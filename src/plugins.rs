@@ -384,8 +384,6 @@ impl App {
         self.selected.clear();
         self.selected.push(HitTarget::MidiClip(clip_id));
         self.keyboard_instrument_id = Some(inst_id);
-        self.editing_midi_clip = Some(clip_id);
-        self.selected_midi_notes.clear();
 
         self.sync_audio_clips();
         self.request_redraw();

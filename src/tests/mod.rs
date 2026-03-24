@@ -21,5 +21,6 @@ mod text_notes;
 mod effect_chains;
 mod settings;
 mod groups;
+mod selection;
 mod takes;
 mod latency_compensation;
