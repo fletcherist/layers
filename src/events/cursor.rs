@@ -222,7 +222,7 @@ impl App {
                 self.mark_dirty();
                 #[cfg(feature = "native")]
                 match target {
-                    Some(ui::right_window::RightWindowTarget::Instrument(_)) => self.sync_instrument_regions(),
+                    Some(ui::right_window::RightWindowTarget::Instrument(_)) => self.sync_instrument_regions_auto(),
                     _ => self.sync_audio_clips(),
                 }
                 self.request_redraw();

@@ -1714,7 +1714,10 @@ impl App {
                 let has_audio_member = group.member_ids.iter().any(|mid| {
                     self.waveforms.get(mid).map_or(false, |wf| !wf.disabled && self.audio_clips.contains_key(mid))
                 });
-                if plugins.is_empty() && !has_audio_member {
+                let has_instrument_member = group.member_ids.iter().any(|mid| {
+                    self.instruments.get(mid).map_or(false, |inst| inst.has_plugin())
+                });
+                if plugins.is_empty() && !has_audio_member && !has_instrument_member {
                     continue;
                 }
                 let latency = Self::collect_chain_latency(&plugins);
@@ -1891,13 +1894,13 @@ impl App {
 
             let owned_clips: Vec<AudioClipData> = clips.iter().map(|c| (*c).clone()).collect();
             engine.update_clips(&positions, &sizes, &owned_clips, &fade_ins, &fade_outs, &fade_in_curves, &fade_out_curves, &volumes, &pans, &sample_offsets, &vol_autos, &pan_autos, &warp_modes, &sample_bpms, self.bpm, &pitch_semitones_vec, &chain_plugins_per_clip, &chain_latencies, &group_bus_indices, &chain_bus_indices);
+            self.sync_instrument_regions(&group_id_to_bus_idx, &group_buses);
             engine.update_group_buses(group_buses);
             engine.update_chain_buses(chain_buses);
 
             let regions: Vec<audio::AudioEffectRegion> = Vec::new();
             engine.update_effect_regions(regions);
         }
-        self.sync_instrument_regions();
         self.sync_monitor_effects();
     }
 
@@ -2069,7 +2072,11 @@ impl App {
     }
 
     #[cfg(feature = "native")]
-    fn sync_instrument_regions(&self) {
+    fn sync_instrument_regions(
+        &self,
+        group_id_to_bus_idx: &std::collections::HashMap<EntityId, usize>,
+        group_buses: &[audio::GroupBus],
+    ) {
         if let Some(engine) = &self.audio_engine {
             let group_of = self.build_group_membership();
             let mut audio_instruments = Vec::new();
@@ -2112,11 +2119,19 @@ impl App {
                     x_max = 0.0;
                 }
                 midi_events.sort_by(|a, b| a.time_secs.partial_cmp(&b.time_secs).unwrap());
-                let inst_chain_plugins = self.collect_chain_plugins(inst_id, inst.effect_chain_id, &group_of);
+                // Only collect the instrument's own FX chain — group FX are
+                // applied via the group bus to avoid double-processing the same
+                // plugin instance.
+                let inst_chain_plugins = self.collect_clip_chain_plugins(inst.effect_chain_id);
                 let synth_latency = inst.gui.lock().ok()
                     .and_then(|g| g.as_ref().map(|gui| gui.get_latency_samples()))
                     .unwrap_or(0);
                 let chain_latency = Self::collect_chain_latency(&inst_chain_plugins);
+                let bus_idx = group_of.get(&inst_id)
+                    .and_then(|gid| group_id_to_bus_idx.get(gid).copied());
+                let group_latency = bus_idx
+                    .map(|idx| group_buses[idx].latency_samples)
+                    .unwrap_or(0);
                 audio_instruments.push(audio::AudioInstrument {
                     id: inst_id,
                     x_start_px: x_min,
@@ -2128,13 +2143,46 @@ impl App {
                     volume: inst.volume,
                     pan: inst.pan,
                     chain_plugins: inst_chain_plugins,
-                    total_latency_samples: synth_latency + chain_latency,
+                    total_latency_samples: synth_latency + chain_latency + group_latency,
+                    group_bus_index: bus_idx,
                 });
             }
 
             engine.update_instruments(audio_instruments);
         }
         self.sync_computer_keyboard_to_engine();
+    }
+
+    /// Build group bus mapping for instrument sync. Used by callers that don't
+    /// already have group bus data (e.g. right-panel instrument edits).
+    #[cfg(feature = "native")]
+    fn build_group_bus_data(&self) -> (std::collections::HashMap<EntityId, usize>, Vec<audio::GroupBus>) {
+        let mut group_id_to_bus_idx = std::collections::HashMap::new();
+        let mut group_buses = Vec::new();
+        for (&gid, group) in &self.groups {
+            let plugins = self.collect_group_chain_plugins(gid);
+            let has_audio_member = group.member_ids.iter().any(|mid| {
+                self.waveforms.get(mid).map_or(false, |wf| !wf.disabled && self.audio_clips.contains_key(mid))
+            });
+            let has_instrument_member = group.member_ids.iter().any(|mid| {
+                self.instruments.get(mid).map_or(false, |inst| inst.has_plugin())
+            });
+            if plugins.is_empty() && !has_audio_member && !has_instrument_member {
+                continue;
+            }
+            let latency = Self::collect_chain_latency(&plugins);
+            let bus_idx = group_buses.len();
+            group_id_to_bus_idx.insert(gid, bus_idx);
+            group_buses.push(audio::GroupBus { plugins, latency_samples: latency, volume: group.volume, pan: group.pan });
+        }
+        (group_id_to_bus_idx, group_buses)
+    }
+
+    /// Convenience: sync instruments using freshly built group bus data.
+    #[cfg(feature = "native")]
+    fn sync_instrument_regions_auto(&self) {
+        let (map, buses) = self.build_group_bus_data();
+        self.sync_instrument_regions(&map, &buses);
     }
 
     #[cfg(feature = "native")]
@@ -2588,7 +2636,11 @@ impl App {
     #[cfg(not(feature = "native"))]
     fn sync_loop_region(&self) {}
     #[cfg(not(feature = "native"))]
-    fn sync_instrument_regions(&self) {}
+    fn sync_instrument_regions(&self, _group_id_to_bus_idx: &std::collections::HashMap<EntityId, usize>, _group_buses: &[audio::GroupBus]) {}
+    #[cfg(not(feature = "native"))]
+    fn build_group_bus_data(&self) -> (std::collections::HashMap<EntityId, usize>, Vec<audio::GroupBus>) { (std::collections::HashMap::new(), Vec::new()) }
+    #[cfg(not(feature = "native"))]
+    fn sync_instrument_regions_auto(&self) {}
     #[cfg(not(feature = "native"))]
     fn save_project_state(&mut self) {}
     #[cfg(not(feature = "native"))]

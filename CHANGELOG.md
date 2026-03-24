@@ -1,3 +1,4 @@
+- fix: VST instrument in group with effects no longer glitches — same plugin was processed twice; instruments now route through group bus (43.0k loc)
 - fix: canvas marquee selection now auto-includes instruments when their paired MIDI clip is selected (42.9k loc)
 - fix: instruments now included when grouping selection — fixed shift-select in layers panel, SelectAll (Cmd+A), and ungroup restore (42.9k loc)
 - fix: Cmd+E split is now non-destructive — both halves share full audio via Arc, users can drag edges back to restore original clip length (42.8k loc)

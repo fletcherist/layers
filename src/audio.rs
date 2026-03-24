@@ -138,6 +138,8 @@ pub struct AudioInstrument {
     pub chain_plugins: Vec<Arc<Mutex<Option<crate::effects::PluginGuiHandle>>>>,
     /// Total latency of synth + chain plugins, used to pre-send MIDI events
     pub total_latency_samples: u32,
+    /// If this instrument belongs to a group, index into the group_buses vec.
+    pub group_bus_index: Option<usize>,
 }
 
 /// Live computer-keyboard preview MIDI (drained once per output callback).
@@ -462,6 +464,151 @@ impl AudioEngine {
                         chain_bus_r.resize(mix_capacity, 0.0f32);
                     }
                     dry_mix[..frames].fill([0.0, 0.0]);
+
+                    // Drain keyboard preview events before instrument processing
+                    kb_batch_buf.clear();
+                    if let Ok(mut g) = kb_preview.try_lock() {
+                        kb_batch_buf.extend(g.pending.drain(..));
+                    }
+
+                    // Count group buses for per-bus instrument accumulators
+                    let num_group_buses = gb.try_lock().map(|g| g.len()).unwrap_or(0);
+                    // Per-bus L/R accumulators for grouped instrument output.
+                    // Indexed as inst_per_bus_l[bus_idx * frames + sample].
+                    let inst_per_bus_total = num_group_buses * frames;
+                    let mut inst_per_bus_l: Vec<f32> = vec![0.0f32; inst_per_bus_total];
+                    let mut inst_per_bus_r: Vec<f32> = vec![0.0f32; inst_per_bus_total];
+
+                    // Process instrument regions (MIDI → VST3 → audio, additive)
+                    // Always process — instruments need continuous process() for GUI keyboard preview
+                    if let Ok(inst_guard) = inst_r.try_lock() {
+                        for region in inst_guard.iter() {
+                            let region_start_secs = region.x_start_px as f64 / PIXELS_PER_SECOND as f64;
+                            let region_end_secs = region.x_end_px as f64 / PIXELS_PER_SECOND as f64;
+                            // Pre-send MIDI by total latency so output aligns with timeline
+                            let inst_latency_secs = region.total_latency_samples as f64 / sr;
+
+                            let mut offset = 0;
+                            while offset < frames {
+                                let block_len = (frames - offset).min(effect_block_size);
+                                let t_start = current_time + offset as f64 / sr;
+                                let t_end = t_start + block_len as f64 / sr;
+                                let in_region = is_playing
+                                    && t_end > region_start_secs - inst_latency_secs
+                                    && t_start < region_end_secs;
+
+                                if let Ok(gui_guard) = region.gui.try_lock() {
+                                    if let Some(ref gui) = *gui_guard {
+                                        // Send scheduled MIDI events only when playing within region
+                                        if in_region {
+                                            for ev in &region.midi_events {
+                                                // Shift MIDI events earlier by latency so output aligns
+                                                let adjusted_time = ev.time_secs - inst_latency_secs;
+                                                if adjusted_time >= t_start && adjusted_time < t_end {
+                                                    let so = ((adjusted_time - t_start) * sr) as i32;
+                                                    if ev.is_note_on {
+                                                        gui.send_midi_note_on(ev.note, ev.velocity, 0, so);
+                                                    } else {
+                                                        gui.send_midi_note_off(ev.note, 0, 0, so);
+                                                    }
+                                                }
+                                            }
+                                        }
+
+                                        if offset == 0 {
+                                            for ev in &kb_batch_buf {
+                                                match *ev {
+                                                    KeyboardPreviewEvent::NoteOn {
+                                                        target,
+                                                        note,
+                                                        velocity,
+                                                    } if target == region.id => {
+                                                        gui.send_midi_note_on(note, velocity, 0, 0);
+                                                    }
+                                                    KeyboardPreviewEvent::NoteOff { target, note }
+                                                        if target == region.id =>
+                                                    {
+                                                        gui.send_midi_note_off(note, 0, 0, 0);
+                                                    }
+                                                    _ => {}
+                                                }
+                                            }
+                                        }
+
+                                        // Always call process() — needed for GUI keyboard + sustain
+                                        inst_out_l[..block_len].fill(0.0);
+                                        inst_out_r[..block_len].fill(0.0);
+
+                                        let in_ch = gui.audio_input_channels();
+                                        silent_buf[..block_len].fill(0.0);
+                                        let silent_ref: &[f32] = &silent_buf[..block_len];
+                                        const MAX_INST_IN_CH: usize = 32;
+                                        let capped_ch = in_ch.min(MAX_INST_IN_CH);
+                                        let inst_inputs_arr: [&[f32]; MAX_INST_IN_CH] = [silent_ref; MAX_INST_IN_CH];
+                                        let inputs = &inst_inputs_arr[..capped_ch];
+                                        let mut outputs: [&mut [f32]; 2] = [
+                                            &mut inst_out_l[..block_len],
+                                            &mut inst_out_r[..block_len],
+                                        ];
+
+                                        gui.process(inputs, &mut outputs, block_len);
+
+                                        // Process through instrument's own effect chain (excludes group FX)
+                                        if !region.chain_plugins.is_empty() {
+                                            fx_buf_l[..block_len].copy_from_slice(&inst_out_l[..block_len]);
+                                            fx_buf_r[..block_len].copy_from_slice(&inst_out_r[..block_len]);
+                                            #[allow(unused_mut)]
+                                            let (mut sl, mut sr_buf, mut dl, mut dr) = (
+                                                &mut fx_buf_l, &mut fx_buf_r, &mut fx_out_l, &mut fx_out_r,
+                                            );
+                                            for plugin_arc in &region.chain_plugins {
+                                                dl[..block_len].copy_from_slice(&sl[..block_len]);
+                                                dr[..block_len].copy_from_slice(&sr_buf[..block_len]);
+                                                if let Ok(g2) = plugin_arc.try_lock() {
+                                                    if let Some(ref fx_gui) = *g2 {
+                                                        let ins: [&[f32]; 2] = [&sl[..block_len], &sr_buf[..block_len]];
+                                                        let mut outs: [&mut [f32]; 2] = [&mut dl[..block_len], &mut dr[..block_len]];
+                                                        fx_gui.process(&ins, &mut outs, block_len);
+                                                    }
+                                                }
+                                                std::mem::swap(sl, dl);
+                                                std::mem::swap(sr_buf, dr);
+                                            }
+                                            inst_out_l[..block_len].copy_from_slice(&sl[..block_len]);
+                                            inst_out_r[..block_len].copy_from_slice(&sr_buf[..block_len]);
+                                        }
+
+                                        // Apply instrument volume/pan
+                                        let iv = region.volume;
+                                        let ip = region.pan.clamp(0.0, 1.0);
+                                        let il_mul = (2.0 * (1.0 - ip)).min(1.0) * iv;
+                                        let ir_mul = (2.0 * ip).min(1.0) * iv;
+
+                                        // Route: grouped instruments go to per-bus accumulator when
+                                        // playing (group FX applied later in Pass 4); otherwise dry_mix.
+                                        let route_to_bus = is_playing
+                                            && region.group_bus_index.filter(|&i| i < num_group_buses).is_some();
+                                        if route_to_bus {
+                                            let gbi = region.group_bus_index.unwrap();
+                                            let base = gbi * frames + offset;
+                                            for j in 0..block_len {
+                                                inst_per_bus_l[base + j] += inst_out_l[j] * il_mul;
+                                                inst_per_bus_r[base + j] += inst_out_r[j] * ir_mul;
+                                            }
+                                        } else {
+                                            for j in 0..block_len {
+                                                dry_mix[offset + j][0] += inst_out_l[j] * il_mul;
+                                                dry_mix[offset + j][1] += inst_out_r[j] * ir_mul;
+                                            }
+                                        }
+                                    }
+                                }
+
+                                offset += block_len;
+                            }
+                        }
+                    }
+
                     if is_playing {
                     // Pass 1: clips without FX and without group → dry_mix
                     for i in 0..frames {
@@ -623,6 +770,15 @@ impl AudioEngine {
                                             group_bus_l[j] += clip_dry[j][0];
                                             group_bus_r[j] += clip_dry[j][1];
                                         }
+                                    }
+                                }
+
+                                // Add grouped instrument output to the bus
+                                if bus_idx < num_group_buses {
+                                    let base = bus_idx * frames;
+                                    for j in 0..frames {
+                                        group_bus_l[j] += inst_per_bus_l[base + j];
+                                        group_bus_r[j] += inst_per_bus_r[base + j];
                                     }
                                 }
 
@@ -808,122 +964,6 @@ impl AudioEngine {
                     }
 
                     } // end if is_playing (clips + effects)
-
-                    kb_batch_buf.clear();
-                    if let Ok(mut g) = kb_preview.try_lock() {
-                        kb_batch_buf.extend(g.pending.drain(..));
-                    }
-
-                    // Process instrument regions (MIDI → VST3 → audio, additive)
-                    // Always process — instruments need continuous process() for GUI keyboard preview
-                    if let Ok(inst_guard) = inst_r.try_lock() {
-                        for region in inst_guard.iter() {
-                            let region_start_secs = region.x_start_px as f64 / PIXELS_PER_SECOND as f64;
-                            let region_end_secs = region.x_end_px as f64 / PIXELS_PER_SECOND as f64;
-                            // Pre-send MIDI by total latency so output aligns with timeline
-                            let inst_latency_secs = region.total_latency_samples as f64 / sr;
-
-                            let mut offset = 0;
-                            while offset < frames {
-                                let block_len = (frames - offset).min(effect_block_size);
-                                let t_start = current_time + offset as f64 / sr;
-                                let t_end = t_start + block_len as f64 / sr;
-                                let in_region = is_playing
-                                    && t_end > region_start_secs - inst_latency_secs
-                                    && t_start < region_end_secs;
-
-                                if let Ok(gui_guard) = region.gui.try_lock() {
-                                    if let Some(ref gui) = *gui_guard {
-                                        // Send scheduled MIDI events only when playing within region
-                                        if in_region {
-                                            for ev in &region.midi_events {
-                                                // Shift MIDI events earlier by latency so output aligns
-                                                let adjusted_time = ev.time_secs - inst_latency_secs;
-                                                if adjusted_time >= t_start && adjusted_time < t_end {
-                                                    let so = ((adjusted_time - t_start) * sr) as i32;
-                                                    if ev.is_note_on {
-                                                        gui.send_midi_note_on(ev.note, ev.velocity, 0, so);
-                                                    } else {
-                                                        gui.send_midi_note_off(ev.note, 0, 0, so);
-                                                    }
-                                                }
-                                            }
-                                        }
-
-                                        if offset == 0 {
-                                            for ev in &kb_batch_buf {
-                                                match *ev {
-                                                    KeyboardPreviewEvent::NoteOn {
-                                                        target,
-                                                        note,
-                                                        velocity,
-                                                    } if target == region.id => {
-                                                        gui.send_midi_note_on(note, velocity, 0, 0);
-                                                    }
-                                                    KeyboardPreviewEvent::NoteOff { target, note }
-                                                        if target == region.id =>
-                                                    {
-                                                        gui.send_midi_note_off(note, 0, 0, 0);
-                                                    }
-                                                    _ => {}
-                                                }
-                                            }
-                                        }
-
-                                        // Always call process() — needed for GUI keyboard + sustain
-                                        inst_out_l[..block_len].fill(0.0);
-                                        inst_out_r[..block_len].fill(0.0);
-
-                                        let in_ch = gui.audio_input_channels();
-                                        silent_buf[..block_len].fill(0.0);
-                                        let silent_ref: &[f32] = &silent_buf[..block_len];
-                                        const MAX_INST_IN_CH: usize = 32;
-                                        let capped_ch = in_ch.min(MAX_INST_IN_CH);
-                                        let inst_inputs_arr: [&[f32]; MAX_INST_IN_CH] = [silent_ref; MAX_INST_IN_CH];
-                                        let inputs = &inst_inputs_arr[..capped_ch];
-                                        let mut outputs: [&mut [f32]; 2] = [
-                                            &mut inst_out_l[..block_len],
-                                            &mut inst_out_r[..block_len],
-                                        ];
-
-                                        gui.process(inputs, &mut outputs, block_len);
-
-                                        // Process through instrument's effect chain
-                                        if !region.chain_plugins.is_empty() {
-                                            fx_buf_l[..block_len].copy_from_slice(&inst_out_l[..block_len]);
-                                            fx_buf_r[..block_len].copy_from_slice(&inst_out_r[..block_len]);
-                                            #[allow(unused_mut)]
-                                            let (mut sl, mut sr, mut dl, mut dr) = (
-                                                &mut fx_buf_l, &mut fx_buf_r, &mut fx_out_l, &mut fx_out_r,
-                                            );
-                                            for plugin_arc in &region.chain_plugins {
-                                                dl[..block_len].copy_from_slice(&sl[..block_len]);
-                                                dr[..block_len].copy_from_slice(&sr[..block_len]);
-                                                if let Ok(g2) = plugin_arc.try_lock() {
-                                                    if let Some(ref fx_gui) = *g2 {
-                                                        let ins: [&[f32]; 2] = [&sl[..block_len], &sr[..block_len]];
-                                                        let mut outs: [&mut [f32]; 2] = [&mut dl[..block_len], &mut dr[..block_len]];
-                                                        fx_gui.process(&ins, &mut outs, block_len);
-                                                    }
-                                                }
-                                                std::mem::swap(sl, dl);
-                                                std::mem::swap(sr, dr);
-                                            }
-                                            inst_out_l[..block_len].copy_from_slice(&sl[..block_len]);
-                                            inst_out_r[..block_len].copy_from_slice(&sr[..block_len]);
-                                        }
-
-                                        for j in 0..block_len {
-                                            dry_mix[offset + j][0] += inst_out_l[j];
-                                            dry_mix[offset + j][1] += inst_out_r[j];
-                                        }
-                                    }
-                                }
-
-                                offset += block_len;
-                            }
-                        }
-                    }
 
                     // Metronome click synthesis
                     if is_playing && met_en.load(Ordering::Relaxed) {

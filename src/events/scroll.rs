@@ -98,7 +98,7 @@ impl App {
                             let after = crate::instruments::InstrumentSnapshot { volume: new_vol, ..before.clone() };
                             self.push_op(crate::operations::Operation::UpdateInstrument { id: inst_id, before, after });
                         }
-                        self.sync_instrument_regions();
+                        self.sync_instrument_regions_auto();
                     }
                     ui::right_window::RightWindowTarget::Group(gid) => {
                         if let Some(before) = self.groups.get(&gid).cloned() {
@@ -146,7 +146,7 @@ impl App {
                             let after = crate::instruments::InstrumentSnapshot { pan: new_pan, ..before.clone() };
                             self.push_op(crate::operations::Operation::UpdateInstrument { id: inst_id, before, after });
                         }
-                        self.sync_instrument_regions();
+                        self.sync_instrument_regions_auto();
                     }
                     ui::right_window::RightWindowTarget::Group(gid) => {
                         if let Some(before) = self.groups.get(&gid).cloned() {
