@@ -1653,11 +1653,15 @@ impl App {
                 self.last_click_world = world;
 
                 if is_double_click {
-                    if let Some(HitTarget::Group(group_id)) = hit {
-                        self.editing_group = Some(group_id);
-                        self.selected.clear();
-                        self.request_redraw();
-                        return;
+                    // Double-clicking a member of a non-entered group enters the group
+                    if let Some(ref raw_hit) = hit {
+                        let redirected = self.redirect_to_group(*raw_hit);
+                        if let HitTarget::Group(group_id) = redirected {
+                            self.editing_group = Some(group_id);
+                            self.selected.clear();
+                            self.request_redraw();
+                            return;
+                        }
                     }
                     if let Some(HitTarget::ComponentDef(ci)) = hit {
                         self.editing_component = Some(ci);

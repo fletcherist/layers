@@ -1,3 +1,4 @@
+- 2026-03-24: fix: double-click on grouped sample enters the group (39.9k loc)
 - 2026-03-24: fix: layers panel collapse only on chevron click, clicking group row selects it; bigger chevron icons (39.9k loc)
 - 2026-03-24: fix: clicking a grouped clip selects and moves the whole group — enter group to move individuals (39.9k loc)
 - 2026-03-24: fix: block fade handle, fade curve, and edge resize on clips inside non-entered groups (39.9k loc)
