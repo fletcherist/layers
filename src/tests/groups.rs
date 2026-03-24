@@ -233,3 +233,96 @@ fn group_roundtrip_serialization() {
     assert_eq!(restored_group.member_ids, original.member_ids);
     assert_eq!(restored_group.effect_chain_id, original.effect_chain_id);
 }
+
+#[test]
+fn normalize_group_selection_deduplicates_members() {
+    let mut app = App::new_headless();
+
+    let id1 = new_id();
+    let id2 = new_id();
+    let id3 = new_id();
+    app.objects.insert(id1, CanvasObject {
+        position: [0.0, 0.0],
+        size: [100.0, 50.0],
+        color: [1.0, 0.0, 0.0, 1.0],
+        border_radius: 0.0,
+    });
+    app.objects.insert(id2, CanvasObject {
+        position: [200.0, 0.0],
+        size: [100.0, 50.0],
+        color: [0.0, 1.0, 0.0, 1.0],
+        border_radius: 0.0,
+    });
+    app.objects.insert(id3, CanvasObject {
+        position: [400.0, 0.0],
+        size: [100.0, 50.0],
+        color: [0.0, 0.0, 1.0, 1.0],
+        border_radius: 0.0,
+    });
+
+    // Create a group from id1 and id2
+    app.selected.push(HitTarget::Object(id1));
+    app.selected.push(HitTarget::Object(id2));
+    app.execute_command(CommandAction::CreateGroup);
+    assert_eq!(app.groups.len(), 1);
+
+    // Simulate a marquee that covers all three objects (two grouped, one free)
+    let raw_targets = vec![
+        HitTarget::Object(id1),
+        HitTarget::Object(id2),
+        HitTarget::Object(id3),
+    ];
+    let normalized = app.normalize_group_selection(raw_targets);
+
+    // id1 and id2 should collapse into one HitTarget::Group, id3 stays as Object
+    assert_eq!(normalized.len(), 2);
+    assert!(normalized.iter().any(|t| matches!(t, HitTarget::Group(_))));
+    assert!(normalized.contains(&HitTarget::Object(id3)));
+}
+
+#[test]
+fn target_rect_returns_group_bounds() {
+    let mut app = App::new_headless();
+
+    let id1 = new_id();
+    let id2 = new_id();
+    app.objects.insert(id1, CanvasObject {
+        position: [10.0, 20.0],
+        size: [100.0, 50.0],
+        color: [1.0, 0.0, 0.0, 1.0],
+        border_radius: 0.0,
+    });
+    app.objects.insert(id2, CanvasObject {
+        position: [200.0, 30.0],
+        size: [80.0, 60.0],
+        color: [0.0, 1.0, 0.0, 1.0],
+        border_radius: 0.0,
+    });
+
+    app.selected.push(HitTarget::Object(id1));
+    app.selected.push(HitTarget::Object(id2));
+    app.execute_command(CommandAction::CreateGroup);
+    assert_eq!(app.groups.len(), 1);
+
+    let group_id = app.groups.keys().next().copied().unwrap();
+    let group = &app.groups[&group_id];
+
+    let result = crate::ui::rendering::target_rect(
+        &app.objects,
+        &app.waveforms,
+        &app.effect_regions,
+        &app.plugin_blocks,
+        &app.loop_regions,
+        &app.export_regions,
+        &app.components,
+        &app.component_instances,
+        &app.midi_clips,
+        &app.text_notes,
+        &app.groups,
+        &HitTarget::Group(group_id),
+    );
+
+    let (pos, size) = result.expect("target_rect should return Some for groups");
+    assert_eq!(pos, group.position);
+    assert_eq!(size, group.size);
+}

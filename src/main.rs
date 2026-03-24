@@ -523,6 +523,19 @@ impl App {
         target
     }
 
+    /// Map each target through `redirect_to_group` and deduplicate, preserving order.
+    fn normalize_group_selection(&self, targets: Vec<HitTarget>) -> Vec<HitTarget> {
+        let mut seen = std::collections::HashSet::new();
+        let mut out = Vec::new();
+        for t in targets {
+            let redirected = self.redirect_to_group(t);
+            if seen.insert(redirected) {
+                out.push(redirected);
+            }
+        }
+        out
+    }
+
     fn mark_dirty(&mut self) {
         self.render_generation = self.render_generation.wrapping_add(1);
         self.project_dirty = true;

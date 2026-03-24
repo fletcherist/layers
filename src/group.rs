@@ -98,36 +98,15 @@ pub(crate) fn build_group_instances(
         border_radius: 4.0 / camera.zoom,
     });
 
-    // Border
-    let bw = if is_selected { 2.0 } else { 1.0 } / camera.zoom;
-    let mut bc = theme.component_border_color;
-    if is_hovered && !is_selected {
-        bc[3] = (bc[3] + 0.15).min(1.0);
-    }
-    crate::push_border(&mut out, group.position, group.size, bw, bc);
-
-    // No badge — group name is rendered as an inline text label (like waveform filenames)
-
-    // Resize handles when selected
-    if is_selected {
-        let handle_sz = 8.0 / camera.zoom;
-        let handle_color = theme.component_border_color;
-        for &hx in &[
-            group.position[0] - handle_sz * 0.5,
-            group.position[0] + group.size[0] - handle_sz * 0.5,
-        ] {
-            for &hy in &[
-                group.position[1] - handle_sz * 0.5,
-                group.position[1] + group.size[1] - handle_sz * 0.5,
-            ] {
-                out.push(InstanceRaw {
-                    position: [hx, hy],
-                    size: [handle_sz, handle_sz],
-                    color: handle_color,
-                    border_radius: 2.0 / camera.zoom,
-                });
-            }
+    // Border — skip when selected since the global selection overlay draws
+    // its own thick border + corner handles.
+    if !is_selected {
+        let bw = 1.0 / camera.zoom;
+        let mut bc = theme.component_border_color;
+        if is_hovered {
+            bc[3] = (bc[3] + 0.15).min(1.0);
         }
+        crate::push_border(&mut out, group.position, group.size, bw, bc);
     }
 
     out

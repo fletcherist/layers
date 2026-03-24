@@ -1399,7 +1399,7 @@ impl App {
         } else {
             None
         };
-        self.hovered = hit_test(
+        let raw_hover = hit_test(
             &self.objects,
             &self.waveforms,
             &self.effect_regions,
@@ -1416,6 +1416,7 @@ impl App {
             &self.camera,
             self.editing_group,
         );
+        self.hovered = raw_hover.map(|h| self.redirect_to_group(h));
 
         self.component_def_hover = ComponentDefHover::None;
         for (&ci, def) in self.components.iter() {

@@ -126,6 +126,7 @@ impl App {
                     &self.camera,
                     self.editing_group,
                 );
+                let hit = hit.map(|h| self.redirect_to_group(h));
                 let menu_ctx = match hit {
                     Some(HitTarget::ComponentInstance(_)) => {
                         if !self.selected.contains(&hit.unwrap()) {
@@ -2915,7 +2916,7 @@ impl App {
                         });
                         self.mark_dirty();
                     } else {
-                        self.selected = targets_in_rect(
+                        let raw_targets = targets_in_rect(
                             &self.objects,
                             &self.waveforms,
                             &self.effect_regions,
@@ -2930,6 +2931,7 @@ impl App {
                             rp,
                             rs,
                         );
+                        self.selected = self.normalize_group_selection(raw_targets);
                         self.select_area = Some(SelectArea { position: rp, size: rs });
                     }
                 }

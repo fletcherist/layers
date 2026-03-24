@@ -158,7 +158,8 @@ impl App {
                 .filter_map(|t| match t {
                     HitTarget::Waveform(id) |
                     HitTarget::EffectRegion(id) | HitTarget::PluginBlock(id) |
-                    HitTarget::MidiClip(id) | HitTarget::TextNote(id) => Some(*id),
+                    HitTarget::MidiClip(id) | HitTarget::TextNote(id) |
+                    HitTarget::Group(id) => Some(*id),
                     _ => None,
                 })
                 .collect();

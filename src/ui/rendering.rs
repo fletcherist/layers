@@ -599,6 +599,7 @@ pub(crate) fn build_instances(out: &mut Vec<InstanceRaw>, ctx: &RenderContext) {
             ctx.component_instances,
             ctx.midi_clips,
             ctx.text_notes,
+            ctx.groups,
             target,
         ) else {
             continue;
@@ -887,6 +888,7 @@ pub(crate) fn target_rect(
     component_instances: &IndexMap<EntityId, component::ComponentInstance>,
     midi_clips: &IndexMap<EntityId, midi::MidiClip>,
     text_notes: &IndexMap<EntityId, crate::text_note::TextNote>,
+    groups: &IndexMap<EntityId, crate::group::Group>,
     target: &HitTarget,
 ) -> Option<([f32; 2], [f32; 2])> {
     match target {
@@ -934,7 +936,10 @@ pub(crate) fn target_rect(
             let tn = text_notes.get(id)?;
             Some((tn.position, tn.size))
         }
-        HitTarget::Group(_) => None,
+        HitTarget::Group(id) => {
+            let g = groups.get(id)?;
+            Some((g.position, g.size))
+        }
     }
 }
 
