@@ -774,10 +774,34 @@ impl App {
 
                         // --- Group export button click ---
                         if rw.hit_test_export_button(self.mouse_pos, sw, sh, scale) {
-                            self.toast_manager.push(
-                                "Export coming soon".to_string(),
-                                crate::ui::toast::ToastKind::Info,
-                            );
+                            if let ui::right_window::RightWindowTarget::Group(group_id) = rw.target {
+                                #[cfg(feature = "native")]
+                                {
+                                    let default_name = self.groups.get(&group_id)
+                                        .map(|g| format!("{}.wav", g.name))
+                                        .unwrap_or_else(|| "export.wav".to_string());
+                                    if let Some(path) = rfd::FileDialog::new()
+                                        .set_title("Export WAV")
+                                        .set_file_name(&default_name)
+                                        .save_file()
+                                    {
+                                        match crate::export::export_group_wav(self, group_id, &path) {
+                                            Ok(()) => {
+                                                self.toast_manager.push(
+                                                    format!("Exported to {}", path.display()),
+                                                    crate::ui::toast::ToastKind::Success,
+                                                );
+                                            }
+                                            Err(e) => {
+                                                self.toast_manager.push(
+                                                    format!("Export failed: {}", e),
+                                                    crate::ui::toast::ToastKind::Error,
+                                                );
+                                            }
+                                        }
+                                    }
+                                }
+                            }
                             self.request_redraw();
                             return;
                         }

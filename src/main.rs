@@ -2,6 +2,8 @@
 mod project;
 #[cfg(feature = "native")]
 mod audio;
+#[cfg(feature = "native")]
+mod export;
 mod automation;
 mod clipboard;
 mod component;
