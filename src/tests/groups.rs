@@ -137,3 +137,55 @@ fn select_group_opens_right_window() {
     assert_eq!(rw.group_name, "Group 1");
     assert_eq!(rw.group_member_count, 2);
 }
+
+#[test]
+fn rename_group_via_browser_inline_edit() {
+    let mut app = App::new_headless();
+
+    // Add two objects and create a group
+    let id1 = new_id();
+    let id2 = new_id();
+    app.objects.insert(id1, CanvasObject {
+        position: [0.0, 0.0],
+        size: [100.0, 50.0],
+        color: [1.0, 0.0, 0.0, 1.0],
+        border_radius: 0.0,
+    });
+    app.objects.insert(id2, CanvasObject {
+        position: [200.0, 0.0],
+        size: [100.0, 50.0],
+        color: [0.0, 1.0, 0.0, 1.0],
+        border_radius: 0.0,
+    });
+    app.selected.push(HitTarget::Object(id1));
+    app.selected.push(HitTarget::Object(id2));
+    app.execute_command(CommandAction::CreateGroup);
+    assert_eq!(app.groups.len(), 1);
+
+    let group_id = app.groups.keys().next().copied().unwrap();
+    assert_eq!(app.groups[&group_id].name, "Group 1");
+
+    // Simulate inline rename: set editing state then commit
+    app.sample_browser.editing_browser_name = Some((
+        group_id,
+        crate::layers::LayerNodeKind::Group,
+        "My Custom Group".to_string(),
+    ));
+
+    // Commit by directly applying the same logic as Enter key handler
+    let before = app.groups[&group_id].clone();
+    app.groups.get_mut(&group_id).unwrap().name = "My Custom Group".to_string();
+    let after = app.groups[&group_id].clone();
+    app.push_op(crate::operations::Operation::UpdateGroup { id: group_id, before, after });
+    app.sample_browser.editing_browser_name = None;
+
+    assert_eq!(app.groups[&group_id].name, "My Custom Group");
+
+    // Undo should revert to original name
+    app.undo_op();
+    assert_eq!(app.groups[&group_id].name, "Group 1");
+
+    // Redo should restore the new name
+    app.redo_op();
+    assert_eq!(app.groups[&group_id].name, "My Custom Group");
+}

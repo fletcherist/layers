@@ -142,6 +142,9 @@ pub struct WaveformView {
     /// Shared effect chain — multiple waveforms can reference the same chain ID.
     #[serde(default)]
     pub effect_chain_id: Option<crate::entity_id::EntityId>,
+    /// Take group — only set on the "parent" waveform that owns the take lanes.
+    #[serde(default)]
+    pub take_group: Option<crate::takes::TakeGroup>,
 }
 
 fn default_pan() -> f32 {

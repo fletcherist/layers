@@ -31,6 +31,25 @@ impl App {
                     Some(wf) => wf,
                     None => continue,
                 };
+
+                // Skip overlap resolution for waveforms in the same take group
+                if let Some(a_wf) = self.waveforms.get(&aid) {
+                    if let Some(tg) = &a_wf.take_group {
+                        if tg.contains(bid) { continue; }
+                    }
+                }
+                if let Some(b_tg_parent) = self.find_take_parent(bid) {
+                    if b_tg_parent == aid { continue; }
+                    if self.find_take_parent(aid) == Some(b_tg_parent) { continue; }
+                }
+                if let Some(a_tg_parent) = self.find_take_parent(aid) {
+                    if let Some(p_wf) = self.waveforms.get(&a_tg_parent) {
+                        if let Some(tg) = &p_wf.take_group {
+                            if tg.contains(bid) { continue; }
+                        }
+                    }
+                }
+
                 let b_y0 = bwf.position[1];
                 let b_y1 = b_y0 + bwf.size[1];
                 if !(a_y0 < b_y1 && a_y1 > b_y0) {

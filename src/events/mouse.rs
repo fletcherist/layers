@@ -812,13 +812,13 @@ impl App {
                             let chain_id = match target {
                                 ui::right_window::RightWindowTarget::Waveform(wf_id) => self.waveforms.get(&wf_id).and_then(|w| w.effect_chain_id),
                                 ui::right_window::RightWindowTarget::Instrument(inst_id) => self.instruments.get(&inst_id).and_then(|i| i.effect_chain_id),
-                                ui::right_window::RightWindowTarget::Group(_) => None,
+                                ui::right_window::RightWindowTarget::Group(group_id) => self.groups.get(&group_id).and_then(|g| g.effect_chain_id),
                             };
                             let slot_count = chain_id
                                 .and_then(|cid| self.effect_chains.get(&cid))
                                 .map_or(0, |c| c.slots.len());
                             let ref_count = chain_id.map_or(0, |cid| {
-                                ui::right_window::RightWindow::chain_ref_count_all(cid, &self.waveforms, &self.instruments)
+                                ui::right_window::RightWindow::chain_ref_count_all(cid, &self.waveforms, &self.instruments, &self.groups)
                             });
 
                             // Detach button
@@ -826,7 +826,7 @@ impl App {
                                 match target {
                                     ui::right_window::RightWindowTarget::Waveform(wf_id) => self.detach_effect_chain(wf_id),
                                     ui::right_window::RightWindowTarget::Instrument(inst_id) => self.detach_instrument_effect_chain(inst_id),
-                                    ui::right_window::RightWindowTarget::Group(_) => {}
+                                    ui::right_window::RightWindowTarget::Group(group_id) => self.detach_group_effect_chain(group_id),
                                 }
                                 self.request_redraw();
                                 return;
@@ -842,6 +842,7 @@ impl App {
                                             }
                                         }
                                     }
+                                    self.sync_audio_clips();
                                     self.request_redraw();
                                     return;
                                 }
@@ -869,6 +870,7 @@ impl App {
                                             }
                                         }
                                     }
+                                    self.sync_audio_clips();
                                     self.request_redraw();
                                     return;
                                 }
@@ -1121,6 +1123,11 @@ impl App {
                                                 self.request_redraw();
                                                 return;
                                             }
+                                            if let ui::right_window::RightWindowTarget::Group(group_id) = rw.target {
+                                                self.add_plugin_to_group_chain(group_id, unique_id, &entry.name);
+                                                self.request_redraw();
+                                                return;
+                                            }
                                         }
                                     }
                                     self.drag = DragState::DraggingPlugin {
@@ -1150,9 +1157,12 @@ impl App {
                                             LayerNodeKind::EffectRegion => self.effect_regions.get(id)
                                                 .map(|er| er.name.clone())
                                                 .unwrap_or_default(),
+                                            LayerNodeKind::Group => self.groups.get(id)
+                                                .map(|g| g.name.clone())
+                                                .unwrap_or_default(),
                                             _ => String::new(),
                                         };
-                                        if matches!(kind, LayerNodeKind::Waveform | LayerNodeKind::EffectRegion) {
+                                        if matches!(kind, LayerNodeKind::Waveform | LayerNodeKind::EffectRegion | LayerNodeKind::Group) {
                                             self.sample_browser.editing_browser_name = Some((*id, *kind, initial_text));
                                             self.sample_browser.text_dirty = true;
                                             self.request_redraw();
@@ -2567,6 +2577,7 @@ impl App {
                         }
                     }
                     self.drag = DragState::None;
+                    self.sync_audio_clips();
                     self.request_redraw();
                     return;
                 }

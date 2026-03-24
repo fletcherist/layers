@@ -1611,23 +1611,21 @@ impl Gpu {
                 {
                     continue;
                 }
-                let badge_h = 16.0 / camera.zoom;
-                let badge_w = (grp.name.len() as f32 * 7.0 + 16.0) / camera.zoom;
-                let badge_w = badge_w.min(grp.size[0]);
-                let badge_screen_w = badge_w * camera.zoom;
-                if badge_screen_w < 20.0 {
+                let clip_screen_w = grp.size[0] * camera.zoom;
+                if clip_screen_w < 30.0 {
                     continue;
                 }
 
-                let pad = 4.0 / camera.zoom;
+                let pad = 6.0 / camera.zoom;
+                let label_h = 14.0 / camera.zoom;
                 let name_x_world = grp.position[0] + pad;
-                let name_y_world = grp.position[1] - badge_h - 2.0 / camera.zoom + (badge_h - 10.0 / camera.zoom) * 0.5;
+                let name_y_world = grp.position[1] - label_h - 12.0 / camera.zoom;
                 let name_screen_x = (name_x_world - camera.position[0]) * camera.zoom;
                 let name_screen_y = (name_y_world - camera.position[1]) * camera.zoom;
 
                 let name_font = 10.0 * scale;
                 let name_line = 14.0 * scale;
-                let max_text_w = (badge_screen_w - 8.0 * scale).max(10.0);
+                let max_text_w = (clip_screen_w - 12.0 * scale).max(20.0);
 
                 let key = TextLabelCacheKey {
                     text: grp.name.clone(),
@@ -1657,7 +1655,7 @@ impl Gpu {
                     name_screen_x,
                     name_screen_y,
                     TextColor::rgba(255, 255, 255, 200),
-                    full_bounds,
+                    wf_label_bounds,
                 ));
             }
         }

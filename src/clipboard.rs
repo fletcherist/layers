@@ -148,6 +148,7 @@ impl App {
             sample_offset_px: 0.0,
             automation: AutomationData::new(),
             effect_chain_id: None,
+            take_group: None,
         };
 
         let right_clip = AudioClipData {
@@ -184,6 +185,7 @@ impl App {
             sample_offset_px: 0.0,
             automation: AutomationData::new(),
             effect_chain_id: None,
+            take_group: None,
         };
 
         // Replace original with left half

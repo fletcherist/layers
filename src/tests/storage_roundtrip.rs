@@ -171,6 +171,7 @@ fn test_waveform_filename_survives_serde_roundtrip() {
         sample_offset_px: 0.0,
         automation: AutomationData::new(),
     effect_chain_id: None,
+    take_group: None,
     };
 
     // Serialize and deserialize (simulates network transfer)

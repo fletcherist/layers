@@ -28,6 +28,7 @@ mod surreal_client;
 mod plugins;
 mod regions;
 mod settings;
+mod takes;
 mod text_note;
 pub mod theme;
 mod storage;
@@ -221,6 +222,8 @@ struct App {
     audio_engine: Option<NativeAudioEngine>,
     recorder: Option<NativeAudioRecorder>,
     recording_waveform_id: Option<EntityId>,
+    /// If recording into a take group, this is the parent waveform ID.
+    recording_take_parent_id: Option<EntityId>,
     input_monitoring: bool,
     last_canvas_click_world: [f32; 2],
     selected: Vec<HitTarget>,
@@ -357,6 +360,7 @@ impl App {
             audio_engine: None,
             recorder: None,
             recording_waveform_id: None,
+            recording_take_parent_id: None,
             input_monitoring: false,
             last_canvas_click_world: [0.0; 2],
             selected: Vec::new(),
@@ -787,6 +791,7 @@ impl App {
                         sample_offset_px: sw.sample_offset_px,
                         automation: AutomationData::from_stored(&sw.automation_volume, &sw.automation_pan),
                         effect_chain_id: None,
+                        take_group: None,
                     }))
                     .collect();
 
@@ -1115,6 +1120,7 @@ impl App {
             audio_engine,
             recorder,
             recording_waveform_id: None,
+            recording_take_parent_id: None,
             input_monitoring: false,
             last_canvas_click_world: [0.0; 2],
             selected: Vec::new(),
@@ -1549,7 +1555,7 @@ impl App {
             Some(id) => id,
             None => return,
         };
-        let ref_count = ui::right_window::RightWindow::chain_ref_count(chain_id, &self.waveforms);
+        let ref_count = ui::right_window::RightWindow::chain_ref_count_all(chain_id, &self.waveforms, &self.instruments, &self.groups);
         if ref_count <= 1 {
             return; // Already unique
         }
@@ -1579,7 +1585,7 @@ impl App {
             Some(id) => id,
             None => return,
         };
-        let ref_count = ui::right_window::RightWindow::chain_ref_count_all(chain_id, &self.waveforms, &self.instruments);
+        let ref_count = ui::right_window::RightWindow::chain_ref_count_all(chain_id, &self.waveforms, &self.instruments, &self.groups);
         if ref_count <= 1 {
             return;
         }
@@ -1602,6 +1608,35 @@ impl App {
         self.request_redraw();
     }
 
+    /// Detach a group's effect chain — clone the shared chain into a new independent one.
+    pub(crate) fn detach_group_effect_chain(&mut self, group_id: EntityId) {
+        let chain_id = match self.groups.get(&group_id).and_then(|g| g.effect_chain_id) {
+            Some(id) => id,
+            None => return,
+        };
+        let ref_count = ui::right_window::RightWindow::chain_ref_count_all(chain_id, &self.waveforms, &self.instruments, &self.groups);
+        if ref_count <= 1 {
+            return;
+        }
+        let Some(chain) = self.effect_chains.get(&chain_id) else { return; };
+        let mut new_chain = effects::EffectChain::new();
+        for slot in &chain.slots {
+            let mut new_slot = effects::EffectChainSlot::new(
+                slot.plugin_id.clone(),
+                slot.plugin_name.clone(),
+                slot.plugin_path.clone(),
+            );
+            new_slot.bypass = slot.bypass;
+            new_chain.slots.push(new_slot);
+        }
+        let new_chain_id = new_id();
+        self.effect_chains.insert(new_chain_id, new_chain);
+        if let Some(g) = self.groups.get_mut(&group_id) {
+            g.effect_chain_id = Some(new_chain_id);
+        }
+        self.request_redraw();
+    }
+
     #[cfg(feature = "native")]
     fn sync_audio_clips(&self) {
         if let Some(engine) = &self.audio_engine {
@@ -1620,6 +1655,7 @@ impl App {
             let mut warp_modes: Vec<u8> = Vec::new();
             let mut sample_bpms: Vec<f32> = Vec::new();
             let mut pitch_semitones_vec: Vec<f32> = Vec::new();
+            let mut chain_plugins_per_clip: Vec<Vec<std::sync::Arc<std::sync::Mutex<Option<effects::PluginGuiHandle>>>>> = Vec::new();
 
             for (&wf_id, wf) in self.waveforms.iter() {
                 if wf.disabled {
@@ -1644,6 +1680,34 @@ impl App {
                 warp_modes.push(match wf.warp_mode { ui::waveform::WarpMode::RePitch => 1, ui::waveform::WarpMode::Semitone => 2, _ => 0 });
                 sample_bpms.push(wf.sample_bpm);
                 pitch_semitones_vec.push(wf.pitch_semitones);
+
+                // Collect effect chain plugins for this waveform
+                let mut chain_plugins = Vec::new();
+                if let Some(chain_id) = wf.effect_chain_id {
+                    if let Some(chain) = self.effect_chains.get(&chain_id) {
+                        for slot in &chain.slots {
+                            if !slot.bypass {
+                                chain_plugins.push(slot.gui.clone());
+                            }
+                        }
+                    }
+                }
+                // Also append group-level effect chain (waveform chain → group chain)
+                for group in self.groups.values() {
+                    if group.member_ids.contains(&wf_id) {
+                        if let Some(chain_id) = group.effect_chain_id {
+                            if let Some(chain) = self.effect_chains.get(&chain_id) {
+                                for slot in &chain.slots {
+                                    if !slot.bypass {
+                                        chain_plugins.push(slot.gui.clone());
+                                    }
+                                }
+                            }
+                        }
+                        break;
+                    }
+                }
+                chain_plugins_per_clip.push(chain_plugins);
             }
 
             // Add virtual clips for each component instance
@@ -1670,6 +1734,19 @@ impl App {
                                 pan_autos.push(wf.automation.pan_lane().points.iter().map(|p| (p.t, p.value)).collect());
                                 warp_modes.push(match wf.warp_mode { ui::waveform::WarpMode::RePitch => 1, _ => 0 });
                                 sample_bpms.push(wf.sample_bpm);
+
+                                // Collect effect chain plugins for component instance waveform
+                                let mut cp = Vec::new();
+                                if let Some(chain_id) = wf.effect_chain_id {
+                                    if let Some(chain) = self.effect_chains.get(&chain_id) {
+                                        for slot in &chain.slots {
+                                            if !slot.bypass {
+                                                cp.push(slot.gui.clone());
+                                            }
+                                        }
+                                    }
+                                }
+                                chain_plugins_per_clip.push(cp);
                             }
                         }
                     }
@@ -1677,7 +1754,7 @@ impl App {
             }
 
             let owned_clips: Vec<AudioClipData> = clips.iter().map(|c| (*c).clone()).collect();
-            engine.update_clips(&positions, &sizes, &owned_clips, &fade_ins, &fade_outs, &fade_in_curves, &fade_out_curves, &volumes, &pans, &sample_offsets, &vol_autos, &pan_autos, &warp_modes, &sample_bpms, self.bpm, &pitch_semitones_vec);
+            engine.update_clips(&positions, &sizes, &owned_clips, &fade_ins, &fade_outs, &fade_in_curves, &fade_out_curves, &volumes, &pans, &sample_offsets, &vol_autos, &pan_autos, &warp_modes, &sample_bpms, self.bpm, &pitch_semitones_vec, &chain_plugins_per_clip);
 
             let regions: Vec<audio::AudioEffectRegion> = self
                 .effect_regions
@@ -1896,6 +1973,32 @@ impl App {
                     x_max = 0.0;
                 }
                 midi_events.sort_by(|a, b| a.time_secs.partial_cmp(&b.time_secs).unwrap());
+                // Collect effect chain plugins for this instrument
+                let mut inst_chain_plugins = Vec::new();
+                if let Some(chain_id) = inst.effect_chain_id {
+                    if let Some(chain) = self.effect_chains.get(&chain_id) {
+                        for slot in &chain.slots {
+                            if !slot.bypass {
+                                inst_chain_plugins.push(slot.gui.clone());
+                            }
+                        }
+                    }
+                }
+                // Also append group-level effect chain
+                for group in self.groups.values() {
+                    if group.member_ids.contains(&inst_id) {
+                        if let Some(chain_id) = group.effect_chain_id {
+                            if let Some(chain) = self.effect_chains.get(&chain_id) {
+                                for slot in &chain.slots {
+                                    if !slot.bypass {
+                                        inst_chain_plugins.push(slot.gui.clone());
+                                    }
+                                }
+                            }
+                        }
+                        break;
+                    }
+                }
                 audio_instruments.push(audio::AudioInstrument {
                     id: inst_id,
                     x_start_px: x_min,
@@ -1906,6 +2009,7 @@ impl App {
                     midi_events,
                     volume: inst.volume,
                     pan: inst.pan,
+                    chain_plugins: inst_chain_plugins,
                 });
             }
 
@@ -1991,6 +2095,99 @@ impl App {
         }
 
         self.sync_monitor_effects();
+        self.request_redraw();
+    }
+
+    /// Find the parent waveform ID that owns a given child take.
+    pub(crate) fn find_take_parent(&self, child_id: EntityId) -> Option<EntityId> {
+        for (&parent_id, wf) in &self.waveforms {
+            if let Some(tg) = &wf.take_group {
+                if tg.contains(child_id) {
+                    return Some(parent_id);
+                }
+            }
+        }
+        None
+    }
+
+    /// Switch the active take in a take group. `parent_id` is the parent waveform,
+    /// `new_active_index` is the take index (0 = parent, 1+ = children).
+    pub(crate) fn switch_active_take(&mut self, parent_id: EntityId, new_active_index: usize) {
+        // Clone parent data upfront to avoid borrow conflicts
+        let before = match self.waveforms.get(&parent_id).cloned() {
+            Some(p) => p,
+            None => return,
+        };
+        let tg = match &before.take_group {
+            Some(tg) => tg.clone(),
+            None => return,
+        };
+        if new_active_index >= tg.take_count() || new_active_index == tg.active_index {
+            return;
+        }
+
+        let old_active = tg.active_index;
+
+        // Disable old active take
+        if old_active > 0 {
+            if let Some(old_id) = tg.take_ids.get(old_active - 1) {
+                if let Some(wf) = self.waveforms.get_mut(old_id) {
+                    wf.disabled = true;
+                }
+            }
+        }
+
+        // Enable new active take
+        if new_active_index > 0 {
+            if let Some(new_id) = tg.take_ids.get(new_active_index - 1) {
+                if let Some(wf) = self.waveforms.get_mut(new_id) {
+                    wf.disabled = false;
+                }
+            }
+        }
+
+        // Update parent
+        let mut after = before.clone();
+        after.take_group.as_mut().unwrap().active_index = new_active_index;
+        after.disabled = new_active_index != 0;
+        if let Some(p) = self.waveforms.get_mut(&parent_id) {
+            *p = after.clone();
+        }
+
+        self.push_op(operations::Operation::UpdateWaveform {
+            id: parent_id,
+            before,
+            after,
+        });
+        self.sync_audio_clips();
+        self.mark_dirty();
+        self.request_redraw();
+    }
+
+    /// Toggle expand/collapse of a take group.
+    pub(crate) fn toggle_take_expanded(&mut self, parent_id: EntityId) {
+        let parent = match self.waveforms.get(&parent_id) {
+            Some(p) => p,
+            None => return,
+        };
+        if parent.take_group.is_none() {
+            return;
+        }
+
+        let before = parent.clone();
+        let mut after = before.clone();
+        let tg = after.take_group.as_mut().unwrap();
+        tg.expanded = !tg.expanded;
+
+        if let Some(p) = self.waveforms.get_mut(&parent_id) {
+            *p = after.clone();
+        }
+        self.push_op(operations::Operation::UpdateWaveform {
+            id: parent_id,
+            before,
+            after,
+        });
+        self.mark_dirty();
         self.request_redraw();
     }
 
@@ -2082,6 +2279,52 @@ impl App {
                         );
                         rs.save_audio(&wf_id_str, &wav_bytes, "wav");
                     }
+                    // Finalize take group if recording into a selected waveform
+                    if let Some(parent_id) = self.recording_take_parent_id.take() {
+                        if let Some(parent) = self.waveforms.get(&parent_id) {
+                            let before = parent.clone();
+                            let mut after = before.clone();
+
+                            if after.take_group.is_none() {
+                                // First time: create take group on parent
+                                after.take_group = Some(takes::TakeGroup {
+                                    take_ids: vec![wf_id],
+                                    active_index: 1, // new recording is active
+                                    expanded: true,
+                                });
+                                // Disable the parent (it's now take 0, inactive)
+                                after.disabled = true;
+                            } else {
+                                // Already has takes: append new take
+                                let tg = after.take_group.as_mut().unwrap();
+                                tg.take_ids.push(wf_id);
+                                tg.active_index = tg.take_count() - 1; // new take is active
+
+                                // Disable all other takes
+                                let previously_active = before.take_group.as_ref().unwrap().active_index;
+                                if previously_active == 0 {
+                                    after.disabled = true;
+                                } else if let Some(prev_id) = before.take_group.as_ref()
+                                    .and_then(|tg| tg.take_ids.get(previously_active - 1))
+                                {
+                                    if let Some(prev_wf) = self.waveforms.get_mut(prev_id) {
+                                        prev_wf.disabled = true;
+                                    }
+                                }
+                            }
+
+                            // Apply parent update
+                            if let Some(p) = self.waveforms.get_mut(&parent_id) {
+                                *p = after.clone();
+                            }
+                            self.push_op(operations::Operation::UpdateWaveform {
+                                id: parent_id,
+                                before,
+                                after,
+                            });
+                        }
+                    }
+
                     self.sync_audio_clips();
                 }
             } else {
@@ -2089,6 +2332,7 @@ impl App {
                     self.waveforms.shift_remove(&wf_id);
                     self.audio_clips.shift_remove(&wf_id);
                 }
+                self.recording_take_parent_id = None;
             }
 
             if let Some(engine) = &self.audio_engine {
@@ -2097,10 +2341,31 @@ impl App {
                 }
             }
         } else {
-            let world = self.last_canvas_click_world;
             let height = grid::clip_height(self.bpm);
             let color_idx = self.waveforms.len() % WAVEFORM_COLORS.len();
             let sample_rate = self.recorder.as_ref().unwrap().sample_rate();
+
+            // Check if a waveform is selected — if so, record as a new take
+            let selected_wf_id = self.selected.first().and_then(|t| match t {
+                HitTarget::Waveform(id) => Some(*id),
+                _ => None,
+            });
+
+            // Determine recording position: if recording into a take, position below parent
+            let (rec_x, rec_y) = if let Some(parent_id) = selected_wf_id {
+                if let Some(parent) = self.waveforms.get(&parent_id) {
+                    let take_count = parent.take_group.as_ref()
+                        .map(|tg| tg.take_count())
+                        .unwrap_or(1); // parent itself is take 0
+                    (parent.position[0], parent.position[1] + height * take_count as f32)
+                } else {
+                    let world = self.last_canvas_click_world;
+                    (world[0], world[1] - height * 0.5)
+                }
+            } else {
+                let world = self.last_canvas_click_world;
+                (world[0], world[1] - height * 0.5)
+            };
 
             let wf_id = new_id();
             let wf_data = WaveformView {
@@ -2113,7 +2378,7 @@ impl App {
                     filename: "Recording".to_string(),
                 }),
                 filename: "Recording".to_string(),
-                position: [world[0], world[1] - height * 0.5],
+                position: [rec_x, rec_y],
                 size: [0.0, height],
                 color: WAVEFORM_COLORS[color_idx],
                 border_radius: 8.0,
@@ -2130,7 +2395,8 @@ impl App {
                 disabled: false,
                 sample_offset_px: 0.0,
                 automation: AutomationData::new(),
-            effect_chain_id: None,
+                effect_chain_id: None,
+                take_group: None,
             };
             let ac_data = AudioClipData {
                 samples: Arc::new(Vec::new()),
@@ -2141,10 +2407,11 @@ impl App {
             self.audio_clips.insert(wf_id, ac_data.clone());
             self.push_op(operations::Operation::CreateWaveform { id: wf_id, data: wf_data, audio_clip: Some((wf_id, ac_data)) });
             self.recording_waveform_id = Some(wf_id);
+            self.recording_take_parent_id = selected_wf_id;
             self.recorder.as_mut().unwrap().start();
 
             if let Some(engine) = &self.audio_engine {
-                let secs = world[0] as f64 / PIXELS_PER_SECOND as f64;
+                let secs = rec_x as f64 / PIXELS_PER_SECOND as f64;
                 engine.seek_to_seconds(secs);
                 if !engine.is_playing() {
                     engine.toggle_playback();
@@ -2914,6 +3181,7 @@ impl App {
             sample_offset_px: 0.0,
             automation: AutomationData::new(),
         effect_chain_id: None,
+        take_group: None,
         };
         self.waveforms.insert(wf_id, placeholder);
         self.pending_audio_loads_count += 1;
@@ -2968,6 +3236,7 @@ impl App {
                 sample_offset_px: 0.0,
                 automation: AutomationData::new(),
             effect_chain_id: None,
+            take_group: None,
             };
             let ac_data = AudioClipData {
                 samples: loaded.samples.clone(),

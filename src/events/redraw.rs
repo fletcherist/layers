@@ -222,11 +222,13 @@ impl App {
                             crate::ui::right_window::RightWindowTarget::Instrument(inst_id) => {
                                 self.instruments.get(&inst_id).and_then(|i| i.effect_chain_id)
                             }
-                            crate::ui::right_window::RightWindowTarget::Group(_) => None,
+                            crate::ui::right_window::RightWindowTarget::Group(group_id) => {
+                                self.groups.get(&group_id).and_then(|g| g.effect_chain_id)
+                            }
                         };
                         if let Some(cid) = chain_id {
                             self.effect_chains.get(&cid).map(|c| {
-                                let ref_count = crate::ui::right_window::RightWindow::chain_ref_count_all(cid, &self.waveforms, &self.instruments);
+                                let ref_count = crate::ui::right_window::RightWindow::chain_ref_count_all(cid, &self.waveforms, &self.instruments, &self.groups);
                                 (c, cid, ref_count)
                             })
                         } else {

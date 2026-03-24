@@ -38,6 +38,7 @@ fn make_waveform() -> WaveformView {
         sample_offset_px: 0.0,
         automation: AutomationData::new(),
     effect_chain_id: None,
+    take_group: None,
     }
 }
 

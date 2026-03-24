@@ -225,20 +225,22 @@ impl App {
         // Right window "Add Effect" / "Export WAV" button hover
         if let Some(rw) = &self.right_window {
             let (sw, sh, scale) = self.screen_info();
-            let (add_hovered, export_hovered) = if rw.is_group() {
-                // Group panel: only export button, no add-effect button
-                (false, rw.hit_test_export_button(self.mouse_pos, sw, sh, scale))
-            } else {
-                // Waveform/Instrument panel: only add-effect button, no export button
+            let (add_hovered, export_hovered) = {
                 let chain_id = match rw.target {
                     ui::right_window::RightWindowTarget::Waveform(wf_id) => self.waveforms.get(&wf_id).and_then(|w| w.effect_chain_id),
                     ui::right_window::RightWindowTarget::Instrument(inst_id) => self.instruments.get(&inst_id).and_then(|i| i.effect_chain_id),
-                    ui::right_window::RightWindowTarget::Group(_) => None,
+                    ui::right_window::RightWindowTarget::Group(group_id) => self.groups.get(&group_id).and_then(|g| g.effect_chain_id),
                 };
                 let slot_count = chain_id
                     .and_then(|cid| self.effect_chains.get(&cid))
                     .map_or(0, |c| c.slots.len());
-                (rw.hit_test_add_effect_button(self.mouse_pos, slot_count, sw, sh, scale), false)
+                let add_h = rw.hit_test_add_effect_button(self.mouse_pos, slot_count, sw, sh, scale);
+                let export_h = if rw.is_group() {
+                    rw.hit_test_export_button(self.mouse_pos, sw, sh, scale)
+                } else {
+                    false
+                };
+                (add_h, export_h)
             };
             let add_changed = add_hovered != rw.add_effect_hovered;
             let export_changed = export_hovered != rw.export_button_hovered;

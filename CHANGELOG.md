@@ -1,3 +1,5 @@
+- 2026-03-24: feat: group name rendered inside bounds like waveform labels, not as small badge above (41.2k loc)
+- 2026-03-24: feat: group renaming via double-click in layers browser, same as waveform/effect region rename (41.2k loc)
 - 2026-03-24: fix: VST3 audio glitches — pre-allocate ParameterChanges to avoid heap alloc on audio thread, use actual device sample rate (41.2k loc)
 - 2026-03-24: fix: spacebar and MIDI keyboard now work when VST3 plugin GUI is open — use NSPanel instead of NSWindow (41.1k loc)
 - 2026-03-24: feat: take lanes MVP — TakeGroup data model, recording into takes, active take switching with undo/redo, overlap resolution skip for takes (41.1k loc)

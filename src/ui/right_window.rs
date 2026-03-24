@@ -30,6 +30,7 @@ const PITCH_KNOB_Y_OFFSET: f32 = 368.0;
 
 // Effect chain section
 const EFFECT_CHAIN_TOP_OFFSET: f32 = 460.0;
+const GROUP_EFFECT_CHAIN_TOP_OFFSET: f32 = 90.0;
 const EFFECT_SLOT_HEIGHT: f32 = 30.0;
 const EFFECT_SLOT_GAP: f32 = 2.0;
 const EFFECT_ADD_BUTTON_H: f32 = 24.0;
@@ -1122,21 +1123,20 @@ impl RightWindow {
     // --- Effect chain section ---
 
     /// Y position where the effect chain section starts (screen coords).
-    pub fn effect_chain_top(screen_w: f32, screen_h: f32, scale: f32) -> f32 {
-        Self::effect_chain_top_offset(false, screen_w, screen_h, scale)
-    }
-
-    /// Y position where the effect chain section starts, with instrument awareness.
-    pub fn effect_chain_top_offset(is_instrument: bool, screen_w: f32, screen_h: f32, scale: f32) -> f32 {
+    pub fn effect_chain_top(target: &RightWindowTarget, screen_w: f32, screen_h: f32, scale: f32) -> f32 {
         let (pp, _) = Self::panel_rect(screen_w, screen_h, scale);
-        let offset = if is_instrument { REVERSE_BUTTON_Y_OFFSET } else { EFFECT_CHAIN_TOP_OFFSET };
+        let offset = match target {
+            RightWindowTarget::Instrument(_) => REVERSE_BUTTON_Y_OFFSET,
+            RightWindowTarget::Group(_) => GROUP_EFFECT_CHAIN_TOP_OFFSET,
+            _ => EFFECT_CHAIN_TOP_OFFSET,
+        };
         pp[1] + HEADER_HEIGHT * scale + offset * scale
     }
 
     /// Rectangle for a single effect slot at the given index.
-    pub fn effect_slot_rect(idx: usize, screen_w: f32, screen_h: f32, scale: f32) -> ([f32; 2], [f32; 2]) {
+    pub fn effect_slot_rect(idx: usize, target: &RightWindowTarget, screen_w: f32, screen_h: f32, scale: f32) -> ([f32; 2], [f32; 2]) {
         let (pp, ps) = Self::panel_rect(screen_w, screen_h, scale);
-        let top = Self::effect_chain_top(screen_w, screen_h, scale);
+        let top = Self::effect_chain_top(target, screen_w, screen_h, scale);
         // Leave space for "EFFECTS" label (20px)
         let slot_y = top + 20.0 * scale + idx as f32 * (EFFECT_SLOT_HEIGHT + EFFECT_SLOT_GAP) * scale;
         let margin = 8.0 * scale;
@@ -1144,16 +1144,16 @@ impl RightWindow {
     }
 
     /// Rectangle for the bypass toggle within a slot.
-    pub fn effect_slot_bypass_rect(idx: usize, screen_w: f32, screen_h: f32, scale: f32) -> ([f32; 2], [f32; 2]) {
-        let (sp, ss) = Self::effect_slot_rect(idx, screen_w, screen_h, scale);
+    pub fn effect_slot_bypass_rect(idx: usize, target: &RightWindowTarget, screen_w: f32, screen_h: f32, scale: f32) -> ([f32; 2], [f32; 2]) {
+        let (sp, ss) = Self::effect_slot_rect(idx, target, screen_w, screen_h, scale);
         let sz = 14.0 * scale;
         let margin = 6.0 * scale;
         ([sp[0] + margin, sp[1] + (ss[1] - sz) * 0.5], [sz, sz])
     }
 
     /// Rectangle for the delete button within a slot.
-    pub fn effect_slot_delete_rect(idx: usize, screen_w: f32, screen_h: f32, scale: f32) -> ([f32; 2], [f32; 2]) {
-        let (sp, ss) = Self::effect_slot_rect(idx, screen_w, screen_h, scale);
+    pub fn effect_slot_delete_rect(idx: usize, target: &RightWindowTarget, screen_w: f32, screen_h: f32, scale: f32) -> ([f32; 2], [f32; 2]) {
+        let (sp, ss) = Self::effect_slot_rect(idx, target, screen_w, screen_h, scale);
         let sz = 14.0 * scale;
         let margin = 6.0 * scale;
         ([sp[0] + ss[0] - sz - margin, sp[1] + (ss[1] - sz) * 0.5], [sz, sz])
@@ -1164,15 +1164,17 @@ impl RightWindow {
         waveforms.values().filter(|w| w.effect_chain_id == Some(chain_id)).count()
     }
 
-    /// Compute the shared-chain reference count including both waveforms and instruments.
+    /// Compute the shared-chain reference count including waveforms, instruments, and groups.
     pub fn chain_ref_count_all(
         chain_id: EntityId,
         waveforms: &indexmap::IndexMap<EntityId, crate::ui::waveform::WaveformView>,
         instruments: &indexmap::IndexMap<EntityId, crate::instruments::Instrument>,
+        groups: &indexmap::IndexMap<EntityId, crate::group::Group>,
     ) -> usize {
         let wf_count = waveforms.values().filter(|w| w.effect_chain_id == Some(chain_id)).count();
         let inst_count = instruments.values().filter(|i| i.effect_chain_id == Some(chain_id)).count();
-        wf_count + inst_count
+        let group_count = groups.values().filter(|g| g.effect_chain_id == Some(chain_id)).count();
+        wf_count + inst_count + group_count
     }
 
     /// Build GPU instances for the effect chain section.
@@ -1191,7 +1193,7 @@ impl RightWindow {
     ) -> Vec<InstanceRaw> {
         let mut out = Vec::new();
         let (pp, ps) = Self::panel_rect(screen_w, screen_h, scale);
-        let top = Self::effect_chain_top(screen_w, screen_h, scale);
+        let top = Self::effect_chain_top(&self.target, screen_w, screen_h, scale);
 
         // Divider line above effects section
         out.push(InstanceRaw {
@@ -1203,7 +1205,7 @@ impl RightWindow {
 
         // "Add Effect" button (shown even when no chain/no slots)
         let slot_count_now = chain.map(|c| c.slots.len()).unwrap_or(0);
-        let (abp, abs) = Self::add_effect_button_rect(slot_count_now, screen_w, screen_h, scale);
+        let (abp, abs) = Self::add_effect_button_rect(slot_count_now, &self.target, screen_w, screen_h, scale);
         out.push(InstanceRaw {
             position: abp,
             size: abs,
@@ -1218,7 +1220,7 @@ impl RightWindow {
         let Some(chain) = chain else { return out; };
 
         for (i, slot) in chain.slots.iter().enumerate() {
-            let (sp, ss) = Self::effect_slot_rect(i, screen_w, screen_h, scale);
+            let (sp, ss) = Self::effect_slot_rect(i, &self.target, screen_w, screen_h, scale);
 
             if dragging_slot_idx == Some(i) {
                 // Dim placeholder at original position
@@ -1240,7 +1242,7 @@ impl RightWindow {
                 });
 
                 // Bypass dot on floating copy
-                let (bp, bs) = Self::effect_slot_bypass_rect(i, screen_w, screen_h, scale);
+                let (bp, bs) = Self::effect_slot_bypass_rect(i, &self.target, screen_w, screen_h, scale);
                 let bypass_color = if slot.bypass {
                     crate::theme::with_alpha(settings.theme.text_dim, 0.6)
                 } else {
@@ -1271,7 +1273,7 @@ impl RightWindow {
                 });
 
                 // Bypass indicator dot
-                let (bp, bs) = Self::effect_slot_bypass_rect(i, screen_w, screen_h, scale);
+                let (bp, bs) = Self::effect_slot_bypass_rect(i, &self.target, screen_w, screen_h, scale);
                 let bypass_color = if slot.bypass {
                     crate::theme::with_alpha(settings.theme.text_dim, 0.6)
                 } else {
@@ -1306,7 +1308,7 @@ impl RightWindow {
     ) -> Vec<TextEntry> {
         let mut out = Vec::new();
         let (pp, _) = Self::panel_rect(screen_w, screen_h, scale);
-        let top = Self::effect_chain_top(screen_w, screen_h, scale);
+        let top = Self::effect_chain_top(&self.target, screen_w, screen_h, scale);
         let rw_w = RIGHT_WINDOW_WIDTH * scale;
         let label_font = 10.0 * scale;
         let label_line = 14.0 * scale;
@@ -1334,7 +1336,7 @@ impl RightWindow {
 
         // "Detach" button when shared
         if ref_count > 1 {
-            let (dp, ds) = Self::detach_button_rect(screen_w, screen_h, scale);
+            let (dp, ds) = Self::detach_button_rect(&self.target, screen_w, screen_h, scale);
             out.push(TextEntry {
                 text: "Detach".to_string(),
                 x: dp[0],
@@ -1351,7 +1353,7 @@ impl RightWindow {
 
         // "Add Effect" label next to the plus icon (shown even when no chain)
         let slot_count_for_btn = chain.map(|c| c.slots.len()).unwrap_or(0);
-        let (bp, bs) = Self::add_effect_button_rect(slot_count_for_btn, screen_w, screen_h, scale);
+        let (bp, bs) = Self::add_effect_button_rect(slot_count_for_btn, &self.target, screen_w, screen_h, scale);
         let icon_size = 14.0 * scale;
         let padding = 12.0 * scale;
         let icon_x = bp[0] + padding;
@@ -1375,7 +1377,7 @@ impl RightWindow {
         let Some(chain) = chain else { return out; };
 
         for (i, slot) in chain.slots.iter().enumerate() {
-            let (sp, ss) = Self::effect_slot_rect(i, screen_w, screen_h, scale);
+            let (sp, ss) = Self::effect_slot_rect(i, &self.target, screen_w, screen_h, scale);
             let text_x = sp[0] + 26.0 * scale; // after bypass dot
             let base_text_y = sp[1] + (ss[1] - val_line) * 0.5;
             let text_y = if dragging_slot_idx == Some(i) {
@@ -1404,9 +1406,9 @@ impl RightWindow {
     }
 
     /// Rectangle for the "Detach" button (shown when chain is shared).
-    pub fn detach_button_rect(screen_w: f32, screen_h: f32, scale: f32) -> ([f32; 2], [f32; 2]) {
+    pub fn detach_button_rect(target: &RightWindowTarget, screen_w: f32, screen_h: f32, scale: f32) -> ([f32; 2], [f32; 2]) {
         let (pp, ps) = Self::panel_rect(screen_w, screen_h, scale);
-        let top = Self::effect_chain_top(screen_w, screen_h, scale);
+        let top = Self::effect_chain_top(target, screen_w, screen_h, scale);
         let w = 50.0 * scale;
         let h = 14.0 * scale;
         ([pp[0] + ps[0] - w - 8.0 * scale, top], [w, h])
@@ -1415,7 +1417,7 @@ impl RightWindow {
     /// Hit test: is pos on the detach button?
     pub fn hit_test_detach_button(&self, pos: [f32; 2], ref_count: usize, screen_w: f32, screen_h: f32, scale: f32) -> bool {
         if ref_count <= 1 { return false; }
-        let (dp, ds) = Self::detach_button_rect(screen_w, screen_h, scale);
+        let (dp, ds) = Self::detach_button_rect(&self.target, screen_w, screen_h, scale);
         pos[0] >= dp[0] && pos[0] <= dp[0] + ds[0]
             && pos[1] >= dp[1] && pos[1] <= dp[1] + ds[1]
     }
@@ -1437,7 +1439,7 @@ impl RightWindow {
 
         if let Some(chain) = chain {
             for (i, _slot) in chain.slots.iter().enumerate() {
-                let (dp, ds) = Self::effect_slot_delete_rect(i, screen_w, screen_h, scale);
+                let (dp, ds) = Self::effect_slot_delete_rect(i, &self.target, screen_w, screen_h, scale);
                 let icon_size = ds[1]; // fill the delete rect height
                 let icon_y = if dragging_slot_idx == Some(i) {
                     dp[1] + drag_offset_y
@@ -1455,7 +1457,7 @@ impl RightWindow {
         }
 
         // "Add Effect" button icon + label
-        let (bp, bs) = Self::add_effect_button_rect(slot_count, screen_w, screen_h, scale);
+        let (bp, bs) = Self::add_effect_button_rect(slot_count, &self.target, screen_w, screen_h, scale);
         let icon_size = 14.0 * scale;
         let padding = 12.0 * scale;
         let icon_x = bp[0] + padding;
@@ -1478,7 +1480,7 @@ impl RightWindow {
     /// Hit test: which effect slot index is at this screen position?
     pub fn hit_test_effect_slot(&self, pos: [f32; 2], slot_count: usize, screen_w: f32, screen_h: f32, scale: f32) -> Option<usize> {
         for i in 0..slot_count {
-            let (sp, ss) = Self::effect_slot_rect(i, screen_w, screen_h, scale);
+            let (sp, ss) = Self::effect_slot_rect(i, &self.target, screen_w, screen_h, scale);
             if pos[0] >= sp[0] && pos[0] <= sp[0] + ss[0]
                 && pos[1] >= sp[1] && pos[1] <= sp[1] + ss[1]
             {
@@ -1490,22 +1492,22 @@ impl RightWindow {
 
     /// Hit test: is pos on the bypass toggle of slot at index?
     pub fn hit_test_effect_bypass(&self, pos: [f32; 2], idx: usize, screen_w: f32, screen_h: f32, scale: f32) -> bool {
-        let (bp, bs) = Self::effect_slot_bypass_rect(idx, screen_w, screen_h, scale);
+        let (bp, bs) = Self::effect_slot_bypass_rect(idx, &self.target, screen_w, screen_h, scale);
         pos[0] >= bp[0] && pos[0] <= bp[0] + bs[0]
             && pos[1] >= bp[1] && pos[1] <= bp[1] + bs[1]
     }
 
     /// Hit test: is pos on the delete button of slot at index?
     pub fn hit_test_effect_delete(&self, pos: [f32; 2], idx: usize, screen_w: f32, screen_h: f32, scale: f32) -> bool {
-        let (dp, ds) = Self::effect_slot_delete_rect(idx, screen_w, screen_h, scale);
+        let (dp, ds) = Self::effect_slot_delete_rect(idx, &self.target, screen_w, screen_h, scale);
         pos[0] >= dp[0] && pos[0] <= dp[0] + ds[0]
             && pos[1] >= dp[1] && pos[1] <= dp[1] + ds[1]
     }
 
     /// Rectangle for the "Add Effect" button below all effect slots.
-    pub fn add_effect_button_rect(slot_count: usize, screen_w: f32, screen_h: f32, scale: f32) -> ([f32; 2], [f32; 2]) {
+    pub fn add_effect_button_rect(slot_count: usize, target: &RightWindowTarget, screen_w: f32, screen_h: f32, scale: f32) -> ([f32; 2], [f32; 2]) {
         let (pp, ps) = Self::panel_rect(screen_w, screen_h, scale);
-        let top = Self::effect_chain_top(screen_w, screen_h, scale);
+        let top = Self::effect_chain_top(target, screen_w, screen_h, scale);
         let slots_height = 20.0 * scale
             + slot_count as f32 * (EFFECT_SLOT_HEIGHT + EFFECT_SLOT_GAP) * scale;
         let margin = 8.0 * scale;
@@ -1515,7 +1517,7 @@ impl RightWindow {
 
     /// Hit test: is pos on the "Add Effect" button?
     pub fn hit_test_add_effect_button(&self, pos: [f32; 2], slot_count: usize, screen_w: f32, screen_h: f32, scale: f32) -> bool {
-        let (bp, bs) = Self::add_effect_button_rect(slot_count, screen_w, screen_h, scale);
+        let (bp, bs) = Self::add_effect_button_rect(slot_count, &self.target, screen_w, screen_h, scale);
         pos[0] >= bp[0] && pos[0] <= bp[0] + bs[0]
             && pos[1] >= bp[1] && pos[1] <= bp[1] + bs[1]
     }

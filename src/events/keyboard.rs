@@ -1037,6 +1037,20 @@ impl App {
                                         self.mark_dirty();
                                     }
                                 }
+                                LayerNodeKind::Group => {
+                                    if self.groups.contains_key(&id) {
+                                        let before = self.groups[&id].clone();
+                                        let name = if text.trim().is_empty() {
+                                            before.name.clone()
+                                        } else {
+                                            text
+                                        };
+                                        self.groups.get_mut(&id).unwrap().name = name;
+                                        let after = self.groups[&id].clone();
+                                        self.push_op(crate::operations::Operation::UpdateGroup { id, before, after });
+                                        self.mark_dirty();
+                                    }
+                                }
                                 _ => {}
                             }
                         }

@@ -11,11 +11,13 @@ pub(crate) struct Group {
     pub size: [f32; 2],
     /// Entity IDs of group members (any entity type).
     pub member_ids: Vec<EntityId>,
+    #[serde(default)]
+    pub effect_chain_id: Option<crate::entity_id::EntityId>,
 }
 
 impl Group {
     pub fn new(id: EntityId, name: String, position: [f32; 2], size: [f32; 2], member_ids: Vec<EntityId>) -> Self {
-        Self { id, name, position, size, member_ids }
+        Self { id, name, position, size, member_ids, effect_chain_id: None }
     }
 }
 
@@ -68,10 +70,9 @@ pub(crate) fn bounding_box_of_selection(
     if !found {
         return None;
     }
-    let padding = 10.0;
-    Some(([min_x - padding, min_y - padding], [
-        (max_x - min_x) + padding * 2.0,
-        (max_y - min_y) + padding * 2.0,
+    Some(([min_x, min_y], [
+        max_x - min_x,
+        max_y - min_y,
     ]))
 }
 
@@ -105,19 +106,7 @@ pub(crate) fn build_group_instances(
     }
     crate::push_border(&mut out, group.position, group.size, bw, bc);
 
-    // Name badge at top-left
-    let badge_h = 16.0 / camera.zoom;
-    let badge_w = (group.name.len() as f32 * 7.0 + 16.0) / camera.zoom;
-    let badge_w = badge_w.min(group.size[0]);
-    out.push(InstanceRaw {
-        position: [
-            group.position[0],
-            group.position[1] - badge_h - 2.0 / camera.zoom,
-        ],
-        size: [badge_w, badge_h],
-        color: theme.component_badge_color,
-        border_radius: 3.0 / camera.zoom,
-    });
+    // No badge — group name is rendered as an inline text label (like waveform filenames)
 
     // Resize handles when selected
     if is_selected {
