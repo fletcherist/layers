@@ -1124,8 +1124,17 @@ impl App {
                                         }
                                     }
                                     if *has_children && !matches!(kind, crate::layers::LayerNodeKind::Instrument) {
-                                        crate::layers::toggle_expanded(&mut self.layer_tree, *id);
-                                        self.refresh_project_browser_entries();
+                                        // Only toggle expand when clicking the chevron icon area
+                                        let entry = &self.sample_browser.entries[idx];
+                                        let (_, _, scale) = self.screen_info();
+                                        let cx = self.sample_browser.content_x(scale);
+                                        let indent = entry.depth as f32 * 16.0 * scale;
+                                        let chev_hit_x = cx + indent + 4.0 * scale;
+                                        let chev_hit_w = 20.0 * scale;
+                                        if self.mouse_pos[0] >= chev_hit_x && self.mouse_pos[0] <= chev_hit_x + chev_hit_w {
+                                            crate::layers::toggle_expanded(&mut self.layer_tree, *id);
+                                            self.refresh_project_browser_entries();
+                                        }
                                     }
                                     match kind {
                                         crate::layers::LayerNodeKind::Instrument => {

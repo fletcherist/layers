@@ -382,7 +382,7 @@ impl SampleBrowser {
         SIDEBAR_WIDTH * scale
     }
 
-    fn content_x(&self, scale: f32) -> f32 {
+    pub(crate) fn content_x(&self, scale: f32) -> f32 {
         self.sidebar_width(scale)
     }
 
@@ -968,7 +968,7 @@ impl SampleBrowser {
                     // Chevron for expandable nodes (not instruments — always expanded)
                     if let EntryKind::LayerNode { has_children: true, expanded, kind, .. } = &entry.kind {
                     if !matches!(kind, LayerNodeKind::Instrument) {
-                        let chev_sz = 6.0 * scale;
+                        let chev_sz = 8.0 * scale;
                         let chev_x = cx + indent + 8.0 * scale + chev_sz * 0.5;
                         let cy_mid = y + item_h * 0.5;
                         if *expanded {
@@ -1046,7 +1046,7 @@ impl SampleBrowser {
 
                     // Chevron for directories
                     if entry.is_dir() {
-                        let chev_sz = 6.0 * scale;
+                        let chev_sz = 8.0 * scale;
                         let chev_x = cx + indent + chev_sz * 0.5;
                         let cy = y + item_h * 0.5;
 
