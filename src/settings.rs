@@ -154,6 +154,12 @@ fn default_metronome_enabled() -> bool { false }
 fn default_primary_hue() -> f32 { 216.0 }
 fn default_theme_preset() -> String { "Default".to_string() }
 fn default_buffer_size() -> u32 { 512 }
+fn default_use_vst3_system_folders() -> bool { true }
+fn default_use_vst3_custom_folder() -> bool { false }
+fn default_vst3_custom_folder_path() -> String { String::new() }
+fn default_multiple_plugin_windows() -> bool { true }
+fn default_auto_hide_plugin_windows() -> bool { true }
+fn default_auto_open_plugin_windows() -> bool { true }
 
 pub const BUFFER_SIZE_OPTIONS: &[u32] = &[32, 64, 128, 256, 512, 1024, 2048];
 
@@ -192,6 +198,18 @@ pub struct Settings {
     pub metronome_enabled: bool,
     #[serde(default = "default_buffer_size")]
     pub buffer_size: u32,
+    #[serde(default = "default_use_vst3_system_folders")]
+    pub use_vst3_system_folders: bool,
+    #[serde(default = "default_use_vst3_custom_folder")]
+    pub use_vst3_custom_folder: bool,
+    #[serde(default = "default_vst3_custom_folder_path")]
+    pub vst3_custom_folder_path: String,
+    #[serde(default = "default_multiple_plugin_windows")]
+    pub multiple_plugin_windows: bool,
+    #[serde(default = "default_auto_hide_plugin_windows")]
+    pub auto_hide_plugin_windows: bool,
+    #[serde(default = "default_auto_open_plugin_windows")]
+    pub auto_open_plugin_windows: bool,
     #[serde(skip)]
     pub theme: crate::theme::RuntimeTheme,
 }
@@ -257,6 +275,12 @@ impl Default for Settings {
             theme_preset: "Default".to_string(),
             metronome_enabled: false,
             buffer_size: 512,
+            use_vst3_system_folders: true,
+            use_vst3_custom_folder: false,
+            vst3_custom_folder_path: String::new(),
+            multiple_plugin_windows: true,
+            auto_hide_plugin_windows: true,
+            auto_open_plugin_windows: true,
             theme: crate::theme::RuntimeTheme::default(),
         }
     }
