@@ -1159,6 +1159,29 @@ impl App {
                                     self.sync_computer_keyboard_to_engine();
                                 }
                                 ui::browser::EntryKind::LayerNode { id, kind, has_children, .. } => {
+                                    // Solo/Mute button hit test (right-aligned buttons)
+                                    if matches!(kind, crate::layers::LayerNodeKind::Waveform | crate::layers::LayerNodeKind::Instrument | crate::layers::LayerNodeKind::Group) {
+                                        let (_, _, scale) = self.screen_info();
+                                        let (s_x, m_x, btn_w) = self.sample_browser.solo_mute_button_rects(scale);
+                                        let mx = self.mouse_pos[0];
+                                        if mx >= s_x && mx <= s_x + btn_w {
+                                            let shift = self.modifiers.shift_key();
+                                            self.toggle_solo(*id, shift);
+                                            self.refresh_project_browser_entries();
+                                            #[cfg(feature = "native")]
+                                            self.sync_audio_clips();
+                                            self.mark_dirty();
+                                            return;
+                                        }
+                                        if mx >= m_x && mx <= m_x + btn_w {
+                                            self.toggle_mute(*id);
+                                            self.refresh_project_browser_entries();
+                                            #[cfg(feature = "native")]
+                                            self.sync_audio_clips();
+                                            self.mark_dirty();
+                                            return;
+                                        }
+                                    }
                                     // Double-click enters inline rename in the browser
                                     let now = TimeInstant::now();
                                     let is_dbl = now.duration_since(self.last_browser_click_time).as_millis() < 400

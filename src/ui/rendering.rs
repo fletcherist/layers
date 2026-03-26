@@ -52,6 +52,13 @@ pub(crate) struct RenderContext<'a> {
     pub(crate) remote_users: &'a std::collections::HashMap<crate::user::UserId, crate::user::RemoteUserState>,
     pub(crate) network_mode: crate::network::NetworkMode,
     pub(crate) hidden_take_children: &'a HashSet<EntityId>,
+    pub(crate) solo_ids: &'a std::collections::HashSet<EntityId>,
+    pub(crate) mute_ids: &'a std::collections::HashSet<EntityId>,
+}
+
+/// Returns true if an entity should appear dimmed on canvas due to solo/mute state.
+fn is_dimmed_by_solo_mute(id: EntityId, ctx: &RenderContext) -> bool {
+    !crate::is_entity_audible(id, ctx.solo_ids, ctx.mute_ids, ctx.groups)
 }
 
 pub(crate) fn build_instances(out: &mut Vec<InstanceRaw>, ctx: &RenderContext) {
@@ -412,7 +419,11 @@ pub(crate) fn build_instances(out: &mut Vec<InstanceRaw>, ctx: &RenderContext) {
         }
         let is_sel = ctx.selected.contains(&HitTarget::Waveform(id));
         let is_hov = ctx.hovered == Some(HitTarget::Waveform(id));
-        let wf_color = apply_intensity(wf.color);
+        let mut wf_color = apply_intensity(wf.color);
+        // Dim muted or non-soloed clips
+        if is_dimmed_by_solo_mute(id, ctx) {
+            wf_color[3] *= 0.35;
+        }
         out.extend(ui::waveform::build_waveform_instances(
             wf,
             camera,
@@ -504,6 +515,15 @@ pub(crate) fn build_instances(out: &mut Vec<InstanceRaw>, ctx: &RenderContext) {
             is_sel,
             &ctx.settings.theme,
         ));
+        // Dim overlay for muted/non-soloed groups
+        if is_dimmed_by_solo_mute(id, ctx) {
+            out.push(InstanceRaw {
+                position: group.position,
+                size: group.size,
+                color: [ctx.settings.theme.bg_base[0], ctx.settings.theme.bg_base[1], ctx.settings.theme.bg_base[2], 0.65],
+                border_radius: 4.0 / camera.zoom,
+            });
+        }
     }
 
     // --- edit mode dimming overlay ---

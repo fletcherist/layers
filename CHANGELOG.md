@@ -1,3 +1,5 @@
+- 2026-03-26: fix: solo/mute — fix group bus not muted via keyboard path, fix multi-select solo toggle, deduplicate audibility logic, extract button rect helper (43.5k loc)
+- 2026-03-26: feat: solo/mute — S and M buttons on layers panel rows for waveforms, instruments, and groups; S/M keyboard shortcuts; exclusive (click) and additive (shift+click) solo; muted/non-soloed clips dimmed on canvas; group solo/mute affects all members (43.5k loc)
 - fix: VST instrument in group with effects no longer glitches — same plugin was processed twice; instruments now route through group bus (43.0k loc)
 - fix: canvas marquee selection now auto-includes instruments when their paired MIDI clip is selected (42.9k loc)
 - fix: instruments now included when grouping selection — fixed shift-select in layers panel, SelectAll (Cmd+A), and ungroup restore (42.9k loc)

@@ -339,6 +339,45 @@ struct App {
     pub(crate) computer_keyboard_velocity: u8,
     pub(crate) keyboard_instrument_id: Option<EntityId>,
     pub(crate) midi_keyboard_held: HashMap<KeyCode, (EntityId, u8)>,
+    /// Transient solo state — not persisted, not in undo history.
+    pub(crate) solo_ids: std::collections::HashSet<EntityId>,
+    /// Transient mute state — not persisted, not in undo history.
+    pub(crate) mute_ids: std::collections::HashSet<EntityId>,
+}
+
+/// Whether an entity should be audible, considering solo/mute and group membership.
+/// Shared logic used by both audio routing (`App::should_play`) and rendering (`is_dimmed_by_solo_mute`).
+pub(crate) fn is_entity_audible(
+    id: EntityId,
+    solo_ids: &std::collections::HashSet<EntityId>,
+    mute_ids: &std::collections::HashSet<EntityId>,
+    groups: &IndexMap<EntityId, crate::group::Group>,
+) -> bool {
+    // Check direct mute
+    if mute_ids.contains(&id) {
+        return false;
+    }
+    // Check group mute
+    for group in groups.values() {
+        if group.member_ids.contains(&id) && mute_ids.contains(&group.id) {
+            return false;
+        }
+    }
+    // If no solos active, play everything unmuted
+    if solo_ids.is_empty() {
+        return true;
+    }
+    // Check direct solo
+    if solo_ids.contains(&id) {
+        return true;
+    }
+    // Check group solo — members of a soloed group should play
+    for group in groups.values() {
+        if group.member_ids.contains(&id) && solo_ids.contains(&group.id) {
+            return true;
+        }
+    }
+    false
 }
 
 impl App {
@@ -474,6 +513,8 @@ impl App {
             computer_keyboard_velocity: midi_keyboard::DEFAULT_VELOCITY,
             keyboard_instrument_id: None,
             midi_keyboard_held: HashMap::new(),
+            solo_ids: std::collections::HashSet::new(),
+            mute_ids: std::collections::HashSet::new(),
         }
     }
 
@@ -589,6 +630,8 @@ impl App {
             &self.midi_clips,
             &self.waveforms,
             &self.groups,
+            &self.solo_ids,
+            &self.mute_ids,
         );
         self.sample_browser.layer_rows = rows;
         if self.sample_browser.active_category == ui::browser::BrowserCategory::Layers {
@@ -1194,6 +1237,8 @@ impl App {
             computer_keyboard_velocity: midi_keyboard::DEFAULT_VELOCITY,
             keyboard_instrument_id: None,
             midi_keyboard_held: HashMap::new(),
+            solo_ids: std::collections::HashSet::new(),
+            mute_ids: std::collections::HashSet::new(),
         }
     }
 
@@ -1604,6 +1649,59 @@ impl App {
         self.request_redraw();
     }
 
+    /// Toggle solo on an entity. Click = exclusive, shift = additive.
+    pub(crate) fn toggle_solo(&mut self, id: EntityId, shift: bool) {
+        if shift {
+            // Additive: toggle this one
+            if !self.solo_ids.remove(&id) {
+                self.solo_ids.insert(id);
+            }
+        } else {
+            // Exclusive: if already the only solo, clear; otherwise set as only solo
+            if self.solo_ids.len() == 1 && self.solo_ids.contains(&id) {
+                self.solo_ids.clear();
+            } else {
+                self.solo_ids.clear();
+                self.solo_ids.insert(id);
+            }
+        }
+    }
+
+    /// Toggle mute on an entity.
+    pub(crate) fn toggle_mute(&mut self, id: EntityId) {
+        if !self.mute_ids.remove(&id) {
+            self.mute_ids.insert(id);
+        }
+    }
+
+    /// Whether an entity should produce audio, considering solo/mute and group membership.
+    pub(crate) fn should_play(&self, id: EntityId) -> bool {
+        is_entity_audible(id, &self.solo_ids, &self.mute_ids, &self.groups)
+    }
+
+    /// Whether a group bus should be active (not muted, and passes solo check).
+    #[cfg(feature = "native")]
+    fn should_play_group(&self, gid: EntityId) -> bool {
+        if self.mute_ids.contains(&gid) {
+            return false;
+        }
+        if self.solo_ids.is_empty() {
+            return true;
+        }
+        // Group is soloed, or any member is soloed
+        if self.solo_ids.contains(&gid) {
+            return true;
+        }
+        if let Some(group) = self.groups.get(&gid) {
+            for mid in &group.member_ids {
+                if self.solo_ids.contains(mid) {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
     /// Build a member → group lookup map.
     #[cfg(feature = "native")]
     fn build_group_membership(&self) -> std::collections::HashMap<EntityId, EntityId> {
@@ -1710,6 +1808,9 @@ impl App {
             let mut group_id_to_bus_idx: std::collections::HashMap<EntityId, usize> = std::collections::HashMap::new();
             let mut group_buses: Vec<audio::GroupBus> = Vec::new();
             for (&gid, group) in &self.groups {
+                if !self.should_play_group(gid) {
+                    continue;
+                }
                 let plugins = self.collect_group_chain_plugins(gid);
                 let has_audio_member = group.member_ids.iter().any(|mid| {
                     self.waveforms.get(mid).map_or(false, |wf| !wf.disabled && self.audio_clips.contains_key(mid))
@@ -1783,6 +1884,9 @@ impl App {
 
             for (&wf_id, wf) in self.waveforms.iter() {
                 if wf.disabled {
+                    continue;
+                }
+                if !self.should_play(wf_id) {
                     continue;
                 }
                 let clip = match self.audio_clips.get(&wf_id) {
@@ -2086,6 +2190,9 @@ impl App {
                 if !inst.has_plugin() {
                     continue;
                 }
+                if !self.should_play(inst_id) {
+                    continue;
+                }
                 let mut midi_events = Vec::new();
                 let mut x_min = f32::MAX;
                 let mut x_max = f32::MIN;
@@ -2160,6 +2267,9 @@ impl App {
         let mut group_id_to_bus_idx = std::collections::HashMap::new();
         let mut group_buses = Vec::new();
         for (&gid, group) in &self.groups {
+            if !self.should_play_group(gid) {
+                continue;
+            }
             let plugins = self.collect_group_chain_plugins(gid);
             let has_audio_member = group.member_ids.iter().any(|mid| {
                 self.waveforms.get(mid).map_or(false, |wf| !wf.disabled && self.audio_clips.contains_key(mid))

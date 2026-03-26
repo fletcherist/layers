@@ -58,7 +58,7 @@ pub enum EntryKind {
     PluginHeader,
     Plugin { unique_id: String, is_instrument: bool },
     ProjectInstrument { id: EntityId },
-    LayerNode { id: EntityId, kind: LayerNodeKind, has_children: bool, expanded: bool, color: [f32; 4] },
+    LayerNode { id: EntityId, kind: LayerNodeKind, has_children: bool, expanded: bool, color: [f32; 4], is_soloed: bool, is_muted: bool },
 }
 
 #[derive(Clone)]
@@ -321,6 +321,8 @@ impl SampleBrowser {
                             has_children: row.has_children,
                             expanded: row.expanded,
                             color: row.color,
+                            is_soloed: row.is_soloed,
+                            is_muted: row.is_muted,
                         },
                         depth: if searching { 0 } else { row.depth },
                     });
@@ -394,8 +396,19 @@ impl SampleBrowser {
         self.sidebar_width(scale)
     }
 
-    fn content_width(&self, scale: f32) -> f32 {
+    pub(crate) fn content_width(&self, scale: f32) -> f32 {
         self.panel_width(scale) - self.sidebar_width(scale)
+    }
+
+    /// Returns (s_x, m_x, btn_w) for the solo/mute buttons in a layer row.
+    pub(crate) fn solo_mute_button_rects(&self, scale: f32) -> (f32, f32, f32) {
+        let cx = self.content_x(scale);
+        let content_w = self.content_width(scale);
+        let btn_w = 16.0 * scale;
+        let row_right = cx + content_w;
+        let m_x = row_right - btn_w - 4.0 * scale;
+        let s_x = m_x - btn_w - 2.0 * scale;
+        (s_x, m_x, btn_w)
     }
 
     fn content_height(&self, scale: f32) -> f32 {
@@ -1032,6 +1045,49 @@ impl SampleBrowser {
                         color: dot_color,
                         border_radius: dot_sz * 0.5,
                     });
+                    // Solo/Mute buttons (right-aligned) — only for Waveform, Instrument, Group
+                    if let EntryKind::LayerNode { kind, is_soloed, is_muted, .. } = &entry.kind {
+                        if matches!(kind, LayerNodeKind::Waveform | LayerNodeKind::Instrument | LayerNodeKind::Group) {
+                            let (s_x, m_x, btn_w) = self.solo_mute_button_rects(scale);
+                            let btn_h = 14.0 * scale;
+                            let btn_y = y + (item_h - btn_h) * 0.5;
+                            let br = 2.0 * scale;
+
+                            // S button background
+                            let s_bg = if *is_soloed {
+                                [0.85, 0.75, 0.15, 1.0] // yellow when active
+                            } else if self.hovered_entry == Some(i) {
+                                crate::theme::with_alpha(settings.theme.text_dim, 0.15)
+                            } else {
+                                [0.0; 4]
+                            };
+                            if s_bg[3] > 0.0 {
+                                out.push(InstanceRaw {
+                                    position: [s_x, btn_y],
+                                    size: [btn_w, btn_h],
+                                    color: s_bg,
+                                    border_radius: br,
+                                });
+                            }
+
+                            // M button background
+                            let m_bg = if *is_muted {
+                                [0.85, 0.30, 0.20, 1.0] // red when active
+                            } else if self.hovered_entry == Some(i) {
+                                crate::theme::with_alpha(settings.theme.text_dim, 0.15)
+                            } else {
+                                [0.0; 4]
+                            };
+                            if m_bg[3] > 0.0 {
+                                out.push(InstanceRaw {
+                                    position: [m_x, btn_y],
+                                    size: [btn_w, btn_h],
+                                    color: m_bg,
+                                    border_radius: br,
+                                });
+                            }
+                        }
+                    }
                 }
                 EntryKind::Dir | EntryKind::File => {
                     // Hover
@@ -1328,6 +1384,51 @@ impl SampleBrowser {
                         bounds: None,
                         center: false,
                     });
+                    // Solo/Mute button labels
+                    if let EntryKind::LayerNode { kind, is_soloed, is_muted, .. } = &entry.kind {
+                        if matches!(kind, LayerNodeKind::Waveform | LayerNodeKind::Instrument | LayerNodeKind::Group) {
+                            let (s_x, m_x, btn_w) = self.solo_mute_button_rects(scale);
+                            let btn_font = 9.0 * scale;
+                            let btn_line = 11.0 * scale;
+                            let btn_text_y = base_y + (item_h - btn_line) * 0.5;
+
+                            let s_color = if *is_soloed {
+                                [30u8, 30, 30, 255]
+                            } else {
+                                crate::theme::RuntimeTheme::text_u8(theme.text_dim, 140)
+                            };
+                            out.push(TextEntry {
+                                text: "S".to_string(),
+                                x: s_x,
+                                y: btn_text_y,
+                                font_size: btn_font,
+                                line_height: btn_line,
+                                max_width: btn_w,
+                                color: s_color,
+                                weight: 700,
+                                bounds: None,
+                                center: true,
+                            });
+
+                            let m_color = if *is_muted {
+                                [255u8, 255, 255, 255]
+                            } else {
+                                crate::theme::RuntimeTheme::text_u8(theme.text_dim, 140)
+                            };
+                            out.push(TextEntry {
+                                text: "M".to_string(),
+                                x: m_x,
+                                y: btn_text_y,
+                                font_size: btn_font,
+                                line_height: btn_line,
+                                max_width: btn_w,
+                                color: m_color,
+                                weight: 700,
+                                bounds: None,
+                                center: true,
+                            });
+                        }
+                    }
                 }
                 EntryKind::Dir | EntryKind::File => {
                     let indent = entry.depth as f32 * INDENT_PX * scale + 8.0 * scale;

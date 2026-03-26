@@ -1469,6 +1469,52 @@ impl App {
                             self.request_redraw();
                         }
                     }
+                    "s" => {
+                        // Solo selected entities
+                        let shift = self.modifiers.shift_key();
+                        let targets: Vec<EntityId> = self.selected.iter().filter_map(|t| match t {
+                            HitTarget::Waveform(id) | HitTarget::Instrument(id) | HitTarget::Group(id) => Some(*id),
+                            _ => None,
+                        }).collect();
+                        if !targets.is_empty() {
+                            if shift {
+                                // Additive: toggle each target individually
+                                for &id in &targets {
+                                    self.toggle_solo(id, true);
+                                }
+                            } else {
+                                // Exclusive: if all targets are already the solo set, clear; otherwise solo exactly these
+                                let all_already_soloed = self.solo_ids.len() == targets.len()
+                                    && targets.iter().all(|id| self.solo_ids.contains(id));
+                                if all_already_soloed {
+                                    self.solo_ids.clear();
+                                } else {
+                                    self.solo_ids.clear();
+                                    for &id in &targets {
+                                        self.solo_ids.insert(id);
+                                    }
+                                }
+                            }
+                            self.refresh_project_browser_entries();
+                            #[cfg(feature = "native")]
+                            self.sync_audio_clips();
+                            self.mark_dirty();
+                        }
+                    }
+                    "m" => {
+                        // Mute selected entities
+                        let targets: Vec<EntityId> = self.selected.iter().filter_map(|t| match t {
+                            HitTarget::Waveform(id) | HitTarget::Instrument(id) | HitTarget::Group(id) => Some(*id),
+                            _ => None,
+                        }).collect();
+                        for id in targets {
+                            self.toggle_mute(id);
+                        }
+                        self.refresh_project_browser_entries();
+                        #[cfg(feature = "native")]
+                        self.sync_audio_clips();
+                        self.mark_dirty();
+                    }
                     _ => {}
                 },
                 _ if self.cmd_held() => {
