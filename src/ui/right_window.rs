@@ -2,7 +2,7 @@ use crate::entity_id::EntityId;
 use crate::gpu::TextEntry;
 use crate::InstanceRaw;
 use crate::ui::palette::{gain_to_db, gain_to_vol_fader_pos, vol_fader_pos_to_gain,
-    VOL_FADER_DB_MAX, VOL_FADER_DB_BOTTOM, VOL_FADER_P_ZERO, VOL_FADER_P_BOTTOM};
+    VOL_FADER_DB_BOTTOM, VOL_FADER_P_ZERO, VOL_FADER_P_BOTTOM};
 use crate::ui::value_entry::ValueEntry;
 use crate::ui::waveform::{WarpMode, WaveformView};
 
@@ -25,14 +25,15 @@ const FADER_TRACK_HEIGHT: f32 = 160.0;
 const FADER_TOP_OFFSET: f32 = 32.0;
 
 const PAN_KNOB_Y_OFFSET: f32 = 264.0;
-const REVERSE_BUTTON_Y_OFFSET: f32 = 326.0;
-const PITCH_KNOB_Y_OFFSET: f32 = 368.0;
+const SOLO_MUTE_Y_OFFSET: f32 = 326.0;
+const REVERSE_BUTTON_Y_OFFSET: f32 = 370.0;
+const PITCH_KNOB_Y_OFFSET: f32 = 412.0;
 
 /// Extra vertical offset for group inspector (space for group name + member count above fader)
 const GROUP_EXTRA_Y: f32 = 40.0;
 
 // Effect chain section
-const EFFECT_CHAIN_TOP_OFFSET: f32 = 460.0;
+const EFFECT_CHAIN_TOP_OFFSET: f32 = 504.0;
 /// Group effect chain sits below the pan knob, mirroring the instrument layout
 const GROUP_EFFECT_CHAIN_TOP_OFFSET: f32 = REVERSE_BUTTON_Y_OFFSET + GROUP_EXTRA_Y;
 const EFFECT_SLOT_HEIGHT: f32 = 30.0;
@@ -125,6 +126,10 @@ pub struct RightWindow {
     pub multi_target_ids: Vec<EntityId>,
     /// Snapshots of waveforms at drag start (for batch undo)
     pub drag_start_snapshots: Vec<(EntityId, WaveformView)>,
+    /// Transient solo state for the target entity
+    pub is_soloed: bool,
+    /// Transient mute state for the target entity
+    pub is_muted: bool,
 }
 
 impl RightWindow {
@@ -264,6 +269,18 @@ impl RightWindow {
         let dx = pos[0] - layout.center[0];
         let dy = pos[1] - layout.center[1];
         dx * dx + dy * dy <= r * r
+    }
+
+    fn solo_mute_layout(screen_w: f32, screen_h: f32, scale: f32, y_extra: f32) -> super::solo_mute::SoloMuteLayout {
+        let (pp, ps) = Self::panel_rect(screen_w, screen_h, scale);
+        let cx = pp[0] + ps[0] * 0.5;
+        let cy = pp[1] + HEADER_HEIGHT * scale + SOLO_MUTE_Y_OFFSET * scale + y_extra;
+        super::solo_mute::layout_centered(cx, cy, scale)
+    }
+
+    pub fn hit_test_solo_mute(&self, pos: [f32; 2], screen_w: f32, screen_h: f32, scale: f32) -> super::solo_mute::SoloMuteHit {
+        let layout = Self::solo_mute_layout(screen_w, screen_h, scale, self.y_extra());
+        super::solo_mute::hit_test(&layout, pos)
     }
 
     pub fn hit_test_reverse_button(&self, pos: [f32; 2], screen_w: f32, screen_h: f32, scale: f32) -> bool {
@@ -616,6 +633,12 @@ impl RightWindow {
             // Bottom-right
             out.push(InstanceRaw { position: [x1 - bracket_len, y1 - thick], size: [bracket_len, thick], color, border_radius: 0.0 });
             out.push(InstanceRaw { position: [x1 - thick, y1 - bracket_len], size: [thick, bracket_len], color, border_radius: 0.0 });
+        }
+
+        // Solo/Mute buttons (all entity types)
+        {
+            let sm_layout = Self::solo_mute_layout(screen_w, screen_h, scale, self.y_extra());
+            out.extend(super::solo_mute::build_instances(&sm_layout, self.is_soloed, self.is_muted, false, &settings.theme, scale));
         }
 
         // Reverse / Warp / Pitch — waveform-only controls (hidden for multi-selection)
@@ -1016,6 +1039,12 @@ impl RightWindow {
             bounds: None,
             center: true,
         });
+
+        // Solo/Mute button text (all entity types)
+        {
+            let sm_layout = Self::solo_mute_layout(screen_w, screen_h, scale, self.y_extra());
+            out.extend(super::solo_mute::build_text_entries(&sm_layout, self.is_soloed, self.is_muted, theme, scale));
+        }
 
         // Reverse / Warp / Pitch text — waveform-only (hidden for multi-selection)
         if self.is_waveform() && !self.is_multi() {

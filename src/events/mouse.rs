@@ -542,6 +542,7 @@ impl App {
                     let in_panel = self.mouse_pos[0] >= pp[0] && self.mouse_pos[0] <= pp[0] + ps[0];
                     if in_panel {
                         let wf_id = rw.target_id();
+                        let hit_sm = rw.hit_test_solo_mute(self.mouse_pos, sw, sh, scale);
                         let hit_vol_text = rw.hit_test_vol_text(self.mouse_pos, sw, sh, scale);
                         let hit_vol = rw.hit_test_vol_knob(self.mouse_pos, sw, sh, scale);
                         let hit_vol_track = rw.hit_test_vol_track(self.mouse_pos, sw, sh, scale);
@@ -551,7 +552,25 @@ impl App {
                         let hit_warp_sel = rw.hit_test_warp_mode_selector(self.mouse_pos, sw, sh, scale);
                         let hit_sbpm_text = rw.hit_test_sample_bpm_text(self.mouse_pos, sw, sh, scale);
                         let hit_pitch_text = rw.hit_test_pitch_text(self.mouse_pos, sw, sh, scale);
-                        if hit_reverse_btn {
+                        if hit_sm != ui::solo_mute::SoloMuteHit::None {
+                            let target_id = rw.target_id();
+                            match hit_sm {
+                                ui::solo_mute::SoloMuteHit::Solo => {
+                                    let shift = self.modifiers.shift_key();
+                                    self.toggle_solo(target_id, shift);
+                                }
+                                ui::solo_mute::SoloMuteHit::Mute => {
+                                    self.toggle_mute(target_id);
+                                }
+                                ui::solo_mute::SoloMuteHit::None => {}
+                            }
+                            self.update_right_window();
+                            self.refresh_project_browser_entries();
+                            #[cfg(feature = "native")]
+                            self.sync_audio_clips();
+                            self.mark_dirty();
+                            return;
+                        } else if hit_reverse_btn {
                             self.execute_command(ui::palette::CommandAction::ReverseSample);
                             self.update_right_window();
                             self.request_redraw();
@@ -1162,19 +1181,22 @@ impl App {
                                     // Solo/Mute button hit test (right-aligned buttons)
                                     if matches!(kind, crate::layers::LayerNodeKind::Waveform | crate::layers::LayerNodeKind::Instrument | crate::layers::LayerNodeKind::Group) {
                                         let (_, _, scale) = self.screen_info();
-                                        let (s_x, m_x, btn_w) = self.sample_browser.solo_mute_button_rects(scale);
-                                        let mx = self.mouse_pos[0];
-                                        if mx >= s_x && mx <= s_x + btn_w {
-                                            let shift = self.modifiers.shift_key();
-                                            self.toggle_solo(*id, shift);
-                                            self.refresh_project_browser_entries();
-                                            #[cfg(feature = "native")]
-                                            self.sync_audio_clips();
-                                            self.mark_dirty();
-                                            return;
-                                        }
-                                        if mx >= m_x && mx <= m_x + btn_w {
-                                            self.toggle_mute(*id);
+                                        let row_right = self.sample_browser.content_x(scale) + self.sample_browser.content_width(scale);
+                                        let row_cy = self.mouse_pos[1]; // Y doesn't matter for horizontal hit-test
+                                        let layout = ui::solo_mute::layout_right_aligned(row_right, row_cy, scale);
+                                        let hit = ui::solo_mute::hit_test(&layout, self.mouse_pos);
+                                        if hit != ui::solo_mute::SoloMuteHit::None {
+                                            match hit {
+                                                ui::solo_mute::SoloMuteHit::Solo => {
+                                                    let shift = self.modifiers.shift_key();
+                                                    self.toggle_solo(*id, shift);
+                                                }
+                                                ui::solo_mute::SoloMuteHit::Mute => {
+                                                    self.toggle_mute(*id);
+                                                }
+                                                ui::solo_mute::SoloMuteHit::None => {}
+                                            }
+                                            self.update_right_window();
                                             self.refresh_project_browser_entries();
                                             #[cfg(feature = "native")]
                                             self.sync_audio_clips();

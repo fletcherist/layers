@@ -400,17 +400,6 @@ impl SampleBrowser {
         self.panel_width(scale) - self.sidebar_width(scale)
     }
 
-    /// Returns (s_x, m_x, btn_w) for the solo/mute buttons in a layer row.
-    pub(crate) fn solo_mute_button_rects(&self, scale: f32) -> (f32, f32, f32) {
-        let cx = self.content_x(scale);
-        let content_w = self.content_width(scale);
-        let btn_w = 16.0 * scale;
-        let row_right = cx + content_w;
-        let m_x = row_right - btn_w - 4.0 * scale;
-        let s_x = m_x - btn_w - 2.0 * scale;
-        (s_x, m_x, btn_w)
-    }
-
     fn content_height(&self, scale: f32) -> f32 {
         self.entries.len() as f32 * ITEM_HEIGHT * scale
     }
@@ -1048,44 +1037,11 @@ impl SampleBrowser {
                     // Solo/Mute buttons (right-aligned) — only for Waveform, Instrument, Group
                     if let EntryKind::LayerNode { kind, is_soloed, is_muted, .. } = &entry.kind {
                         if matches!(kind, LayerNodeKind::Waveform | LayerNodeKind::Instrument | LayerNodeKind::Group) {
-                            let (s_x, m_x, btn_w) = self.solo_mute_button_rects(scale);
-                            let btn_h = 14.0 * scale;
-                            let btn_y = y + (item_h - btn_h) * 0.5;
-                            let br = 2.0 * scale;
-
-                            // S button background
-                            let s_bg = if *is_soloed {
-                                [0.85, 0.75, 0.15, 1.0] // yellow when active
-                            } else if self.hovered_entry == Some(i) {
-                                crate::theme::with_alpha(settings.theme.text_dim, 0.15)
-                            } else {
-                                [0.0; 4]
-                            };
-                            if s_bg[3] > 0.0 {
-                                out.push(InstanceRaw {
-                                    position: [s_x, btn_y],
-                                    size: [btn_w, btn_h],
-                                    color: s_bg,
-                                    border_radius: br,
-                                });
-                            }
-
-                            // M button background
-                            let m_bg = if *is_muted {
-                                [0.85, 0.30, 0.20, 1.0] // red when active
-                            } else if self.hovered_entry == Some(i) {
-                                crate::theme::with_alpha(settings.theme.text_dim, 0.15)
-                            } else {
-                                [0.0; 4]
-                            };
-                            if m_bg[3] > 0.0 {
-                                out.push(InstanceRaw {
-                                    position: [m_x, btn_y],
-                                    size: [btn_w, btn_h],
-                                    color: m_bg,
-                                    border_radius: br,
-                                });
-                            }
+                            let row_right = cx + content_w;
+                            let row_cy = y + item_h * 0.5;
+                            let layout = super::solo_mute::layout_right_aligned(row_right, row_cy, scale);
+                            let is_hovered = self.hovered_entry == Some(i);
+                            out.extend(super::solo_mute::build_instances(&layout, *is_soloed, *is_muted, is_hovered, &settings.theme, scale));
                         }
                     }
                 }
@@ -1387,46 +1343,10 @@ impl SampleBrowser {
                     // Solo/Mute button labels
                     if let EntryKind::LayerNode { kind, is_soloed, is_muted, .. } = &entry.kind {
                         if matches!(kind, LayerNodeKind::Waveform | LayerNodeKind::Instrument | LayerNodeKind::Group) {
-                            let (s_x, m_x, btn_w) = self.solo_mute_button_rects(scale);
-                            let btn_font = 9.0 * scale;
-                            let btn_line = 11.0 * scale;
-                            let btn_text_y = base_y + (item_h - btn_line) * 0.5;
-
-                            let s_color = if *is_soloed {
-                                [30u8, 30, 30, 255]
-                            } else {
-                                crate::theme::RuntimeTheme::text_u8(theme.text_dim, 140)
-                            };
-                            out.push(TextEntry {
-                                text: "S".to_string(),
-                                x: s_x,
-                                y: btn_text_y,
-                                font_size: btn_font,
-                                line_height: btn_line,
-                                max_width: btn_w,
-                                color: s_color,
-                                weight: 700,
-                                bounds: None,
-                                center: true,
-                            });
-
-                            let m_color = if *is_muted {
-                                [255u8, 255, 255, 255]
-                            } else {
-                                crate::theme::RuntimeTheme::text_u8(theme.text_dim, 140)
-                            };
-                            out.push(TextEntry {
-                                text: "M".to_string(),
-                                x: m_x,
-                                y: btn_text_y,
-                                font_size: btn_font,
-                                line_height: btn_line,
-                                max_width: btn_w,
-                                color: m_color,
-                                weight: 700,
-                                bounds: None,
-                                center: true,
-                            });
+                            let row_right = cx + self.content_width(scale);
+                            let row_cy = base_y + item_h * 0.5;
+                            let layout = super::solo_mute::layout_right_aligned(row_right, row_cy, scale);
+                            out.extend(super::solo_mute::build_text_entries(&layout, *is_soloed, *is_muted, theme, scale));
                         }
                     }
                 }

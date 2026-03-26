@@ -1427,6 +1427,8 @@ impl App {
                     group_member_count: 0,
                     multi_target_ids: wf_ids,
                     drag_start_snapshots: Vec::new(),
+                    is_soloed: self.solo_ids.contains(&first_id),
+                    is_muted: self.mute_ids.contains(&first_id),
                 });
                 return;
             }
@@ -1479,6 +1481,8 @@ impl App {
                     group_member_count: member_count,
                     multi_target_ids: Vec::new(),
                     drag_start_snapshots: Vec::new(),
+                    is_soloed: self.solo_ids.contains(&group_id),
+                    is_muted: self.mute_ids.contains(&group_id),
                 });
                 return;
             }
@@ -1516,6 +1520,8 @@ impl App {
                 group_member_count: 0,
                 multi_target_ids: vec![wf_id],
                 drag_start_snapshots: Vec::new(),
+                is_soloed: self.solo_ids.contains(&wf_id),
+                is_muted: self.mute_ids.contains(&wf_id),
             });
         }
     }
@@ -1557,6 +1563,8 @@ impl App {
                 group_member_count: 0,
                 multi_target_ids: Vec::new(),
                 drag_start_snapshots: Vec::new(),
+                is_soloed: self.solo_ids.contains(&inst_id),
+                is_muted: self.mute_ids.contains(&inst_id),
             });
         }
     }
