@@ -1,3 +1,4 @@
+- 2026-03-26: refactor: removed 34 unused static color consts from theme.rs superseded by RuntimeTheme (44.9k loc)
 - 2026-03-26: fix: preview strip layout — filename label above waveform with spacing, taller strip (68px), drag from preview onto canvas (45.0k loc)
 - 2026-03-26: feat: browser arrow key navigation — Up/Down moves selection through samples with auto-play, auto-scroll, Right arrow replays from start; selected entry highlight; waveform uses channel_triangles rendering; centered headphones icon (45.0k loc)
 - 2026-03-26: feat: browser sample preview — click sample to show waveform strip at bottom, headphones toggle for auto-play, one-shot playback with playhead animation, spacebar stops preview, click-to-seek in preview waveform (44.8k loc)
