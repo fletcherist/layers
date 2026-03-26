@@ -167,6 +167,13 @@ impl ApplicationHandler for App {
         if self.sample_browser.is_search_pending() {
             self.request_redraw();
         }
+        // Poll background file index build.
+        if self.sample_browser.tick_file_index() {
+            self.request_redraw();
+        }
+        if self.sample_browser.is_file_index_building() {
+            self.request_redraw();
+        }
 
         if is_playing || self.is_recording() {
             self.request_redraw();

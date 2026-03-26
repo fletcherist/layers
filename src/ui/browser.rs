@@ -1,6 +1,7 @@
 use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::mpsc;
 
 #[cfg(target_arch = "wasm32")]
 use web_time::Instant as TimeInstant;
@@ -103,7 +104,7 @@ struct CachedFile {
 const MAX_SEARCH_RESULTS: usize = 500;
 
 /// Search debounce delay in milliseconds.
-const SEARCH_DEBOUNCE_MS: u64 = 50;
+const SEARCH_DEBOUNCE_MS: u64 = 150;
 
 pub struct SampleBrowser {
     pub root_folders: Vec<PathBuf>,
@@ -142,6 +143,10 @@ pub struct SampleBrowser {
     file_index: Vec<CachedFile>,
     /// Whether the file index needs rebuilding (root folders changed).
     file_index_dirty: bool,
+    /// Receiver for background file index build.
+    file_index_receiver: Option<mpsc::Receiver<Vec<CachedFile>>>,
+    /// Whether a background file index build is in progress.
+    file_index_building: bool,
     /// When set, a search rebuild is pending and should fire after this deadline.
     search_debounce_deadline: Option<TimeInstant>,
     /// Whether the search clear (X) button is hovered.
@@ -197,6 +202,8 @@ impl SampleBrowser {
             search_focused: false,
             file_index: Vec::new(),
             file_index_dirty: true,
+            file_index_receiver: None,
+            file_index_building: false,
             search_debounce_deadline: None,
             search_clear_hovered: false,
             layer_drop_indicator: None,
@@ -260,40 +267,48 @@ impl SampleBrowser {
         }
     }
 
-    /// Rebuild the flat file index by walking all root folders once.
-    /// Called lazily when a sample search is first performed after folders change.
+    /// Poll for a completed background file index build.
+    /// Returns true if the index was updated (caller should request redraw).
+    pub fn tick_file_index(&mut self) -> bool {
+        if let Some(rx) = &self.file_index_receiver {
+            if let Ok(index) = rx.try_recv() {
+                self.file_index = index;
+                self.file_index_dirty = false;
+                self.file_index_building = false;
+                self.file_index_receiver = None;
+                // Re-run search with the new index.
+                if !self.search_query.is_empty() {
+                    self.rebuild_entries();
+                }
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Ensure the file index is available. If dirty, kicks off a background
+    /// thread to walk directories without blocking the UI.
     fn ensure_file_index(&mut self) {
-        if !self.file_index_dirty {
+        if !self.file_index_dirty || self.file_index_building {
             return;
         }
         self.file_index.clear();
-        for root in &self.root_folders.clone() {
-            Self::index_walk_dir(&mut self.file_index, root);
-        }
-        self.file_index_dirty = false;
+        self.file_index_building = true;
+        let roots = self.root_folders.clone();
+        let (tx, rx) = mpsc::channel();
+        self.file_index_receiver = Some(rx);
+        std::thread::spawn(move || {
+            let mut index = Vec::new();
+            for root in &roots {
+                index_walk_dir(&mut index, root);
+            }
+            let _ = tx.send(index);
+        });
     }
 
-    fn index_walk_dir(index: &mut Vec<CachedFile>, dir: &std::path::Path) {
-        let Ok(read) = std::fs::read_dir(dir) else {
-            return;
-        };
-        for item in read.flatten() {
-            let path = item.path();
-            let fname = item.file_name().to_string_lossy().to_string();
-            if fname.starts_with('.') {
-                continue;
-            }
-            if path.is_dir() {
-                Self::index_walk_dir(index, &path);
-            } else {
-                let name_lower = fname.to_lowercase();
-                index.push(CachedFile {
-                    path,
-                    name: fname,
-                    name_lower,
-                });
-            }
-        }
+    /// Returns true if a background file index build is in progress.
+    pub fn is_file_index_building(&self) -> bool {
+        self.file_index_building
     }
 
     pub fn toggle_expand(&mut self, entry_idx: usize) {
@@ -335,6 +350,7 @@ impl SampleBrowser {
         self.entries.clear();
         let query = self.search_query.clone();
         let searching = !query.is_empty();
+        let query_lower = query.to_lowercase();
         match self.active_category {
             BrowserCategory::Layers => {
                 // Pinned "Main" layer row at the top
@@ -347,7 +363,7 @@ impl SampleBrowser {
                     });
                 }
                 for row in &self.layer_rows {
-                    if searching && !fuzzy_match(&row.label, &query) {
+                    if searching && !fuzzy_match_lowered(&row.label.to_lowercase(), &query_lower) {
                         continue;
                     }
                     self.entries.push(BrowserEntry {
@@ -375,9 +391,8 @@ impl SampleBrowser {
                 }
             }
             BrowserCategory::Samples => {
-                if searching {
+                if searching && query.len() >= 2 {
                     self.ensure_file_index();
-                    let query_lower = query.to_lowercase();
                     for cached in &self.file_index {
                         if fuzzy_match_lowered(&cached.name_lower, &query_lower) {
                             self.entries.push(BrowserEntry {
@@ -399,7 +414,7 @@ impl SampleBrowser {
             }
             BrowserCategory::Instruments => {
                 for inst in &self.instruments {
-                    if searching && !fuzzy_match(&inst.name, &query) {
+                    if searching && !fuzzy_match_lowered(&inst.name.to_lowercase(), &query_lower) {
                         continue;
                     }
                     self.entries.push(BrowserEntry {
@@ -415,7 +430,7 @@ impl SampleBrowser {
             }
             BrowserCategory::Effects => {
                 for plug in &self.plugins {
-                    if searching && !fuzzy_match(&plug.name, &query) {
+                    if searching && !fuzzy_match_lowered(&plug.name.to_lowercase(), &query_lower) {
                         continue;
                     }
                     self.entries.push(BrowserEntry {
@@ -1769,29 +1784,6 @@ fn walk_dir(
     }
 }
 
-/// Fuzzy match: returns true if all characters of `needle` appear in `haystack`
-/// in order (case-insensitive). Empty needle always matches.
-fn fuzzy_match(haystack: &str, needle: &str) -> bool {
-    if needle.is_empty() {
-        return true;
-    }
-    let mut h_chars = haystack.chars();
-    'outer: for nc in needle.chars() {
-        let nc_lo = nc.to_lowercase().next().unwrap_or(nc);
-        loop {
-            match h_chars.next() {
-                Some(hc) => {
-                    if hc.to_lowercase().next().unwrap_or(hc) == nc_lo {
-                        continue 'outer;
-                    }
-                }
-                None => return false,
-            }
-        }
-    }
-    true
-}
-
 /// Fuzzy match for pre-lowercased strings (no per-char lowercase conversion).
 fn fuzzy_match_lowered(haystack_lower: &str, needle_lower: &str) -> bool {
     if needle_lower.is_empty() {
@@ -1813,5 +1805,29 @@ fn fuzzy_match_lowered(haystack_lower: &str, needle_lower: &str) -> bool {
     true
 }
 
+
+/// Recursively walk a directory tree and collect file entries for the search index.
+fn index_walk_dir(index: &mut Vec<CachedFile>, dir: &std::path::Path) {
+    let Ok(read) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for item in read.flatten() {
+        let path = item.path();
+        let fname = item.file_name().to_string_lossy().to_string();
+        if fname.starts_with('.') {
+            continue;
+        }
+        if path.is_dir() {
+            index_walk_dir(index, &path);
+        } else {
+            let name_lower = fname.to_lowercase();
+            index.push(CachedFile {
+                path,
+                name: fname,
+                name_lower,
+            });
+        }
+    }
+}
 
 use crate::gpu::TextEntry;
