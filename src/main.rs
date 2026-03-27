@@ -730,6 +730,7 @@ impl App {
             &self.waveforms,
             &self.groups,
         );
+        let kb_target = if self.computer_keyboard_armed { self.keyboard_instrument_id } else { None };
         let rows = layers::flatten_tree(
             &self.layer_tree,
             &self.instruments,
@@ -738,6 +739,7 @@ impl App {
             &self.groups,
             &self.solo_ids,
             self.monitoring_group_id,
+            kb_target,
         );
         self.sample_browser.layer_rows = rows;
         if self.sample_browser.active_category == ui::browser::BrowserCategory::Layers {
@@ -1999,7 +2001,7 @@ impl App {
                 drag_start_snapshots: Vec::new(),
                 is_soloed: self.solo_ids.contains(&inst_id),
                 is_muted: inst.disabled,
-                is_monitoring: false,
+                is_monitoring: self.computer_keyboard_armed && self.keyboard_instrument_id == Some(inst_id),
                 meter_rms: 0.0,
                 meter_peak: 0.0,
                 peak_hold_timer: 0.0,
@@ -3044,7 +3046,9 @@ impl App {
             return;
         }
 
-        self.keyboard_instrument_id = None;
+        // Don't clear keyboard_instrument_id here — it may have been
+        // set explicitly via the "I" toggle button. Only selection-derived
+        // matches should override it; the "I" button is the explicit off switch.
     }
 
     #[cfg(feature = "native")]
@@ -3112,6 +3116,21 @@ impl App {
 
     #[cfg(not(feature = "native"))]
     fn toggle_group_monitoring(&mut self, _group_id: EntityId) {}
+
+    pub(crate) fn toggle_instrument_keyboard_preview(&mut self, inst_id: EntityId) {
+        let is_active = self.computer_keyboard_armed && self.keyboard_instrument_id == Some(inst_id);
+        if is_active {
+            self.keyboard_instrument_id = None;
+            self.release_computer_keyboard_notes();
+        } else {
+            self.keyboard_instrument_id = Some(inst_id);
+            self.computer_keyboard_armed = true;
+        }
+        #[cfg(feature = "native")]
+        self.sync_computer_keyboard_to_engine();
+        self.mark_dirty();
+        self.request_redraw();
+    }
 
     /// Find the parent waveform ID that owns a given child take.
     pub(crate) fn find_take_parent(&self, child_id: EntityId) -> Option<EntityId> {

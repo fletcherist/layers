@@ -358,7 +358,7 @@ impl RightWindow {
 
     pub fn hit_test_solo_mute(&self, pos: [f32; 2], screen_w: f32, screen_h: f32, scale: f32) -> super::solo_mute::SoloMuteHit {
         let layout = Self::solo_mute_layout(screen_w, screen_h, scale, self.y_extra());
-        super::solo_mute::hit_test(&layout, pos, self.is_group())
+        super::solo_mute::hit_test(&layout, pos, self.is_group() || self.is_instrument())
     }
 
     pub fn hit_test_reverse_button(&self, pos: [f32; 2], screen_w: f32, screen_h: f32, scale: f32) -> bool {
@@ -796,7 +796,7 @@ impl RightWindow {
         // Solo/Mute buttons (all entity types except MainLayer)
         if !self.is_master() {
             let sm_layout = Self::solo_mute_layout(screen_w, screen_h, scale, self.y_extra());
-            out.extend(super::solo_mute::build_instances(&sm_layout, self.is_soloed, self.is_muted, self.is_monitoring, false, true, self.is_group(), &settings.theme, scale));
+            out.extend(super::solo_mute::build_instances(&sm_layout, self.is_soloed, self.is_muted, self.is_monitoring, false, true, self.is_group() || self.is_instrument(), &settings.theme, scale));
         }
 
         // Reverse / Warp / Pitch — waveform-only controls (hidden for multi-selection)
@@ -1220,7 +1220,7 @@ impl RightWindow {
         // Solo/Mute button text (all entity types except MainLayer)
         if !self.is_master() {
             let sm_layout = Self::solo_mute_layout(screen_w, screen_h, scale, self.y_extra());
-            out.extend(super::solo_mute::build_text_entries(&sm_layout, self.is_soloed, self.is_muted, self.is_monitoring, true, self.is_group(), theme, scale));
+            out.extend(super::solo_mute::build_text_entries(&sm_layout, self.is_soloed, self.is_muted, self.is_monitoring, true, self.is_group() || self.is_instrument(), theme, scale));
         }
 
         // Reverse / Warp / Pitch text — waveform-only (hidden for multi-selection)

@@ -1708,6 +1708,11 @@ impl App {
                         self.sync_audio_clips();
                         self.mark_dirty();
                     }
+                    "i" => {
+                        if let Some(HitTarget::Instrument(id)) = self.selected.first().copied() {
+                            self.toggle_instrument_keyboard_preview(id);
+                        }
+                    }
                     _ => {}
                 },
                 _ if self.cmd_held() => {

@@ -747,7 +747,11 @@ impl App {
                                     self.toggle_mute_disabled(target_id);
                                 }
                                 ui::solo_mute::SoloMuteHit::Monitor => {
-                                    self.toggle_group_monitoring(target_id);
+                                    if rw.is_instrument() {
+                                        self.toggle_instrument_keyboard_preview(target_id);
+                                    } else {
+                                        self.toggle_group_monitoring(target_id);
+                                    }
                                 }
                                 ui::solo_mute::SoloMuteHit::None => {}
                             }
@@ -1495,7 +1499,7 @@ impl App {
                                         let row_right = self.sample_browser.content_x(scale) + self.sample_browser.content_width(scale);
                                         let row_cy = self.mouse_pos[1]; // Y doesn't matter for horizontal hit-test
                                         let layout = ui::solo_mute::layout_right_aligned(row_right, row_cy, scale);
-                                        let show_mon = matches!(kind, crate::layers::LayerNodeKind::Group);
+                                        let show_mon = matches!(kind, crate::layers::LayerNodeKind::Group | crate::layers::LayerNodeKind::Instrument);
                                         let hit = ui::solo_mute::hit_test(&layout, self.mouse_pos, show_mon);
                                         if hit != ui::solo_mute::SoloMuteHit::None {
                                             match hit {
@@ -1507,7 +1511,11 @@ impl App {
                                                     self.toggle_mute_disabled(*id);
                                                 }
                                                 ui::solo_mute::SoloMuteHit::Monitor => {
-                                                    self.toggle_group_monitoring(*id);
+                                                    if matches!(kind, crate::layers::LayerNodeKind::Instrument) {
+                                                        self.toggle_instrument_keyboard_preview(*id);
+                                                    } else {
+                                                        self.toggle_group_monitoring(*id);
+                                                    }
                                                 }
                                                 ui::solo_mute::SoloMuteHit::None => {}
                                             }

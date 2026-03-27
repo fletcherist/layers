@@ -215,9 +215,10 @@ fn test_computer_keyboard_state_and_project_browser() {
     app.sync_keyboard_instrument_from_selection();
     assert_eq!(app.keyboard_instrument_id, Some(inst_id));
 
+    // Clearing selection should preserve the explicitly-set target
     app.selected.clear();
     app.sync_keyboard_instrument_from_selection();
-    assert_eq!(app.keyboard_instrument_id, None);
+    assert_eq!(app.keyboard_instrument_id, Some(inst_id));
 
     app.computer_keyboard_armed = true;
     app.computer_keyboard_velocity = 72;
@@ -233,10 +234,11 @@ fn test_computer_keyboard_state_and_project_browser() {
     // 1 instrument + 1 midi clip child = 2 entries when expanded
     assert!(app.sample_browser.entries.len() >= 1);
 
+    // Clearing selection preserves target set by prior MIDI clip selection
     app.selected.clear();
     app.sync_keyboard_instrument_from_selection();
     app.sync_computer_keyboard_to_engine();
-    assert_eq!(app.keyboard_instrument_id, None);
+    assert_eq!(app.keyboard_instrument_id, Some(inst_id));
 
     app.add_instrument("test-synth-2", "TestSynth2");
     // Close and re-open to trigger entry refresh
@@ -353,5 +355,107 @@ fn test_instrument_selection_in_layers_panel() {
     assert_eq!(app.selected.len(), 1);
     assert_eq!(app.selected[0], HitTarget::Instrument(inst_b));
     assert_eq!(app.keyboard_instrument_id, Some(inst_b));
+    assert!(app.computer_keyboard_armed);
+}
+
+#[cfg(feature = "native")]
+#[test]
+fn test_sync_keyboard_instrument_from_instrument_selection() {
+    let mut app = App::new_headless();
+
+    app.add_instrument("synth-a", "SynthA");
+    let inst_a = *app.instruments.keys().next().unwrap();
+    app.add_instrument("synth-b", "SynthB");
+    let inst_b = *app.instruments.keys().last().unwrap();
+
+    // Select instrument A directly (simulates clicking in layers panel)
+    app.selected = vec![HitTarget::Instrument(inst_a)];
+    app.keyboard_instrument_id = Some(inst_a);
+    app.computer_keyboard_armed = true;
+
+    // sync should preserve keyboard_instrument_id for Instrument selections
+    app.sync_keyboard_instrument_from_selection();
+    assert_eq!(app.keyboard_instrument_id, Some(inst_a));
+
+    // Switch to instrument B
+    app.selected = vec![HitTarget::Instrument(inst_b)];
+    app.sync_keyboard_instrument_from_selection();
+    assert_eq!(app.keyboard_instrument_id, Some(inst_b));
+
+    // Clearing selection preserves the explicitly-set target (toggle "I" to clear)
+    app.selected.clear();
+    app.sync_keyboard_instrument_from_selection();
+    assert_eq!(app.keyboard_instrument_id, Some(inst_b));
+
+    // MidiClip selection should still take priority
+    let mc_id = *app.midi_clips.keys().next().unwrap();
+    let mc_inst = app.midi_clips.get(&mc_id).unwrap().instrument_id.unwrap();
+    app.selected = vec![HitTarget::MidiClip(mc_id)];
+    app.sync_keyboard_instrument_from_selection();
+    assert_eq!(app.keyboard_instrument_id, Some(mc_inst));
+}
+
+#[test]
+fn test_toggle_instrument_keyboard_preview() {
+    let mut app = App::new_headless();
+    app.add_instrument("synth-a", "SynthA");
+    let inst_a = *app.instruments.keys().next().unwrap();
+    app.add_instrument("synth-b", "SynthB");
+    let inst_b = *app.instruments.keys().last().unwrap();
+
+    // After adding synth-b, keyboard should target it
+    assert_eq!(app.keyboard_instrument_id, Some(inst_b));
+    assert!(app.computer_keyboard_armed);
+
+    // Toggle preview to synth-a
+    app.toggle_instrument_keyboard_preview(inst_a);
+    assert_eq!(app.keyboard_instrument_id, Some(inst_a));
+    assert!(app.computer_keyboard_armed);
+
+    // Toggle again on same instrument — disables it
+    app.toggle_instrument_keyboard_preview(inst_a);
+    assert_eq!(app.keyboard_instrument_id, None);
+
+    // Toggle on synth-b even when keyboard was disarmed
+    app.computer_keyboard_armed = false;
+    app.toggle_instrument_keyboard_preview(inst_b);
+    assert_eq!(app.keyboard_instrument_id, Some(inst_b));
+    assert!(app.computer_keyboard_armed);
+}
+
+#[test]
+fn test_flatten_tree_shows_instrument_preview_target() {
+    use crate::layers;
+    let mut app = App::new_headless();
+    app.add_instrument("synth-a", "SynthA");
+    let inst_id = *app.instruments.keys().next().unwrap();
+    app.refresh_project_browser_entries();
+
+    // With no preview target, instrument row should not be monitoring
+    let rows = layers::flatten_tree(
+        &app.layer_tree, &app.instruments, &app.midi_clips,
+        &app.waveforms, &app.groups, &app.solo_ids,
+        app.monitoring_group_id, None,
+    );
+    let inst_row = rows.iter().find(|r| r.entity_id == inst_id).expect("inst row");
+    assert!(!inst_row.is_monitoring);
+
+    // With preview target set to this instrument, it should be monitoring
+    let rows = layers::flatten_tree(
+        &app.layer_tree, &app.instruments, &app.midi_clips,
+        &app.waveforms, &app.groups, &app.solo_ids,
+        app.monitoring_group_id, Some(inst_id),
+    );
+    let inst_row = rows.iter().find(|r| r.entity_id == inst_id).expect("inst row");
+    assert!(inst_row.is_monitoring);
+}
+
+#[test]
+fn test_add_instrument_arms_keyboard() {
+    let mut app = App::new_headless();
+    app.computer_keyboard_armed = false;
+    app.add_instrument("test-synth", "TestSynth");
+    let inst_id = *app.instruments.keys().next().unwrap();
+    assert_eq!(app.keyboard_instrument_id, Some(inst_id));
     assert!(app.computer_keyboard_armed);
 }

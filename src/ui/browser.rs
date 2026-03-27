@@ -1006,7 +1006,7 @@ impl SampleBrowser {
             let row_right = cx + self.content_width(scale);
             let row_cy = ct + i as f32 * item_h + item_h * 0.5;
             let layout = super::solo_mute::layout_right_aligned(row_right, row_cy, scale);
-            let show_mon = matches!(kind, LayerNodeKind::Group);
+            let show_mon = matches!(kind, LayerNodeKind::Group | LayerNodeKind::Instrument);
             let theme = crate::theme::RuntimeTheme::default();
             self.hover_sm_text = super::solo_mute::build_text_entries(
                 &layout, false, false, false, true, show_mon, &theme, scale,
@@ -1425,7 +1425,7 @@ impl SampleBrowser {
                             let row_cy = y + item_h * 0.5;
                             let layout = super::solo_mute::layout_right_aligned(row_right, row_cy, scale);
                             let is_hovered = self.hovered_entry == Some(i);
-                            let show_mon = matches!(kind, LayerNodeKind::Group);
+                            let show_mon = matches!(kind, LayerNodeKind::Group | LayerNodeKind::Instrument);
                             let visible = *is_soloed || *is_muted || *is_monitoring || is_hovered;
                             out.extend(super::solo_mute::build_instances(&layout, *is_soloed, *is_muted, *is_monitoring, is_hovered, visible, show_mon, &settings.theme, scale));
                         }
@@ -1928,7 +1928,7 @@ impl SampleBrowser {
                                 let row_right = cx + self.content_width(scale);
                                 let row_cy = base_y + item_h * 0.5;
                                 let layout = super::solo_mute::layout_right_aligned(row_right, row_cy, scale);
-                                let show_mon = matches!(kind, LayerNodeKind::Group);
+                                let show_mon = matches!(kind, LayerNodeKind::Group | LayerNodeKind::Instrument);
                                 out.extend(super::solo_mute::build_text_entries(&layout, *is_soloed, *is_muted, *is_monitoring, true, show_mon, theme, scale));
                             }
                         }

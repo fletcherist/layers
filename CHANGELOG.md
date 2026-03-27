@@ -1,3 +1,6 @@
+- 2026-03-27: fix: keyboard preview persists after "I" toggle — sync_keyboard_instrument_from_selection no longer clears explicitly-set target (52.5k loc)
+- 2026-03-27: feat: "I" button for instruments — toggle keyboard preview target from layers panel, inspector, or "i" key; auto-arms on add_instrument (52.5k loc)
+- 2026-03-27: fix: ASDFGH keyboard now works when instrument is selected directly (not just via MIDI clip) (52.4k loc)
 - 2026-03-27: feat: shift+left/right arrow extends/shrinks selected audio clip right edge, with coalesced undo and overlap resolution (52.4k loc)
 - 2026-03-27: perf: incremental browser text shaping — shape-key diffing skips unchanged entries, cursor blink reshapes only 1 of 300+ buffers (52.1k loc)
 - 2026-03-27: perf: fix browser scroll lag — S/M/I hover text shaped per-frame as overlay instead of full text cache rebuild (51.9k loc)

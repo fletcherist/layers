@@ -525,7 +525,7 @@ fn instrument_inside_group_shows_midi_clip_children_in_layer_tree() {
     );
     let rows = crate::layers::flatten_tree(
         &app.layer_tree, &app.instruments, &app.midi_clips, &app.waveforms, &app.groups,
-        &app.solo_ids, app.monitoring_group_id,
+        &app.solo_ids, app.monitoring_group_id, None,
     );
 
     // Should have: Group (depth 0) → Instrument (depth 1) → MIDI clip (depth 2)

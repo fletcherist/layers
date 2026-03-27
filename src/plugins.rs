@@ -541,8 +541,12 @@ impl App {
         self.selected.clear();
         self.selected.push(HitTarget::MidiClip(clip_id));
         self.keyboard_instrument_id = Some(inst_id);
+        self.computer_keyboard_armed = true;
+        #[cfg(feature = "native")]
+        self.sync_computer_keyboard_to_engine();
 
         self.sync_audio_clips();
+        self.mark_dirty();
         self.request_redraw();
         println!("  Added instrument '{}'", plugin_name);
     }

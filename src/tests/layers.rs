@@ -137,6 +137,7 @@ fn test_flatten_respects_expanded() {
         &app.waveforms, &app.groups,
         &app.solo_ids,
         app.monitoring_group_id,
+        None,
     );
     assert_eq!(rows.len(), 2);
 
@@ -149,6 +150,7 @@ fn test_flatten_respects_expanded() {
         &app.waveforms, &app.groups,
         &app.solo_ids,
         app.monitoring_group_id,
+        None,
     );
     assert_eq!(rows.len(), 1);
 }
@@ -190,6 +192,7 @@ fn test_flat_layer_row_color() {
         &app.waveforms, &app.groups,
         &app.solo_ids,
         app.monitoring_group_id,
+        None,
     );
 
     let wf_row = rows.iter().find(|r| r.kind == LayerNodeKind::Waveform)
