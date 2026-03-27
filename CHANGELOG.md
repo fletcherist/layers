@@ -1,3 +1,7 @@
+- 2026-03-27: fix: Windows microphone permission check via registry consent store + toast errors (53.2k loc)
+- 2026-03-27: fix: segfault in macOS mic permission check — non-variadic objc_msgSend, remove nil block arg (53.2k loc)
+- 2026-03-27: fix: audio recording silence on macOS — AVFoundation permission check/request before stream, peak logging (53.2k loc)
+- 2026-03-27: fix: audio recording silent failure — log stream errors, handle start() failure with UI cleanup, add NSMicrophoneUsageDescription (53.2k loc)
 - 2026-03-27: fix: Cmd+G resolves MIDI clips to parent instrument; add_instrument adds to monitoring group (53.2k loc)
 - 2026-03-27: add default password "layerslayerslayers" for realtime connections (53.1k loc)
 - 2026-03-27: fix: layer context-menu delete now removes VST instruments and linked MIDI clips (53.1k loc)

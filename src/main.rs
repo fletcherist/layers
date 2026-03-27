@@ -3113,7 +3113,15 @@ impl App {
         }
 
         if let Some(ref mut recorder) = self.recorder {
-            recorder.set_monitoring(is_on);
+            if let Some(err) = recorder.set_monitoring(is_on) {
+                eprintln!("  ERROR: Failed to start monitoring: {}", err);
+                self.toast_manager.push(err, ui::toast::ToastKind::Error);
+                // Revert monitoring state
+                self.monitoring_group_id = None;
+                if let Some(ref engine) = self.audio_engine {
+                    engine.set_monitoring_enabled(false);
+                }
+            }
         }
 
         self.sync_monitor_effects();
@@ -3564,7 +3572,26 @@ impl App {
                 self.recording_group_id = Some(group_id);
             }
 
-            self.recorder.as_mut().unwrap().start();
+            let started = self.recorder.as_mut().unwrap().start();
+            if let Err(msg) = started {
+                eprintln!("  ERROR: Failed to start recording: {}", msg);
+                self.toast_manager.push(msg, ui::toast::ToastKind::Error);
+                // Clean up the waveform and group that were pre-placed
+                self.waveforms.shift_remove(&wf_id);
+                self.audio_clips.shift_remove(&wf_id);
+                self.recording_waveform_id = None;
+                if let Some(group_id) = self.recording_group_id.take() {
+                    if let Some(g) = self.groups.get(&group_id) {
+                        if g.member_ids.is_empty() || g.member_ids == vec![wf_id] {
+                            self.groups.shift_remove(&group_id);
+                        } else if let Some(g) = self.groups.get_mut(&group_id) {
+                            g.member_ids.retain(|id| *id != wf_id);
+                        }
+                    }
+                }
+                self.recording_take_parent_id = None;
+                return;
+            }
 
             if let Some(engine) = &self.audio_engine {
                 let secs = rec_x as f64 / PIXELS_PER_SECOND as f64;

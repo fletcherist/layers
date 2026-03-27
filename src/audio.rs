@@ -1887,6 +1887,182 @@ pub struct AudioRecorder {
     monitor_input_sample_rate: Option<Arc<AtomicU64>>,
 }
 
+// ---------------------------------------------------------------------------
+// macOS microphone permission check via AVFoundation
+// ---------------------------------------------------------------------------
+// CoreAudio (used by CPAL) silently provides a zero-filled stream when the
+// process has not been authorized via TCC. CPAL 0.15 never calls
+// AVCaptureDevice requestAccessForMediaType, so we check here and surface
+// clear errors instead of letting the user record silent audio.
+//
+// AVAuthorizationStatus values:
+//   0 = notDetermined  — no entry yet; building the CoreAudio stream will
+//                        trigger the TCC dialog automatically on macOS 10.14+
+//   1 = restricted     — device policy, cannot request
+//   2 = denied         — user previously denied
+//   3 = authorized     — ok to record
+//
+// IMPORTANT: All objc_msgSend aliases are declared with exact (non-variadic)
+// argument counts. On ARM64 (Apple Silicon) the variadic calling convention
+// differs from the regular one, so a variadic `fn(obj, sel, ...)` call passes
+// extra arguments through the wrong registers and causes an immediate SIGSEGV.
+#[cfg(target_os = "macos")]
+fn macos_check_microphone_permission() -> Result<(), String> {
+    use std::ffi::c_void;
+
+    #[link(name = "AVFoundation", kind = "framework")]
+    extern "C" {}
+
+    extern "C" {
+        fn objc_getClass(name: *const u8) -> *const c_void;
+        fn sel_registerName(name: *const u8) -> *const c_void;
+
+        // (id, SEL, *const u8) -> *const c_void   — stringWithUTF8String:
+        #[link_name = "objc_msgSend"]
+        fn msg_send_str(obj: *const c_void, sel: *const c_void, cstr: *const u8) -> *const c_void;
+
+        // (id, SEL, *const c_void) -> isize        — authorizationStatusForMediaType:
+        #[link_name = "objc_msgSend"]
+        fn msg_send_status(obj: *const c_void, sel: *const c_void, arg: *const c_void) -> isize;
+    }
+
+    unsafe {
+        let av_class = objc_getClass(b"AVCaptureDevice\0".as_ptr());
+        if av_class.is_null() {
+            return Ok(()); // AVFoundation unavailable — let CPAL try
+        }
+
+        // Build NSString @"soun" (AVMediaTypeAudio)
+        let ns_string_class = objc_getClass(b"NSString\0".as_ptr());
+        let utf8_sel = sel_registerName(b"stringWithUTF8String:\0".as_ptr());
+        let media_type = msg_send_str(ns_string_class, utf8_sel, b"soun\0".as_ptr());
+
+        let auth_status_sel = sel_registerName(b"authorizationStatusForMediaType:\0".as_ptr());
+        let status = msg_send_status(av_class, auth_status_sel, media_type);
+
+        match status {
+            3 => Ok(()), // authorized
+            2 => Err(
+                "Microphone access denied. Enable it in\nSystem Settings › Privacy › Microphone.".to_string()
+            ),
+            1 => Err("Microphone access restricted by device policy.".to_string()),
+            0 => {
+                // Not yet determined. On macOS 10.14+, the first attempt to
+                // use the microphone via CoreAudio automatically triggers the
+                // TCC permission dialog. Return Ok so CPAL can build the
+                // stream and trigger that dialog. If the user denies it, the
+                // next attempt will hit the `2` (denied) branch above.
+                println!("  macOS mic permission: not yet determined.");
+                println!("  A system dialog should appear — allow access, then try again.");
+                Ok(()) // let CPAL build the stream; macOS will prompt
+            }
+            _ => {
+                eprintln!("  WARNING: Unknown macOS mic authorization status: {}", status);
+                Ok(())
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Windows microphone permission check via registry consent store
+// ---------------------------------------------------------------------------
+// Windows 10 1709+ stores microphone consent under:
+//   HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\
+//     CapabilityAccessManager\ConsentStore\microphone
+// The "Value" REG_SZ is "Allow" (granted) or "Deny" (blocked).
+// For non-packaged Win32 apps (i.e. cargo run / unsigned exe), the relevant
+// sub-key is "\NonPackaged". We check both the top-level key and NonPackaged.
+// No new crates needed — raw advapi32 FFI via extern "system".
+#[cfg(target_os = "windows")]
+fn windows_check_microphone_permission() -> Result<(), String> {
+    use std::ffi::OsStr;
+    use std::os::windows::ffi::OsStrExt;
+
+    // advapi32 registry API
+    extern "system" {
+        fn RegOpenKeyExW(
+            hkey: isize,
+            lp_sub_key: *const u16,
+            ul_options: u32,
+            sam_desired: u32,
+            phk_result: *mut isize,
+        ) -> i32;
+        fn RegQueryValueExW(
+            hkey: isize,
+            lp_value_name: *const u16,
+            lp_reserved: *mut u32,
+            lp_type: *mut u32,
+            lp_data: *mut u8,
+            lpcb_data: *mut u32,
+        ) -> i32;
+        fn RegCloseKey(hkey: isize) -> i32;
+    }
+
+    const HKEY_CURRENT_USER: isize = -2147483647; // 0x80000001 as isize
+    const KEY_READ: u32 = 0x20019;
+    const ERROR_SUCCESS: i32 = 0;
+    const REG_SZ: u32 = 1;
+
+    fn to_wstr(s: &str) -> Vec<u16> {
+        OsStr::new(s).encode_wide().chain(std::iter::once(0)).collect()
+    }
+
+    // Read a REG_SZ value from an already-opened key. Returns None if missing.
+    unsafe fn read_sz(hkey: isize, value: &str) -> Option<String> {
+        let name = to_wstr(value);
+        let mut kind: u32 = 0;
+        let mut size: u32 = 0;
+        RegQueryValueExW(hkey, name.as_ptr(), std::ptr::null_mut(), &mut kind, std::ptr::null_mut(), &mut size);
+        if kind != REG_SZ || size == 0 { return None; }
+        let mut buf: Vec<u8> = vec![0u8; size as usize];
+        let ret = RegQueryValueExW(hkey, name.as_ptr(), std::ptr::null_mut(), &mut kind, buf.as_mut_ptr(), &mut size);
+        if ret != ERROR_SUCCESS { return None; }
+        let words: Vec<u16> = buf.chunks_exact(2)
+            .map(|b| u16::from_le_bytes([b[0], b[1]]))
+            .take_while(|&c| c != 0)
+            .collect();
+        String::from_utf16(&words).ok()
+    }
+
+    unsafe fn is_denied(hkey: isize) -> bool {
+        read_sz(hkey, "Value").as_deref() == Some("Deny")
+    }
+
+    let denied_msg = || "Microphone access denied.\nGo to Settings › Privacy & Security › Microphone\nand enable access for desktop apps.".to_string();
+
+    unsafe {
+        let base_path = to_wstr(
+            r"SOFTWARE\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\microphone"
+        );
+        let nonpkg_path = to_wstr(
+            r"SOFTWARE\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\microphone\NonPackaged"
+        );
+
+        // Check top-level consent key
+        let mut hkey: isize = 0;
+        if RegOpenKeyExW(HKEY_CURRENT_USER, base_path.as_ptr(), 0, KEY_READ, &mut hkey) == ERROR_SUCCESS {
+            let denied = is_denied(hkey);
+            RegCloseKey(hkey);
+            if denied {
+                return Err(denied_msg());
+            }
+        }
+
+        // Check NonPackaged — covers Win32 desktop apps and unpackaged executables
+        let mut hkey_np: isize = 0;
+        if RegOpenKeyExW(HKEY_CURRENT_USER, nonpkg_path.as_ptr(), 0, KEY_READ, &mut hkey_np) == ERROR_SUCCESS {
+            let denied = is_denied(hkey_np);
+            RegCloseKey(hkey_np);
+            if denied {
+                return Err(denied_msg());
+            }
+        }
+
+        Ok(())
+    }
+}
+
 impl AudioRecorder {
     pub fn new() -> Option<Self> {
         let host = cpal::default_host();
@@ -1926,20 +2102,29 @@ impl AudioRecorder {
     }
 
     /// Ensure the CPAL input stream is running (needed for recording or monitoring).
-    fn ensure_stream(&mut self) -> bool {
+    /// Returns `Ok(())` on success or `Err(message)` with a user-facing error string.
+    fn ensure_stream(&mut self) -> Result<(), String> {
         if self.stream.is_some() {
-            return true;
+            return Ok(());
         }
 
+        // On macOS, CoreAudio silently returns zero-filled audio when the process has not
+        // been authorized via AVFoundation — even though the stream builds and plays
+        // successfully. Check (and request) microphone permission before building the stream.
+        #[cfg(target_os = "macos")]
+        macos_check_microphone_permission()?;
+
+        // On Windows, WASAPI returns E_ACCESSDENIED when the microphone privacy toggle
+        // is disabled. Check the consent registry key for a clear error message before
+        // CPAL tries and fails with a cryptic backend error.
+        #[cfg(target_os = "windows")]
+        windows_check_microphone_permission()?;
+
         let host = cpal::default_host();
-        let device = match host.default_input_device() {
-            Some(d) => d,
-            None => return false,
-        };
-        let supported = match device.default_input_config() {
-            Ok(c) => c,
-            Err(_) => return false,
-        };
+        let device = host.default_input_device()
+            .ok_or_else(|| "No microphone found. Connect a mic and try again.".to_string())?;
+        let supported = device.default_input_config()
+            .map_err(|e| format!("Could not read microphone config: {e}"))?;
         let config: cpal::StreamConfig = supported.into();
         self.sample_rate = config.sample_rate.0;
         self.channels = config.channels as usize;
@@ -1978,15 +2163,27 @@ impl AudioRecorder {
             None,
         ) {
             Ok(s) => s,
-            Err(_) => return false,
+            Err(e) => {
+                eprintln!("  ERROR: Failed to build input stream: {}", e);
+                eprintln!("  Check System Settings > Privacy & Security > Microphone");
+                #[cfg(target_os = "windows")]
+                {
+                    let desc = e.to_string().to_ascii_lowercase();
+                    if desc.contains("access") || desc.contains("denied") || desc.contains("80070005") {
+                        return Err("Microphone access denied.\nGo to Settings › Privacy & Security › Microphone\nand enable access for desktop apps.".to_string());
+                    }
+                }
+                return Err(format!("Microphone error: {e}"));
+            }
         };
 
-        if stream.play().is_err() {
-            return false;
+        if let Err(e) = stream.play() {
+            eprintln!("  ERROR: Failed to start input stream: {}", e);
+            return Err(format!("Microphone error: {e}"));
         }
 
         self.stream = Some(stream);
-        true
+        Ok(())
     }
 
     /// Drop the input stream if neither recording nor monitoring need it.
@@ -1996,25 +2193,25 @@ impl AudioRecorder {
         }
     }
 
-    pub fn set_monitoring(&mut self, enabled: bool) {
+    pub fn set_monitoring(&mut self, enabled: bool) -> Option<String> {
         println!("  set_monitoring({}) ring={} flag={}", enabled, self.monitor_ring.is_some(), self.monitoring.load(Ordering::Relaxed));
         if enabled {
-            let ok = self.ensure_stream();
-            println!("  ensure_stream -> {} stream={}", ok, self.stream.is_some());
+            let result = self.ensure_stream();
+            println!("  ensure_stream -> {} stream={}", result.is_ok(), self.stream.is_some());
             println!("  INPUT: {} Hz, {} ch", self.sample_rate, self.channels);
+            result.err()
         } else {
             self.maybe_drop_stream();
+            None
         }
     }
 
-    pub fn start(&mut self) -> bool {
+    pub fn start(&mut self) -> Result<(), String> {
         if self.is_recording() {
-            return false;
+            return Ok(());
         }
 
-        if !self.ensure_stream() {
-            return false;
-        }
+        self.ensure_stream()?;
 
         // Reset the recording buffer
         if let Ok(mut guard) = self.buffer.lock() {
@@ -2026,7 +2223,7 @@ impl AudioRecorder {
             "  Recording started ({} ch, {} Hz)",
             self.channels, self.sample_rate
         );
-        true
+        Ok(())
     }
 
     pub fn sample_rate(&self) -> u32 {
@@ -2087,10 +2284,17 @@ impl AudioRecorder {
         let duration_secs = mono.len() as f32 / sample_rate as f32;
         let width = duration_secs * PIXELS_PER_SECOND;
 
+        let peak = mono.iter().copied().fold(0.0f32, |a, s| a.max(s.abs()));
+        if peak < 1e-6 {
+            eprintln!("  WARNING: Recorded audio is silence (peak={:.2e}).", peak);
+            eprintln!("  If you are on macOS, check System Settings > Privacy & Security > Microphone");
+            eprintln!("  and ensure this app (or Terminal for dev builds) has access.");
+        }
         println!(
-            "  Recording stopped: {:.1}s, {} samples",
+            "  Recording stopped: {:.1}s, {} samples, peak={:.4}",
             duration_secs,
-            mono.len()
+            mono.len(),
+            peak,
         );
 
         Some(LoadedAudio {

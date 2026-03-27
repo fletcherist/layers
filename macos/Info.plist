@@ -20,6 +20,8 @@
 	<string>APPL</string>
 	<key>NSHighResolutionCapable</key>
 	<true/>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Layers needs microphone access to record audio.</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>13.0</string>
 	<key>NSSupportsAutomaticGraphicsSwitching</key>
