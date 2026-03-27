@@ -163,6 +163,9 @@ impl App {
                             Some(ui::right_window::RightWindowTarget::Master) => {
                                 self.master.volume = new_vol;
                             }
+                            Some(ui::right_window::RightWindowTarget::Monitor) => {
+                                self.monitor_volume = new_vol;
+                            }
                             None => {}
                         }
                     } else if is_pan_drag {
@@ -202,6 +205,9 @@ impl App {
                             }
                             Some(ui::right_window::RightWindowTarget::Master) => {
                                 self.master.pan = new_pan;
+                            }
+                            Some(ui::right_window::RightWindowTarget::Monitor) => {
+                                self.monitor_pan = new_pan;
                             }
                             None => {}
                         }
@@ -247,6 +253,7 @@ impl App {
                 #[cfg(feature = "native")]
                 match target {
                     Some(ui::right_window::RightWindowTarget::Instrument(_)) => self.sync_instrument_regions_auto(),
+                    Some(ui::right_window::RightWindowTarget::Monitor) => self.sync_monitor_effects(),
                     _ => self.sync_audio_clips(),
                 }
                 self.request_redraw();
@@ -263,6 +270,7 @@ impl App {
                     ui::right_window::RightWindowTarget::Instrument(inst_id) => self.instruments.get(&inst_id).and_then(|i| i.effect_chain_id),
                     ui::right_window::RightWindowTarget::Group(group_id) => self.groups.get(&group_id).and_then(|g| g.effect_chain_id),
                     ui::right_window::RightWindowTarget::Master => self.master.effect_chain_id,
+                    ui::right_window::RightWindowTarget::Monitor => self.monitor_effect_chain_id,
                 };
                 let slot_count = chain_id
                     .and_then(|cid| self.effect_chains.get(&cid))
@@ -1215,10 +1223,6 @@ impl App {
             } else if TransportPanel::hit_bpm(self.mouse_pos, sw, sh, scale) {
                 let rect = TransportPanel::bpm_rect(sw, sh, scale);
                 self.tooltip.set_target("transport:bpm", "Tempo \u{2014} double-click to edit", rect);
-            } else if TransportPanel::hit_monitor_button(self.mouse_pos, sw, sh, scale) {
-                let text = if self.input_monitoring { "Disable Input Monitor" } else { "Input Monitor" };
-                let rect = TransportPanel::monitor_button_rect(sw, sh, scale);
-                self.tooltip.set_target("transport:monitor", text, rect);
             } else if TransportPanel::hit_record_button(self.mouse_pos, sw, sh, scale) {
                 #[cfg(feature = "native")]
                 let is_recording = self.recorder.as_ref().map_or(false, |r| r.is_recording());
@@ -1230,6 +1234,8 @@ impl App {
             } else {
                 self.tooltip.clear();
             }
+        } else if let Some(rect) = self.sample_browser.hovered_group_icon_rect(self.mouse_pos, scale) {
+            self.tooltip.set_target("browser:group_icon", "Group", rect);
         } else {
             self.tooltip.clear();
         }

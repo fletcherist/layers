@@ -53,7 +53,6 @@ impl TransportPanel {
         is_recording: bool,
         _metronome_enabled: bool,
         _computer_keyboard_armed: bool,
-        _input_monitoring: bool,
     ) -> Vec<InstanceRaw> {
         let mut out = Vec::new();
         let (pos, size) = Self::panel_rect(screen_w, screen_h, scale);
@@ -103,7 +102,6 @@ impl TransportPanel {
         _is_recording: bool,
         metronome_enabled: bool,
         computer_keyboard_armed: bool,
-        input_monitoring: bool,
     ) -> Vec<IconEntry> {
         let mut out = Vec::new();
 
@@ -138,12 +136,6 @@ impl TransportPanel {
         let (px, py) = center_icon(pp_pos, pp_size, play_icon);
         let play_codepoint = if is_playing { icons::PAUSE } else { icons::PLAY_ARROW };
         out.push(IconEntry { codepoint: play_codepoint, x: px, y: py, size: play_icon, color: [255, 255, 255, 230] });
-
-        // Input monitor (headphones icon)
-        let (mon_pos, mon_size) = Self::monitor_button_rect(screen_w, screen_h, scale);
-        let (hx, hy) = center_icon(mon_pos, mon_size, small_icon);
-        let mon_color = if input_monitoring { [77, 217, 128, 242] } else { [255, 255, 255, 77] };
-        out.push(IconEntry { codepoint: icons::HEADPHONES, x: hx, y: hy, size: small_icon, color: mon_color });
 
         out
     }

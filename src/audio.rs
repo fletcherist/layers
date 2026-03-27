@@ -218,6 +218,8 @@ pub struct AudioEngine {
     monitoring_enabled: Arc<AtomicBool>,
     monitor_ring: Arc<MonitorRingBuffer>,
     monitor_effect_plugins: Arc<Mutex<Vec<Arc<Mutex<Option<crate::effects::PluginGuiHandle>>>>>>,
+    monitor_volume_bits: Arc<AtomicU64>,
+    monitor_pan_bits: Arc<AtomicU64>,
     monitor_input_channels: Arc<AtomicUsize>,
     monitor_input_sample_rate: Arc<AtomicU64>,
     preview_clip: Arc<Mutex<Option<PreviewClip>>>,
@@ -478,6 +480,8 @@ impl AudioEngine {
         let monitor_ring = MonitorRingBuffer::new(8192);
         let monitor_effect_plugins: Arc<Mutex<Vec<Arc<Mutex<Option<crate::effects::PluginGuiHandle>>>>>> =
             Arc::new(Mutex::new(Vec::new()));
+        let monitor_volume_bits = Arc::new(AtomicU64::new(1.0f64.to_bits()));
+        let monitor_pan_bits = Arc::new(AtomicU64::new(0.5f64.to_bits()));
         let monitor_input_channels = Arc::new(AtomicUsize::new(1));
         let monitor_input_sample_rate = Arc::new(AtomicU64::new(sample_rate as u64));
         let preview_clip: Arc<Mutex<Option<PreviewClip>>> = Arc::new(Mutex::new(None));
@@ -505,6 +509,8 @@ impl AudioEngine {
         let mon_en = monitoring_enabled.clone();
         let mon_ring_c = monitor_ring.clone();
         let mon_fx = monitor_effect_plugins.clone();
+        let mon_vol = monitor_volume_bits.clone();
+        let mon_pan = monitor_pan_bits.clone();
         let mon_in_ch = monitor_input_channels.clone();
         let mon_in_sr = monitor_input_sample_rate.clone();
         let preview_c = preview_clip.clone();
@@ -523,6 +529,8 @@ impl AudioEngine {
         let mut mon_fx_r = vec![0.0f32; 4096];
         let mut mon_fx_out_l = vec![0.0f32; effect_block_size];
         let mut mon_fx_out_r = vec![0.0f32; effect_block_size];
+        let mut mon_resampled_l = vec![0.0f32; 8192];
+        let mut mon_resampled_r = vec![0.0f32; 8192];
 
         let initial_mix_capacity: usize = 8192;
         let mut mix_capacity = initial_mix_capacity;
@@ -607,6 +615,8 @@ impl AudioEngine {
                         group_bus_r.resize(mix_capacity, 0.0f32);
                         chain_bus_l.resize(mix_capacity, 0.0f32);
                         chain_bus_r.resize(mix_capacity, 0.0f32);
+                        mon_resampled_l.resize(mix_capacity, 0.0f32);
+                        mon_resampled_r.resize(mix_capacity, 0.0f32);
                     }
                     dry_mix[..frames].fill([0.0, 0.0]);
 
@@ -1257,6 +1267,7 @@ impl AudioEngine {
 
                     // Input monitoring: mix live mic input into output
                     // Handles sample rate conversion (input may differ from output)
+                    // and processes through monitor effect chain + volume/pan
                     if mon_en.load(Ordering::Relaxed) {
                         let in_ch = mon_in_ch.load(Ordering::Relaxed).max(1);
                         let in_sr = mon_in_sr.load(Ordering::Relaxed).max(1) as f64;
@@ -1282,18 +1293,62 @@ impl AudioEngine {
                         }
 
                         // Resample from input rate to output rate via linear interpolation
-                        // and write into dry_mix
+                        // into temporary buffers (not directly into dry_mix — we process FX first)
+                        let mut mon_out_frames = 0usize;
                         if in_frames_got > 1 {
                             for i in 0..frames {
                                 let src_pos = i as f64 * ratio;
                                 let idx = src_pos as usize;
                                 if idx + 1 >= in_frames_got { break; }
-                                let frac = src_pos - idx as f64;
-                                let frac = frac as f32;
-                                let l = mon_fx_l[idx] + (mon_fx_l[idx + 1] - mon_fx_l[idx]) * frac;
-                                let r = mon_fx_r[idx] + (mon_fx_r[idx + 1] - mon_fx_r[idx]) * frac;
-                                dry_mix[i][0] += l;
-                                dry_mix[i][1] += r;
+                                let frac = (src_pos - idx as f64) as f32;
+                                mon_resampled_l[i] = mon_fx_l[idx] + (mon_fx_l[idx + 1] - mon_fx_l[idx]) * frac;
+                                mon_resampled_r[i] = mon_fx_r[idx] + (mon_fx_r[idx + 1] - mon_fx_r[idx]) * frac;
+                                mon_out_frames = i + 1;
+                            }
+                        }
+
+                        // Process resampled monitor signal through monitor effect chain
+                        if mon_out_frames > 0 {
+                            #[cfg(feature = "native")]
+                            if let Ok(plugins_guard) = mon_fx.try_lock() {
+                                if !plugins_guard.is_empty() {
+                                    for block_start in (0..mon_out_frames).step_by(effect_block_size) {
+                                        let block_end = (block_start + effect_block_size).min(mon_out_frames);
+                                        let block_len = block_end - block_start;
+                                        // Copy block into fx_buf pair (reusing clip processing buffers — free at this point)
+                                        fx_buf_l[..block_len].copy_from_slice(&mon_resampled_l[block_start..block_end]);
+                                        fx_buf_r[..block_len].copy_from_slice(&mon_resampled_r[block_start..block_end]);
+                                        #[allow(unused_mut)]
+                                        let (mut src_l, mut src_r, mut dst_l, mut dst_r): (&mut [f32], &mut [f32], &mut [f32], &mut [f32]) =
+                                            (&mut fx_buf_l, &mut fx_buf_r, &mut mon_fx_out_l, &mut mon_fx_out_r);
+                                        for plugin_arc in plugins_guard.iter() {
+                                            dst_l[..block_len].copy_from_slice(&src_l[..block_len]);
+                                            dst_r[..block_len].copy_from_slice(&src_r[..block_len]);
+                                            if let Ok(guard) = plugin_arc.try_lock() {
+                                                if let Some(ref gui) = *guard {
+                                                    let inputs: [&[f32]; 2] = [&src_l[..block_len], &src_r[..block_len]];
+                                                    let mut outputs: [&mut [f32]; 2] = [&mut dst_l[..block_len], &mut dst_r[..block_len]];
+                                                    gui.process(&inputs, &mut outputs, block_len);
+                                                }
+                                            }
+                                            std::mem::swap(&mut src_l, &mut dst_l);
+                                            std::mem::swap(&mut src_r, &mut dst_r);
+                                        }
+                                        // After the ping-pong, result is in src_l/src_r
+                                        mon_resampled_l[block_start..block_end].copy_from_slice(&src_l[..block_len]);
+                                        mon_resampled_r[block_start..block_end].copy_from_slice(&src_r[..block_len]);
+                                    }
+                                }
+                            }
+
+                            // Apply monitor volume/pan and mix into dry_mix
+                            let m_vol = load_f64(&mon_vol) as f32;
+                            let m_p = load_f64(&mon_pan) as f32;
+                            let pan_l = (2.0 * (1.0 - m_p)).min(1.0);
+                            let pan_r = (2.0 * m_p).min(1.0);
+                            for i in 0..mon_out_frames {
+                                dry_mix[i][0] += mon_resampled_l[i] * m_vol * pan_l;
+                                dry_mix[i][1] += mon_resampled_r[i] * m_vol * pan_r;
                             }
                         }
                     }
@@ -1455,6 +1510,8 @@ impl AudioEngine {
             monitoring_enabled,
             monitor_ring,
             monitor_effect_plugins,
+            monitor_volume_bits,
+            monitor_pan_bits,
             monitor_input_channels,
             monitor_input_sample_rate,
             preview_clip,
@@ -1769,6 +1826,22 @@ impl AudioEngine {
 
     pub fn set_monitoring_enabled(&self, enabled: bool) {
         self.monitoring_enabled.store(enabled, Ordering::Relaxed);
+    }
+
+    pub fn set_monitor_volume(&self, v: f32) {
+        store_f64(&self.monitor_volume_bits, v.clamp(0.0, 1.0) as f64);
+    }
+
+    pub fn monitor_volume(&self) -> f32 {
+        load_f64(&self.monitor_volume_bits) as f32
+    }
+
+    pub fn set_monitor_pan(&self, p: f32) {
+        store_f64(&self.monitor_pan_bits, p.clamp(0.0, 1.0) as f64);
+    }
+
+    pub fn monitor_pan(&self) -> f32 {
+        load_f64(&self.monitor_pan_bits) as f32
     }
 
     pub fn update_monitor_effects(

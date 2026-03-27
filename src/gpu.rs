@@ -742,7 +742,6 @@ impl Gpu {
         right_window: Option<&right_window::RightWindow>,
         right_window_effect_chain: Option<(&effects::EffectChain, crate::entity_id::EntityId, usize)>,
         effect_chain_drag: Option<(crate::entity_id::EntityId, usize, f32, Option<usize>)>,
-        input_monitoring: bool,
         text_notes: &indexmap::IndexMap<crate::entity_id::EntityId, crate::text_note::TextNote>,
         editing_text_note: Option<(crate::entity_id::EntityId, usize)>,
         selected_ids: &std::collections::HashSet<crate::entity_id::EntityId>,
@@ -841,7 +840,6 @@ impl Gpu {
             is_recording,
             settings.metronome_enabled,
             computer_keyboard_armed,
-            input_monitoring,
         ));
 
         if let Some(p) = command_palette {
@@ -1081,7 +1079,7 @@ impl Gpu {
         for ie in TransportPanel::get_icon_entries(
             settings, w, h, scale,
             is_playing, is_recording,
-            settings.metronome_enabled, computer_keyboard_armed, input_monitoring,
+            settings.metronome_enabled, computer_keyboard_armed,
         ) {
             let buf = shape_icon_entry(&mut self.font_system, &ie);
             text_buffers.push(buf);

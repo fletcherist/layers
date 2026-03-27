@@ -200,7 +200,8 @@ pub(crate) const MIDI_AUTO_EDIT_ZOOM_THRESHOLD: f32 = 2.0;
 pub(crate) fn share_button_rect(screen_w: f32, scale: f32) -> ([f32; 2], [f32; 2]) {
     let w = 72.0 * scale;
     let h = 28.0 * scale;
-    let x = screen_w - w - 12.0 * scale;
+    let right_panel = ui::right_window::RIGHT_WINDOW_WIDTH * scale;
+    let x = screen_w - right_panel - w - 12.0 * scale;
     let y = 10.0 * scale;
     ([x, y], [w, h])
 }
@@ -290,7 +291,13 @@ struct App {
     recording_waveform_id: Option<EntityId>,
     /// If recording into a take group, this is the parent waveform ID.
     recording_take_parent_id: Option<EntityId>,
-    input_monitoring: bool,
+    /// Which group has monitoring enabled (mic input routed through group's FX chain).
+    monitoring_group_id: Option<EntityId>,
+    monitor_effect_chain_id: Option<EntityId>,
+    monitor_volume: f32,
+    monitor_pan: f32,
+    /// Group the current recording is being placed into.
+    recording_group_id: Option<EntityId>,
     last_canvas_click_world: [f32; 2],
     selected: Vec<HitTarget>,
     drag: DragState,
@@ -474,7 +481,11 @@ impl App {
             recorder: None,
             recording_waveform_id: None,
             recording_take_parent_id: None,
-            input_monitoring: false,
+            monitoring_group_id: None,
+            monitor_effect_chain_id: None,
+            monitor_volume: 1.0,
+            monitor_pan: 0.5,
+            recording_group_id: None,
             last_canvas_click_world: [0.0; 2],
             selected: Vec::new(),
             drag: DragState::None,
@@ -718,6 +729,7 @@ impl App {
             &self.waveforms,
             &self.groups,
             &self.solo_ids,
+            self.monitoring_group_id,
         );
         self.sample_browser.layer_rows = rows;
         if self.sample_browser.active_category == ui::browser::BrowserCategory::Layers {
@@ -1228,7 +1240,11 @@ impl App {
             recorder,
             recording_waveform_id: None,
             recording_take_parent_id: None,
-            input_monitoring: false,
+            monitoring_group_id: None,
+            monitor_effect_chain_id: None,
+            monitor_volume: 1.0,
+            monitor_pan: 0.5,
+            recording_group_id: None,
             last_canvas_click_world: [0.0; 2],
             selected: Vec::new(),
             drag: DragState::None,
@@ -1799,6 +1815,7 @@ impl App {
                     drag_start_snapshots: Vec::new(),
                     is_soloed: self.solo_ids.contains(&first_id),
                     is_muted: wf.disabled,
+                    is_monitoring: false,
                     meter_rms: 0.0,
                     meter_peak: 0.0,
                     peak_hold_timer: 0.0,
@@ -1864,6 +1881,7 @@ impl App {
                     drag_start_snapshots: Vec::new(),
                     is_soloed: self.solo_ids.contains(&group_id),
                     is_muted: g.disabled,
+                    is_monitoring: self.monitoring_group_id == Some(group_id),
                     meter_rms: 0.0,
                     meter_peak: 0.0,
                     peak_hold_timer: 0.0,
@@ -1914,6 +1932,7 @@ impl App {
                 drag_start_snapshots: Vec::new(),
                 is_soloed: self.solo_ids.contains(&wf_id),
                 is_muted: wf.disabled,
+                is_monitoring: false,
                 meter_rms: 0.0,
                 meter_peak: 0.0,
                 peak_hold_timer: 0.0,
@@ -1968,6 +1987,7 @@ impl App {
                 drag_start_snapshots: Vec::new(),
                 is_soloed: self.solo_ids.contains(&inst_id),
                 is_muted: inst.disabled,
+                is_monitoring: false,
                 meter_rms: 0.0,
                 meter_peak: 0.0,
                 peak_hold_timer: 0.0,
@@ -2021,6 +2041,59 @@ impl App {
             drag_start_snapshots: Vec::new(),
             is_soloed: false,
             is_muted: false,
+            is_monitoring: false,
+            meter_rms: 0.0,
+            meter_peak: 0.0,
+            peak_hold_timer: 0.0,
+        });
+    }
+
+    pub(crate) fn open_right_window_for_monitor(&mut self) {
+        let (vol_entry, vol_fader_focused, pan_knob_focused) =
+            if self.right_window.as_ref().map_or(false, |rw| rw.is_monitor()) {
+                let rw = self.right_window.take().unwrap();
+                (rw.vol_entry, rw.vol_fader_focused, rw.pan_knob_focused)
+            } else {
+                (ui::value_entry::ValueEntry::new(), false, false)
+            };
+        self.right_window = Some(ui::right_window::RightWindow {
+            target: ui::right_window::RightWindowTarget::Monitor,
+            volume: self.monitor_volume,
+            pan: self.monitor_pan,
+            warp_mode: ui::waveform::WarpMode::Off,
+            sample_bpm: 120.0,
+            pitch_semitones: 0.0,
+            is_reversed: false,
+            vol_dragging: false,
+            pan_dragging: false,
+            sample_bpm_dragging: false,
+            pitch_dragging: false,
+            paulstretch_factor: 8.0,
+            paulstretch_factor_dragging: false,
+            paulstretch_factor_entry: ui::value_entry::ValueEntry::new(),
+            paulstretch_factor_focused: false,
+            drag_start_y: 0.0,
+            drag_start_value: 0.0,
+            vol_entry,
+            sample_bpm_entry: ui::value_entry::ValueEntry::new(),
+            pitch_entry: ui::value_entry::ValueEntry::new(),
+            vol_fader_focused,
+            pan_knob_focused,
+            pitch_focused: false,
+            sample_bpm_focused: false,
+            add_effect_hovered: false,
+            export_button_hovered: false,
+            reverse_button_hovered: false,
+            warp_button_hovered: false,
+            warp_selector_hovered: false,
+            paulstretch_render_button_hovered: false,
+            group_name: "Monitor".to_string(),
+            group_member_count: 0,
+            multi_target_ids: Vec::new(),
+            drag_start_snapshots: Vec::new(),
+            is_soloed: false,
+            is_muted: false,
+            is_monitoring: false,
             meter_rms: 0.0,
             meter_peak: 0.0,
             peak_hold_timer: 0.0,
@@ -2991,21 +3064,27 @@ impl App {
     }
 
     #[cfg(feature = "native")]
-    fn toggle_monitoring(&mut self) {
-        self.input_monitoring = !self.input_monitoring;
+    fn toggle_group_monitoring(&mut self, group_id: EntityId) {
+        let enabling = self.monitoring_group_id != Some(group_id);
+        self.monitoring_group_id = if enabling { Some(group_id) } else { None };
+
+        let is_on = self.monitoring_group_id.is_some();
 
         // Set engine flag first so the input callback sees it when the stream starts
         if let Some(ref engine) = self.audio_engine {
-            engine.set_monitoring_enabled(self.input_monitoring);
+            engine.set_monitoring_enabled(is_on);
         }
 
         if let Some(ref mut recorder) = self.recorder {
-            recorder.set_monitoring(self.input_monitoring);
+            recorder.set_monitoring(is_on);
         }
 
         self.sync_monitor_effects();
         self.request_redraw();
     }
+
+    #[cfg(not(feature = "native"))]
+    fn toggle_group_monitoring(&mut self, _group_id: EntityId) {}
 
     /// Find the parent waveform ID that owns a given child take.
     pub(crate) fn find_take_parent(&self, child_id: EntityId) -> Option<EntityId> {
@@ -3100,9 +3179,6 @@ impl App {
         self.request_redraw();
     }
 
-    #[cfg(not(feature = "native"))]
-    fn toggle_monitoring(&mut self) {}
-
     #[cfg(feature = "native")]
     fn sync_monitor_effects(&self) {
         let engine = match &self.audio_engine {
@@ -3110,25 +3186,29 @@ impl App {
             None => return,
         };
 
-        if !self.input_monitoring {
-            engine.update_monitor_effects(vec![]);
-            return;
-        }
-
-        // Find recording waveform position to check spatial overlap with effect regions
-        let wf = match self.recording_waveform_id.and_then(|id| self.waveforms.get(&id)) {
-            Some(w) => w,
+        let group_id = match self.monitoring_group_id {
+            Some(id) => id,
             None => {
                 engine.update_monitor_effects(vec![]);
                 return;
             }
         };
 
-        let wf_y = wf.position[1];
-        let wf_y_end = wf_y + wf.size[1];
+        let chain_id_opt = self.groups.get(&group_id).and_then(|g| g.effect_chain_id);
 
-        let plugins = Vec::new();
+        let mut plugins = Vec::new();
+        if let Some(chain_id) = chain_id_opt {
+            if let Some(chain) = self.effect_chains.get(&chain_id) {
+                for slot in &chain.slots {
+                    if !slot.bypass {
+                        plugins.push(slot.gui.clone());
+                    }
+                }
+            }
+        }
         engine.update_monitor_effects(plugins);
+        engine.set_monitor_volume(self.monitor_volume);
+        engine.set_monitor_pan(self.monitor_pan);
     }
 
     #[cfg(not(feature = "native"))]
@@ -3234,10 +3314,53 @@ impl App {
                         }
                     }
 
+                    // Finalize recording group — recompute bounds to encompass all members
+                    if let Some(group_id) = self.recording_group_id.take() {
+                        let padding = 10.0;
+                        if let Some(g) = self.groups.get(&group_id) {
+                            let member_ids = g.member_ids.clone();
+                            let mut min_x = f32::MAX;
+                            let mut min_y = f32::MAX;
+                            let mut max_x = f32::MIN;
+                            let mut max_y = f32::MIN;
+                            for mid in &member_ids {
+                                if let Some(wf) = self.waveforms.get(mid) {
+                                    min_x = min_x.min(wf.position[0]);
+                                    min_y = min_y.min(wf.position[1]);
+                                    max_x = max_x.max(wf.position[0] + wf.size[0]);
+                                    max_y = max_y.max(wf.position[1] + wf.size[1]);
+                                }
+                            }
+                            if min_x < f32::MAX {
+                                if let Some(g) = self.groups.get_mut(&group_id) {
+                                    g.position = [min_x - padding, min_y - padding];
+                                    g.size = [max_x - min_x + padding * 2.0, max_y - min_y + padding * 2.0];
+                                }
+                            }
+                        }
+                    }
+
                     self.sync_audio_clips();
                 }
             } else {
-                if let Some(wf_id) = self.recording_waveform_id.take() {
+                let cancelled_wf_id = self.recording_waveform_id.take();
+                // Remove waveform from recording group member list
+                if let Some(group_id) = self.recording_group_id.take() {
+                    if let Some(wf_id) = cancelled_wf_id {
+                        let is_new_group = self.groups.get(&group_id)
+                            .map_or(false, |g| g.member_ids.len() <= 1);
+                        if is_new_group {
+                            // Auto-created group with only this waveform — delete it
+                            self.groups.shift_remove(&group_id);
+                        } else {
+                            // Existing group — just remove the waveform from members
+                            if let Some(g) = self.groups.get_mut(&group_id) {
+                                g.member_ids.retain(|id| *id != wf_id);
+                            }
+                        }
+                    }
+                }
+                if let Some(wf_id) = cancelled_wf_id {
                     self.waveforms.shift_remove(&wf_id);
                     self.audio_clips.shift_remove(&wf_id);
                 }
@@ -3254,18 +3377,42 @@ impl App {
             let color_idx = self.waveforms.len() % WAVEFORM_COLORS.len();
             let sample_rate = self.recorder.as_ref().unwrap().sample_rate();
 
+            // Record into the group that has input monitoring enabled
+            let selected_group_id = self.monitoring_group_id;
+
             // Check if a waveform is selected — if so, record as a new take
             // If a child take is selected, resolve to the parent waveform
-            let selected_wf_id = self.selected.first().and_then(|t| match t {
-                HitTarget::Waveform(id) => {
-                    // If this waveform is a child take, use its parent instead
-                    Some(self.find_take_parent(*id).unwrap_or(*id))
-                },
-                _ => None,
-            });
+            let selected_wf_id = if selected_group_id.is_none() {
+                self.selected.first().and_then(|t| match t {
+                    HitTarget::Waveform(id) => {
+                        // If this waveform is a child take, use its parent instead
+                        Some(self.find_take_parent(*id).unwrap_or(*id))
+                    },
+                    _ => None,
+                })
+            } else {
+                None
+            };
 
-            // Determine recording position: if recording into a take, position below parent
-            let (rec_x, rec_y) = if let Some(parent_id) = selected_wf_id {
+            // Determine recording position
+            let (rec_x, rec_y) = if let Some(group_id) = selected_group_id {
+                // Record into selected group — position below last member
+                if let Some(group) = self.groups.get(&group_id) {
+                    let mut bottom_y = group.position[1];
+                    for mid in &group.member_ids {
+                        if let Some(wf) = self.waveforms.get(mid) {
+                            let wf_bottom = wf.position[1] + wf.size[1];
+                            if wf_bottom > bottom_y {
+                                bottom_y = wf_bottom;
+                            }
+                        }
+                    }
+                    (group.position[0] + 10.0, bottom_y + 5.0)
+                } else {
+                    let world = self.last_canvas_click_world;
+                    (world[0], world[1] - height * 0.5)
+                }
+            } else if let Some(parent_id) = selected_wf_id {
                 if let Some(parent) = self.waveforms.get(&parent_id) {
                     let parent_h = parent.size[1];
                     let half_h = parent_h * 0.5;
@@ -3284,8 +3431,10 @@ impl App {
                 (world[0], world[1] - height * 0.5)
             };
 
-            // Determine filename: "Take N" when recording into a take, "Recording" otherwise
-            let rec_filename = if let Some(pid) = selected_wf_id {
+            // Determine filename
+            let rec_filename = if selected_group_id.is_some() {
+                format!("Recording {}", self.waveforms.len() + 1)
+            } else if let Some(pid) = selected_wf_id {
                 let num_children = self.waveforms.get(&pid)
                     .and_then(|wf| wf.take_group.as_ref())
                     .map(|tg| tg.take_ids.len())
@@ -3337,6 +3486,32 @@ impl App {
             self.push_op(operations::Operation::CreateWaveform { id: wf_id, data: wf_data, audio_clip: Some((wf_id, ac_data)) });
             self.recording_waveform_id = Some(wf_id);
             self.recording_take_parent_id = selected_wf_id;
+
+            // Record into selected group or auto-create a new "Recording" group
+            if let Some(group_id) = selected_group_id {
+                // Add waveform to existing group
+                if let Some(g) = self.groups.get_mut(&group_id) {
+                    g.member_ids.push(wf_id);
+                }
+                self.recording_group_id = Some(group_id);
+            } else if selected_wf_id.is_none() {
+                // No group or waveform selected — auto-create a "Recording" group
+                let group_id = new_id();
+                let group = group::Group {
+                    id: group_id,
+                    name: "Recording".to_string(),
+                    position: [rec_x, rec_y],
+                    size: [1.0, height],
+                    member_ids: vec![wf_id],
+                    effect_chain_id: None,
+                    volume: 1.0,
+                    pan: 0.5,
+                    disabled: false,
+                };
+                self.groups.insert(group_id, group);
+                self.recording_group_id = Some(group_id);
+            }
+
             self.recorder.as_mut().unwrap().start();
 
             if let Some(engine) = &self.audio_engine {

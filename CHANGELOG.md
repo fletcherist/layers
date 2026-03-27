@@ -1,3 +1,6 @@
+- 2026-03-27: fix: monitor inspector vol/pan now controls audio, correct pan law, live drag sync, ghost hit zone guard (51.9k loc)
+- 2026-03-27: feat: group icon (dashed rectangle) in layers panel + "Group" tooltip on hover (51.9k loc)
+- 2026-03-27: feat: per-group monitoring button (S M I) in browser layers + inspector — click I on group to hear mic through group FX, increased button contrast (51.9k loc)
 - 2026-03-27: fix: audio recording now syncs to remote peers in realtime collaboration (51.4k loc)
 - 2026-03-27: feat: Share button (top-right) + Share window with copy link + Join Session accepts layers.audio/projects/... URLs + base62 project IDs (51.4k loc)
 - 2026-03-27: fix: instrument/effect pills in palette use same neutral color as sample folders (51.4k loc)

@@ -16,6 +16,7 @@ impl App {
         if self.audio_engine.as_ref().map_or(false, |e| e.is_preview_playing()) {
             self.request_redraw();
         }
+
         if let Some(gpu) = &mut self.gpu {
             let w = gpu.config.width as f32;
             let h = gpu.config.height as f32;
@@ -187,6 +188,10 @@ impl App {
                     crate::ui::right_window::RightWindowTarget::Master => {
                         self.audio_engine.as_ref().map_or(0.0, |e| e.rms_peak())
                     }
+                    crate::ui::right_window::RightWindowTarget::Monitor => {
+                        // Monitor RMS — use master RMS as approximation for now
+                        self.audio_engine.as_ref().map_or(0.0, |e| e.rms_peak())
+                    }
                     crate::ui::right_window::RightWindowTarget::Waveform(id)
                     | crate::ui::right_window::RightWindowTarget::Instrument(id)
                     | crate::ui::right_window::RightWindowTarget::Group(id) => {
@@ -295,6 +300,9 @@ impl App {
                             crate::ui::right_window::RightWindowTarget::Master => {
                                 self.master.effect_chain_id
                             }
+                            crate::ui::right_window::RightWindowTarget::Monitor => {
+                                self.monitor_effect_chain_id
+                            }
                         };
                         if let Some(cid) = chain_id {
                             self.effect_chains.get(&cid).map(|c| {
@@ -309,7 +317,6 @@ impl App {
                     }
                 },
                 effect_chain_drag,
-                self.input_monitoring,
                 &self.text_notes,
                 self.editing_text_note.as_ref().map(|e| (e.note_id, e.cursor)),
                 &selected_entity_ids,

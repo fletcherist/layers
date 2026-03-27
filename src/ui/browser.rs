@@ -70,7 +70,7 @@ pub enum EntryKind {
     PluginHeader,
     Plugin { unique_id: String, is_instrument: bool },
     ProjectInstrument { id: EntityId },
-    LayerNode { id: EntityId, kind: LayerNodeKind, has_children: bool, expanded: bool, color: [f32; 4], is_soloed: bool, is_muted: bool },
+    LayerNode { id: EntityId, kind: LayerNodeKind, has_children: bool, expanded: bool, color: [f32; 4], is_soloed: bool, is_muted: bool, is_monitoring: bool },
     Master,
     EmptyState,
 }
@@ -401,6 +401,7 @@ impl SampleBrowser {
                             color: row.color,
                             is_soloed: row.is_soloed,
                             is_muted: row.is_muted,
+                            is_monitoring: row.is_monitoring,
                         },
                         depth: if searching { 0 } else { row.depth },
                     });
@@ -507,6 +508,32 @@ impl SampleBrowser {
 
     pub(crate) fn content_top(&self, scale: f32) -> f32 {
         (HEADER_HEIGHT + SEARCH_BAR_HEIGHT) * scale
+    }
+
+    /// Returns the tooltip anchor rect `(pos, size)` if the mouse is hovering the group icon
+    /// of the currently hovered entry (Layers tab, Group rows only).
+    pub fn hovered_group_icon_rect(&self, mouse_pos: [f32; 2], scale: f32) -> Option<([f32; 2], [f32; 2])> {
+        let idx = self.hovered_entry?;
+        let entry = self.entries.get(idx)?;
+        if !matches!(entry.kind, EntryKind::LayerNode { kind: LayerNodeKind::Group, .. }) {
+            return None;
+        }
+        let item_h = ITEM_HEIGHT * scale;
+        let ct = self.content_top(scale);
+        let y = ct + idx as f32 * item_h - self.scroll_offset;
+        let indent = entry.depth as f32 * INDENT_PX * scale;
+        let cx = self.content_x(scale);
+        let icon_sz = 10.0 * scale;
+        let icon_x = cx + indent + 20.0 * scale - icon_sz * 0.5;
+        let icon_y = y + (item_h - icon_sz) * 0.5;
+        let hit_pad = 4.0 * scale;
+        if mouse_pos[0] >= icon_x - hit_pad && mouse_pos[0] <= icon_x + icon_sz + hit_pad
+            && mouse_pos[1] >= icon_y - hit_pad && mouse_pos[1] <= icon_y + icon_sz + hit_pad
+        {
+            Some(([icon_x, icon_y], [icon_sz, icon_sz]))
+        } else {
+            None
+        }
     }
 
     fn visible_height(&self, screen_h: f32, scale: f32) -> f32 {
@@ -1314,15 +1341,39 @@ impl SampleBrowser {
                         }
                     }
                     }
+                    // Group icon (dashed rectangle, Figma-style)
+                    if let EntryKind::LayerNode { kind: LayerNodeKind::Group, .. } = &entry.kind {
+                        let icon_sz = 10.0 * scale;
+                        let icon_x = cx + indent + 20.0 * scale - icon_sz * 0.5;
+                        let icon_y = y + (item_h - icon_sz) * 0.5;
+                        if icon_y >= ct {
+                            let bar_t = 1.5 * scale;
+                            let dash = icon_sz * 0.4;
+                            let col = crate::theme::with_alpha(settings.theme.text_primary, 0.50);
+                            // Top-left corner
+                            out.push(InstanceRaw { position: [icon_x, icon_y], size: [dash, bar_t], color: col, border_radius: 0.0 });
+                            out.push(InstanceRaw { position: [icon_x, icon_y], size: [bar_t, dash], color: col, border_radius: 0.0 });
+                            // Top-right corner
+                            out.push(InstanceRaw { position: [icon_x + icon_sz - dash, icon_y], size: [dash, bar_t], color: col, border_radius: 0.0 });
+                            out.push(InstanceRaw { position: [icon_x + icon_sz - bar_t, icon_y], size: [bar_t, dash], color: col, border_radius: 0.0 });
+                            // Bottom-left corner
+                            out.push(InstanceRaw { position: [icon_x, icon_y + icon_sz - bar_t], size: [dash, bar_t], color: col, border_radius: 0.0 });
+                            out.push(InstanceRaw { position: [icon_x, icon_y + icon_sz - dash], size: [bar_t, dash], color: col, border_radius: 0.0 });
+                            // Bottom-right corner
+                            out.push(InstanceRaw { position: [icon_x + icon_sz - dash, icon_y + icon_sz - bar_t], size: [dash, bar_t], color: col, border_radius: 0.0 });
+                            out.push(InstanceRaw { position: [icon_x + icon_sz - bar_t, icon_y + icon_sz - dash], size: [bar_t, dash], color: col, border_radius: 0.0 });
+                        }
+                    }
                     // Solo/Mute buttons (right-aligned) — only for Waveform, Instrument, Group
-                    if let EntryKind::LayerNode { kind, is_soloed, is_muted, .. } = &entry.kind {
+                    if let EntryKind::LayerNode { kind, is_soloed, is_muted, is_monitoring, .. } = &entry.kind {
                         if matches!(kind, LayerNodeKind::Waveform | LayerNodeKind::Instrument | LayerNodeKind::Group) {
                             let row_right = cx + content_w;
                             let row_cy = y + item_h * 0.5;
                             let layout = super::solo_mute::layout_right_aligned(row_right, row_cy, scale);
                             let is_hovered = self.hovered_entry == Some(i);
-                            let visible = *is_soloed || *is_muted || is_hovered;
-                            out.extend(super::solo_mute::build_instances(&layout, *is_soloed, *is_muted, is_hovered, visible, &settings.theme, scale));
+                            let show_mon = matches!(kind, LayerNodeKind::Group);
+                            let visible = *is_soloed || *is_muted || *is_monitoring || is_hovered;
+                            out.extend(super::solo_mute::build_instances(&layout, *is_soloed, *is_muted, *is_monitoring, is_hovered, visible, show_mon, &settings.theme, scale));
                         }
                     }
                 }
@@ -1763,7 +1814,9 @@ impl SampleBrowser {
                 }
                 EntryKind::ProjectInstrument { .. } | EntryKind::LayerNode { .. } | EntryKind::Master => {
                     let indent = entry.depth as f32 * INDENT_PX * scale;
-                    let dot_offset = if matches!(entry.kind, EntryKind::Master) { 12.0 } else { 28.0 };
+                    let dot_offset = if matches!(entry.kind, EntryKind::Master) { 12.0 }
+                        else if matches!(entry.kind, EntryKind::LayerNode { kind: LayerNodeKind::Group, .. }) { 34.0 }
+                        else { 28.0 };
                     let text_offset = indent + dot_offset * scale;
                     let text_x = cx + text_offset;
                     let font_sz = 12.0 * scale;
@@ -1803,13 +1856,14 @@ impl SampleBrowser {
                         center: false,
                     });
                     // Solo/Mute button labels
-                    if let EntryKind::LayerNode { kind, is_soloed, is_muted, .. } = &entry.kind {
+                    if let EntryKind::LayerNode { kind, is_soloed, is_muted, is_monitoring, .. } = &entry.kind {
                         if matches!(kind, LayerNodeKind::Waveform | LayerNodeKind::Instrument | LayerNodeKind::Group) {
                             let row_right = cx + self.content_width(scale);
                             let row_cy = base_y + item_h * 0.5;
                             let layout = super::solo_mute::layout_right_aligned(row_right, row_cy, scale);
-                            let visible = *is_soloed || *is_muted || self.hovered_entry == Some(i);
-                            out.extend(super::solo_mute::build_text_entries(&layout, *is_soloed, *is_muted, visible, theme, scale));
+                            let show_mon = matches!(kind, LayerNodeKind::Group);
+                            let visible = *is_soloed || *is_muted || *is_monitoring || self.hovered_entry == Some(i);
+                            out.extend(super::solo_mute::build_text_entries(&layout, *is_soloed, *is_muted, *is_monitoring, visible, show_mon, theme, scale));
                         }
                     }
                 }

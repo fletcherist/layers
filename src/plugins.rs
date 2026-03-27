@@ -397,6 +397,55 @@ impl App {
         self.request_redraw();
     }
 
+    pub(crate) fn add_plugin_to_monitor_chain(&mut self, plugin_id: &str, plugin_name: &str) {
+        self.ensure_plugins_scanned();
+        let _block_size = self.settings.buffer_size;
+
+        let plugin_path = self
+            .plugin_registry
+            .plugins
+            .iter()
+            .find(|e| e.info.unique_id == plugin_id)
+            .map(|e| e.info.path.clone())
+            .unwrap_or_default();
+
+        let mut slot = effects::EffectChainSlot::new(
+            plugin_id.to_string(),
+            plugin_name.to_string(),
+            plugin_path,
+        );
+
+        #[cfg(any(target_os = "macos", target_os = "windows"))]
+        {
+            let path = slot.plugin_path.to_string_lossy().to_string();
+            if !path.is_empty() {
+                if let Some(gui) = vst3_gui::Vst3Gui::open(&path, plugin_id, plugin_name) {
+                    gui.setup_processing(self.plugin_sample_rate(), _block_size as i32);
+                    if let Ok(mut g) = slot.gui.lock() {
+                        *g = Some(gui);
+                    }
+                }
+            }
+        }
+
+        let chain_id = match self.monitor_effect_chain_id {
+            Some(id) => id,
+            None => {
+                let id = new_id();
+                self.effect_chains.insert(id, effects::EffectChain::new());
+                self.monitor_effect_chain_id = Some(id);
+                id
+            }
+        };
+
+        if let Some(chain) = self.effect_chains.get_mut(&chain_id) {
+            chain.slots.push(slot);
+        }
+
+        self.sync_monitor_effects();
+        self.request_redraw();
+    }
+
     pub(crate) fn add_plugin_to_selected_effect_region(&mut self, _plugin_id: &str, _plugin_name: &str) {}
 
     /// Open the VST3 GUI for a specific slot in an effect chain.

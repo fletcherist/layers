@@ -746,6 +746,9 @@ impl App {
                                 ui::solo_mute::SoloMuteHit::Mute => {
                                     self.toggle_mute_disabled(target_id);
                                 }
+                                ui::solo_mute::SoloMuteHit::Monitor => {
+                                    self.toggle_group_monitoring(target_id);
+                                }
                                 ui::solo_mute::SoloMuteHit::None => {}
                             }
                             self.update_right_window();
@@ -1069,6 +1072,7 @@ impl App {
                                 ui::right_window::RightWindowTarget::Instrument(inst_id) => self.instruments.get(&inst_id).and_then(|i| i.effect_chain_id),
                                 ui::right_window::RightWindowTarget::Group(group_id) => self.groups.get(&group_id).and_then(|g| g.effect_chain_id),
                                 ui::right_window::RightWindowTarget::Master => self.master.effect_chain_id,
+                                ui::right_window::RightWindowTarget::Monitor => self.monitor_effect_chain_id,
                             };
                             let slot_count = chain_id
                                 .and_then(|cid| self.effect_chains.get(&cid))
@@ -1085,6 +1089,10 @@ impl App {
                                     ui::right_window::RightWindowTarget::Group(group_id) => self.detach_group_effect_chain(group_id),
                                     ui::right_window::RightWindowTarget::Master => {
                                         self.master.effect_chain_id = None;
+                                    }
+                                    ui::right_window::RightWindowTarget::Monitor => {
+                                        self.monitor_effect_chain_id = None;
+                                        self.sync_monitor_effects();
                                     }
                                 }
                                 self.request_redraw();
@@ -1487,7 +1495,8 @@ impl App {
                                         let row_right = self.sample_browser.content_x(scale) + self.sample_browser.content_width(scale);
                                         let row_cy = self.mouse_pos[1]; // Y doesn't matter for horizontal hit-test
                                         let layout = ui::solo_mute::layout_right_aligned(row_right, row_cy, scale);
-                                        let hit = ui::solo_mute::hit_test(&layout, self.mouse_pos);
+                                        let show_mon = matches!(kind, crate::layers::LayerNodeKind::Group);
+                                        let hit = ui::solo_mute::hit_test(&layout, self.mouse_pos, show_mon);
                                         if hit != ui::solo_mute::SoloMuteHit::None {
                                             match hit {
                                                 ui::solo_mute::SoloMuteHit::Solo => {
@@ -1496,6 +1505,9 @@ impl App {
                                                 }
                                                 ui::solo_mute::SoloMuteHit::Mute => {
                                                     self.toggle_mute_disabled(*id);
+                                                }
+                                                ui::solo_mute::SoloMuteHit::Monitor => {
+                                                    self.toggle_group_monitoring(*id);
                                                 }
                                                 ui::solo_mute::SoloMuteHit::None => {}
                                             }
@@ -1658,9 +1670,6 @@ impl App {
                             }
                             #[cfg(feature = "native")]
                             self.sync_computer_keyboard_to_engine();
-                        } else if TransportPanel::hit_monitor_button(self.mouse_pos, sw, sh, scale)
-                        {
-                            self.toggle_monitoring();
                         } else if TransportPanel::hit_record_button(self.mouse_pos, sw, sh, scale)
                         {
                             self.toggle_recording();
@@ -2545,6 +2554,11 @@ impl App {
                                 ui::right_window::RightWindowTarget::Master => {
                                     // MainLayer vol/pan — no undo for now
                                 }
+                                ui::right_window::RightWindowTarget::Monitor => {
+                                    // Monitor vol/pan — no undo for now
+                                    #[cfg(feature = "native")]
+                                    self.sync_monitor_effects();
+                                }
                             }
                         }
                         self.request_redraw();
@@ -3103,6 +3117,8 @@ impl App {
                                             self.add_plugin_to_group_chain(id, &plugin_id, &plugin_name),
                                         ui::right_window::RightWindowTarget::Master =>
                                             self.add_plugin_to_master_chain(&plugin_id, &plugin_name),
+                                        ui::right_window::RightWindowTarget::Monitor =>
+                                            self.add_plugin_to_monitor_chain(&plugin_id, &plugin_name),
                                     }
                                     self.drag = DragState::None;
                                     self.update_hover();

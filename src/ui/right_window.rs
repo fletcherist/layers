@@ -13,6 +13,7 @@ pub enum RightWindowTarget {
     Instrument(EntityId),
     Group(EntityId),
     Master,
+    Monitor,
 }
 
 pub const RIGHT_WINDOW_WIDTH: f32 = 200.0;
@@ -140,6 +141,8 @@ pub struct RightWindow {
     pub is_soloed: bool,
     /// Transient mute state for the target entity
     pub is_muted: bool,
+    /// Whether this group has monitoring enabled (mic input through group FX)
+    pub is_monitoring: bool,
     /// Smoothed RMS level (linear amplitude, 0.0–~1.5)
     pub meter_rms: f32,
     /// Peak hold level (linear amplitude)
@@ -154,11 +157,18 @@ pub const MAIN_LAYER_ID: EntityId = uuid::Uuid::from_bytes([
     0xbf, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x01,
 ]);
 
+/// Sentinel EntityId for the Monitor target (used for effect chain keying).
+pub const MONITOR_ID: EntityId = uuid::Uuid::from_bytes([
+    0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x4f, 0xff,
+    0xbf, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x02,
+]);
+
 impl RightWindow {
     pub fn target_id(&self) -> EntityId {
         match self.target {
             RightWindowTarget::Waveform(id) | RightWindowTarget::Instrument(id) | RightWindowTarget::Group(id) => id,
             RightWindowTarget::Master => MAIN_LAYER_ID,
+            RightWindowTarget::Monitor => MONITOR_ID,
         }
     }
 
@@ -176,6 +186,10 @@ impl RightWindow {
 
     pub fn is_master(&self) -> bool {
         matches!(self.target, RightWindowTarget::Master)
+    }
+
+    pub fn is_monitor(&self) -> bool {
+        matches!(self.target, RightWindowTarget::Monitor)
     }
 
     pub fn update_rms(&mut self, raw: f32) {
@@ -206,11 +220,11 @@ impl RightWindow {
     }
 
     fn y_extra(&self) -> f32 {
-        if self.is_group() || self.is_master() { GROUP_EXTRA_Y } else { 0.0 }
+        if self.is_group() || self.is_master() || self.is_monitor() { GROUP_EXTRA_Y } else { 0.0 }
     }
 
     pub fn target_y_extra(target: &RightWindowTarget) -> f32 {
-        if matches!(target, RightWindowTarget::Group(_) | RightWindowTarget::Master) { GROUP_EXTRA_Y } else { 0.0 }
+        if matches!(target, RightWindowTarget::Group(_) | RightWindowTarget::Master | RightWindowTarget::Monitor) { GROUP_EXTRA_Y } else { 0.0 }
     }
 
     pub fn panel_rect(screen_w: f32, screen_h: f32, scale: f32) -> ([f32; 2], [f32; 2]) {
@@ -344,25 +358,25 @@ impl RightWindow {
 
     pub fn hit_test_solo_mute(&self, pos: [f32; 2], screen_w: f32, screen_h: f32, scale: f32) -> super::solo_mute::SoloMuteHit {
         let layout = Self::solo_mute_layout(screen_w, screen_h, scale, self.y_extra());
-        super::solo_mute::hit_test(&layout, pos)
+        super::solo_mute::hit_test(&layout, pos, self.is_group())
     }
 
     pub fn hit_test_reverse_button(&self, pos: [f32; 2], screen_w: f32, screen_h: f32, scale: f32) -> bool {
-        if self.is_instrument() || self.is_multi() || self.is_group() || self.is_master() { return false; }
+        if self.is_instrument() || self.is_multi() || self.is_group() || self.is_master() || self.is_monitor() { return false; }
         let (rp, rs) = Self::reverse_button_rect(screen_w, screen_h, scale);
         pos[0] >= rp[0] && pos[0] <= rp[0] + rs[0]
             && pos[1] >= rp[1] && pos[1] <= rp[1] + rs[1]
     }
 
     pub fn hit_test_warp_mode_button(&self, pos: [f32; 2], screen_w: f32, screen_h: f32, scale: f32) -> bool {
-        if self.is_instrument() || self.is_multi() || self.is_group() || self.is_master() { return false; }
+        if self.is_instrument() || self.is_multi() || self.is_group() || self.is_master() || self.is_monitor() { return false; }
         let (rp, rs) = Self::warp_mode_button_rect(screen_w, screen_h, scale);
         pos[0] >= rp[0] && pos[0] <= rp[0] + rs[0]
             && pos[1] >= rp[1] && pos[1] <= rp[1] + rs[1]
     }
 
     pub fn hit_test_warp_mode_selector(&self, pos: [f32; 2], screen_w: f32, screen_h: f32, scale: f32) -> bool {
-        if self.is_instrument() || self.is_multi() || self.is_group() || self.is_master() { return false; }
+        if self.is_instrument() || self.is_multi() || self.is_group() || self.is_master() || self.is_monitor() { return false; }
         if self.warp_mode == WarpMode::Off { return false; }
         let (rp, rs) = Self::warp_mode_selector_rect(screen_w, screen_h, scale);
         pos[0] >= rp[0] && pos[0] <= rp[0] + rs[0]
@@ -370,7 +384,7 @@ impl RightWindow {
     }
 
     pub fn hit_test_sample_bpm_text(&self, pos: [f32; 2], screen_w: f32, screen_h: f32, scale: f32) -> bool {
-        if self.is_instrument() || self.is_multi() || self.is_group() || self.is_master() { return false; }
+        if self.is_instrument() || self.is_multi() || self.is_group() || self.is_master() || self.is_monitor() { return false; }
         if self.warp_mode != WarpMode::RePitch && self.warp_mode != WarpMode::Complex { return false; }
         let (rp, rs) = Self::warp_param_text_rect(screen_w, screen_h, scale);
         pos[0] >= rp[0] && pos[0] <= rp[0] + rs[0]
@@ -378,7 +392,7 @@ impl RightWindow {
     }
 
     pub fn hit_test_pitch_text(&self, pos: [f32; 2], screen_w: f32, screen_h: f32, scale: f32) -> bool {
-        if self.is_instrument() || self.is_multi() || self.is_group() || self.is_master() { return false; }
+        if self.is_instrument() || self.is_multi() || self.is_group() || self.is_master() || self.is_monitor() { return false; }
         if self.warp_mode != WarpMode::Semitone { return false; }
         let (rp, rs) = Self::warp_param_text_rect(screen_w, screen_h, scale);
         pos[0] >= rp[0] && pos[0] <= rp[0] + rs[0]
@@ -386,7 +400,7 @@ impl RightWindow {
     }
 
     pub fn hit_test_paulstretch_factor_text(&self, pos: [f32; 2], screen_w: f32, screen_h: f32, scale: f32) -> bool {
-        if self.is_instrument() || self.is_multi() || self.is_group() || self.is_master() { return false; }
+        if self.is_instrument() || self.is_multi() || self.is_group() || self.is_master() || self.is_monitor() { return false; }
         if self.warp_mode != WarpMode::PaulStretch { return false; }
         let (rp, rs) = Self::warp_param_text_rect(screen_w, screen_h, scale);
         pos[0] >= rp[0] && pos[0] <= rp[0] + rs[0]
@@ -394,7 +408,7 @@ impl RightWindow {
     }
 
     pub fn hit_test_paulstretch_render_button(&self, pos: [f32; 2], screen_w: f32, screen_h: f32, scale: f32) -> bool {
-        if self.is_instrument() || self.is_multi() || self.is_group() || self.is_master() { return false; }
+        if self.is_instrument() || self.is_multi() || self.is_group() || self.is_master() || self.is_monitor() { return false; }
         if self.warp_mode != WarpMode::PaulStretch { return false; }
         let (rp, rs) = Self::paulstretch_render_button_rect(screen_w, screen_h, scale);
         pos[0] >= rp[0] && pos[0] <= rp[0] + rs[0]
@@ -782,7 +796,7 @@ impl RightWindow {
         // Solo/Mute buttons (all entity types except MainLayer)
         if !self.is_master() {
             let sm_layout = Self::solo_mute_layout(screen_w, screen_h, scale, self.y_extra());
-            out.extend(super::solo_mute::build_instances(&sm_layout, self.is_soloed, self.is_muted, false, true, &settings.theme, scale));
+            out.extend(super::solo_mute::build_instances(&sm_layout, self.is_soloed, self.is_muted, self.is_monitoring, false, true, self.is_group(), &settings.theme, scale));
         }
 
         // Reverse / Warp / Pitch — waveform-only controls (hidden for multi-selection)
@@ -1013,6 +1027,8 @@ impl RightWindow {
         // "INSPECTOR" header label (with selection count for multi-selection)
         let header_text = if self.is_master() {
             "MAIN".to_string()
+        } else if self.is_monitor() {
+            "MONITOR".to_string()
         } else if self.is_group() {
             "GROUP".to_string()
         } else if self.is_multi() {
@@ -1033,8 +1049,8 @@ impl RightWindow {
             center: false,
         });
 
-        // Group/MainLayer target: render group name, member count, export button text
-        if self.is_group() || self.is_master() {
+        // Group/MainLayer/Monitor target: render group name, member count, export button text
+        if self.is_group() || self.is_master() || self.is_monitor() {
             // Group name
             out.push(TextEntry {
                 text: self.group_name.clone(),
@@ -1068,26 +1084,28 @@ impl RightWindow {
                 center: false,
             });
 
-            // "Export" button text
-            let (ebp, ebs) = Self::export_button_rect(screen_w, screen_h, scale);
-            let icon_size = 14.0 * scale;
-            let padding = 12.0 * scale;
-            out.push(TextEntry {
-                text: "Export".to_string(),
-                x: ebp[0] + padding + icon_size + 6.0 * scale,
-                y: ebp[1] + (ebs[1] - 12.0 * scale) * 0.5,
-                font_size: 12.0 * scale,
-                line_height: 14.0 * scale,
-                max_width: ebs[0] - padding - icon_size - 6.0 * scale,
-                color: if self.export_button_hovered {
-                    crate::theme::RuntimeTheme::text_u8(theme.text_primary, 255)
-                } else {
-                    crate::theme::RuntimeTheme::text_u8(theme.text_secondary, 180)
-                },
-                weight: 400,
-                bounds: None,
-                center: false,
-            });
+            // "Export" button text (not for Monitor)
+            if !self.is_monitor() {
+                let (ebp, ebs) = Self::export_button_rect(screen_w, screen_h, scale);
+                let icon_size = 14.0 * scale;
+                let padding = 12.0 * scale;
+                out.push(TextEntry {
+                    text: "Export".to_string(),
+                    x: ebp[0] + padding + icon_size + 6.0 * scale,
+                    y: ebp[1] + (ebs[1] - 12.0 * scale) * 0.5,
+                    font_size: 12.0 * scale,
+                    line_height: 14.0 * scale,
+                    max_width: ebs[0] - padding - icon_size - 6.0 * scale,
+                    color: if self.export_button_hovered {
+                        crate::theme::RuntimeTheme::text_u8(theme.text_primary, 255)
+                    } else {
+                        crate::theme::RuntimeTheme::text_u8(theme.text_secondary, 180)
+                    },
+                    weight: 400,
+                    bounds: None,
+                    center: false,
+                });
+            }
             // fall through to vol/pan text
         }
 
@@ -1202,7 +1220,7 @@ impl RightWindow {
         // Solo/Mute button text (all entity types except MainLayer)
         if !self.is_master() {
             let sm_layout = Self::solo_mute_layout(screen_w, screen_h, scale, self.y_extra());
-            out.extend(super::solo_mute::build_text_entries(&sm_layout, self.is_soloed, self.is_muted, true, theme, scale));
+            out.extend(super::solo_mute::build_text_entries(&sm_layout, self.is_soloed, self.is_muted, self.is_monitoring, true, self.is_group(), theme, scale));
         }
 
         // Reverse / Warp / Pitch text — waveform-only (hidden for multi-selection)
@@ -1383,7 +1401,7 @@ impl RightWindow {
         let (pp, _) = Self::panel_rect(screen_w, screen_h, scale);
         let offset = match target {
             RightWindowTarget::Instrument(_) => REVERSE_BUTTON_Y_OFFSET,
-            RightWindowTarget::Group(_) | RightWindowTarget::Master => GROUP_EFFECT_CHAIN_TOP_OFFSET,
+            RightWindowTarget::Group(_) | RightWindowTarget::Master | RightWindowTarget::Monitor => GROUP_EFFECT_CHAIN_TOP_OFFSET,
             _ => EFFECT_CHAIN_TOP_OFFSET,
         };
         pp[1] + HEADER_HEIGHT * scale + offset * scale

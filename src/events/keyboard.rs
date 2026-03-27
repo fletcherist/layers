@@ -339,6 +339,10 @@ impl App {
                             self.master.volume = new_gain;
                             self.sync_audio_clips();
                         }
+                        ui::right_window::RightWindowTarget::Monitor => {
+                            self.monitor_volume = new_gain;
+                            self.sync_monitor_effects();
+                        }
                     }
                     self.mark_dirty();
                     self.request_redraw();
@@ -411,6 +415,10 @@ impl App {
                         ui::right_window::RightWindowTarget::Master => {
                             self.master.pan = new_pan;
                             self.sync_audio_clips();
+                        }
+                        ui::right_window::RightWindowTarget::Monitor => {
+                            self.monitor_pan = new_pan;
+                            self.sync_monitor_effects();
                         }
                     }
                     self.mark_dirty();
