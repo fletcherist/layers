@@ -51,6 +51,8 @@ pub struct FlatLayerRow {
     pub expanded: bool,
     pub label: String,
     pub color: [f32; 4],
+    pub is_soloed: bool,
+    pub is_muted: bool,
 }
 
 /// Determine the LayerNodeKind for a member entity by checking which map contains it.
@@ -179,10 +181,11 @@ pub fn flatten_tree(
     midi_clips: &IndexMap<EntityId, crate::midi::MidiClip>,
     waveforms: &IndexMap<EntityId, crate::ui::waveform::WaveformView>,
     groups: &IndexMap<EntityId, crate::group::Group>,
+    solo_ids: &std::collections::HashSet<EntityId>,
 ) -> Vec<FlatLayerRow> {
     let mut rows = Vec::new();
     for node in tree {
-        flatten_node(node, 0, &mut rows, instruments, midi_clips, waveforms, groups);
+        flatten_node(node, 0, &mut rows, instruments, midi_clips, waveforms, groups, solo_ids);
     }
     rows
 }
@@ -195,6 +198,7 @@ fn flatten_node(
     midi_clips: &IndexMap<EntityId, crate::midi::MidiClip>,
     waveforms: &IndexMap<EntityId, crate::ui::waveform::WaveformView>,
     groups: &IndexMap<EntityId, crate::group::Group>,
+    solo_ids: &std::collections::HashSet<EntityId>,
 ) {
     let label = match node.kind {
         LayerNodeKind::Instrument => {
@@ -253,11 +257,18 @@ fn flatten_node(
         expanded: node.expanded,
         label,
         color,
+        is_soloed: solo_ids.contains(&node.entity_id),
+        is_muted: {
+            let id = node.entity_id;
+            waveforms.get(&id).map_or(false, |wf| wf.disabled)
+                || instruments.get(&id).map_or(false, |inst| inst.disabled)
+                || groups.get(&id).map_or(false, |g| g.disabled)
+        },
     });
 
     if node.expanded {
         for child in &node.children {
-            flatten_node(child, depth + 1, rows, instruments, midi_clips, waveforms, groups);
+            flatten_node(child, depth + 1, rows, instruments, midi_clips, waveforms, groups, solo_ids);
         }
     }
 }

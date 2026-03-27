@@ -20,11 +20,13 @@ pub(crate) struct Group {
     pub volume: f32,
     #[serde(default = "default_pan")]
     pub pan: f32,
+    #[serde(default)]
+    pub disabled: bool,
 }
 
 impl Group {
     pub fn new(id: EntityId, name: String, position: [f32; 2], size: [f32; 2], member_ids: Vec<EntityId>) -> Self {
-        Self { id, name, position, size, member_ids, effect_chain_id: None, volume: 1.0, pan: 0.5 }
+        Self { id, name, position, size, member_ids, effect_chain_id: None, volume: 1.0, pan: 0.5, disabled: false }
     }
 }
 

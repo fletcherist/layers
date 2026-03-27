@@ -307,7 +307,7 @@ fn test_instrument_volume_undo_redo() {
     let before = InstrumentSnapshot {
         name: inst.name.clone(), plugin_id: inst.plugin_id.clone(),
         plugin_name: inst.plugin_name.clone(), plugin_path: inst.plugin_path.clone(),
-        volume: inst.volume, pan: inst.pan, effect_chain_id: inst.effect_chain_id,
+        volume: inst.volume, pan: inst.pan, effect_chain_id: inst.effect_chain_id, disabled: inst.disabled,
     };
     let after = InstrumentSnapshot { volume: 0.5, ..before.clone() };
     app.instruments.get_mut(&inst_id).unwrap().volume = 0.5;

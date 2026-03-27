@@ -92,7 +92,7 @@ impl App {
                             let before = crate::instruments::InstrumentSnapshot {
                                 name: inst.name.clone(), plugin_id: inst.plugin_id.clone(),
                                 plugin_name: inst.plugin_name.clone(), plugin_path: inst.plugin_path.clone(),
-                                volume: inst.volume, pan: inst.pan, effect_chain_id: inst.effect_chain_id,
+                                volume: inst.volume, pan: inst.pan, effect_chain_id: inst.effect_chain_id, disabled: inst.disabled,
                             };
                             inst.volume = new_vol;
                             let after = crate::instruments::InstrumentSnapshot { volume: new_vol, ..before.clone() };
@@ -109,6 +109,10 @@ impl App {
                                 self.push_op(crate::operations::Operation::UpdateGroup { id: gid, before, after });
                             }
                         }
+                        self.sync_audio_clips();
+                    }
+                    ui::right_window::RightWindowTarget::Master => {
+                        self.master.volume = new_vol;
                         self.sync_audio_clips();
                     }
                 }
@@ -140,7 +144,7 @@ impl App {
                             let before = crate::instruments::InstrumentSnapshot {
                                 name: inst.name.clone(), plugin_id: inst.plugin_id.clone(),
                                 plugin_name: inst.plugin_name.clone(), plugin_path: inst.plugin_path.clone(),
-                                volume: inst.volume, pan: inst.pan, effect_chain_id: inst.effect_chain_id,
+                                volume: inst.volume, pan: inst.pan, effect_chain_id: inst.effect_chain_id, disabled: inst.disabled,
                             };
                             inst.pan = new_pan;
                             let after = crate::instruments::InstrumentSnapshot { pan: new_pan, ..before.clone() };
@@ -159,11 +163,18 @@ impl App {
                         }
                         self.sync_audio_clips();
                     }
+                    ui::right_window::RightWindowTarget::Master => {
+                        self.master.pan = new_pan;
+                        self.sync_audio_clips();
+                    }
                 }
                 self.request_redraw();
                 return;
             }
         }
+
+        // Break follow mode on any local pan/zoom
+        self.following_user = None;
 
         let zoom_modifier = if cfg!(target_arch = "wasm32") {
             // In browsers, trackpad pinch-to-zoom is reported as ctrl+wheel
@@ -202,6 +213,7 @@ impl App {
         if self.command_palette.is_some() || self.context_menu.is_some() || self.settings_window.is_some() || self.export_window.is_some() {
             return;
         }
+        self.following_user = None;
         let factor = (1.0 + delta as f32).clamp(0.5, 2.0);
         self.camera.zoom_at(self.mouse_pos, factor);
         self.broadcast_cursor_if_connected();

@@ -13,11 +13,146 @@ impl App {
                 HitTarget::ComponentInstance(id) => { if let Some(d) = self.component_instances.get(id) { ops.push(operations::Operation::CreateComponentInstance { id: *id, data: d.clone() }); } }
                 HitTarget::MidiClip(id) => { if let Some(d) = self.midi_clips.get(id) { ops.push(operations::Operation::CreateMidiClip { id: *id, data: d.clone() }); } }
                 HitTarget::TextNote(id) => { if let Some(d) = self.text_notes.get(id) { ops.push(operations::Operation::CreateTextNote { id: *id, data: d.clone() }); } }
-                HitTarget::Group(id) => { if let Some(d) = self.groups.get(id) { ops.push(operations::Operation::CreateGroup { id: *id, data: d.clone() }); } }
+                HitTarget::Group(id) => {
+                    if let Some(d) = self.groups.get(id) {
+                        // Emit create ops for all group members so undo removes them too
+                        for mid in &d.member_ids {
+                            if let Some(w) = self.waveforms.get(mid) {
+                                let ac = self.audio_clips.get(mid).cloned();
+                                ops.push(operations::Operation::CreateWaveform { id: *mid, data: w.clone(), audio_clip: ac.map(|c| (*mid, c)) });
+                            } else if let Some(mc) = self.midi_clips.get(mid) {
+                                ops.push(operations::Operation::CreateMidiClip { id: *mid, data: mc.clone() });
+                            } else if let Some(obj) = self.objects.get(mid) {
+                                ops.push(operations::Operation::CreateObject { id: *mid, data: obj.clone() });
+                            } else if let Some(tn) = self.text_notes.get(mid) {
+                                ops.push(operations::Operation::CreateTextNote { id: *mid, data: tn.clone() });
+                            } else if let Some(lr) = self.loop_regions.get(mid) {
+                                ops.push(operations::Operation::CreateLoopRegion { id: *mid, data: lr.clone() });
+                            } else if let Some(xr) = self.export_regions.get(mid) {
+                                ops.push(operations::Operation::CreateExportRegion { id: *mid, data: xr.clone() });
+                            } else if let Some(ci) = self.component_instances.get(mid) {
+                                ops.push(operations::Operation::CreateComponentInstance { id: *mid, data: ci.clone() });
+                            } else if let Some(inst) = self.instruments.get(mid) {
+                                let snap = crate::instruments::InstrumentSnapshot {
+                                    name: inst.name.clone(),
+                                    plugin_id: inst.plugin_id.clone(),
+                                    plugin_name: inst.plugin_name.clone(),
+                                    plugin_path: inst.plugin_path.clone(),
+                                    volume: inst.volume,
+                                    pan: inst.pan,
+                                    effect_chain_id: inst.effect_chain_id,
+                                    disabled: inst.disabled,
+                                };
+                                ops.push(operations::Operation::CreateInstrument { id: *mid, data: snap });
+                            }
+                        }
+                        ops.push(operations::Operation::CreateGroup { id: *id, data: d.clone() });
+                    }
+                }
                 HitTarget::Instrument(_) => {}
             }
         }
         ops
+    }
+
+    /// Shift an entity's position by (dx, dy). Mirrors the logic in set_target_pos for Group.
+    fn shift_entity_pos(&mut self, id: EntityId, dx: f32, dy: f32) {
+        if let Some(w) = self.waveforms.get_mut(&id) { w.position[0] += dx; w.position[1] += dy; }
+        else if let Some(mc) = self.midi_clips.get_mut(&id) { mc.position[0] += dx; mc.position[1] += dy; }
+        else if let Some(tn) = self.text_notes.get_mut(&id) { tn.position[0] += dx; tn.position[1] += dy; }
+        else if let Some(obj) = self.objects.get_mut(&id) { obj.position[0] += dx; obj.position[1] += dy; }
+        else if let Some(lr) = self.loop_regions.get_mut(&id) { lr.position[0] += dx; }
+        else if let Some(xr) = self.export_regions.get_mut(&id) { xr.position[0] += dx; xr.position[1] += dy; }
+        else if let Some(ci) = self.component_instances.get_mut(&id) { ci.position[0] += dx; ci.position[1] += dy; }
+    }
+
+    /// Clone any entity by ID, inserting the clone under a new ID. Returns the new ID.
+    pub(crate) fn clone_entity(&mut self, id: EntityId) -> Option<EntityId> {
+        if let Some(obj) = self.objects.get(&id).cloned() {
+            let nid = new_id();
+            self.objects.insert(nid, obj);
+            return Some(nid);
+        }
+        if let Some(wf) = self.waveforms.get(&id).cloned() {
+            let nid = new_id();
+            self.waveforms.insert(nid, wf);
+            if let Some(clip) = self.audio_clips.get(&id).cloned() {
+                self.audio_clips.insert(nid, clip);
+            }
+            return Some(nid);
+        }
+        if let Some(lr) = self.loop_regions.get(&id).cloned() {
+            let nid = new_id();
+            self.loop_regions.insert(nid, lr);
+            return Some(nid);
+        }
+        if let Some(xr) = self.export_regions.get(&id).cloned() {
+            let nid = new_id();
+            self.export_regions.insert(nid, xr);
+            return Some(nid);
+        }
+        if let Some(mc) = self.midi_clips.get(&id).cloned() {
+            let nid = new_id();
+            self.midi_clips.insert(nid, mc);
+            return Some(nid);
+        }
+        if let Some(tn) = self.text_notes.get(&id).cloned() {
+            let nid = new_id();
+            self.text_notes.insert(nid, tn);
+            return Some(nid);
+        }
+        if let Some(ci) = self.component_instances.get(&id).cloned() {
+            let nid = new_id();
+            self.component_instances.insert(nid, ci);
+            return Some(nid);
+        }
+        if let Some(inst) = self.instruments.get(&id).cloned() {
+            let nid = new_id();
+            self.instruments.insert(nid, inst);
+            return Some(nid);
+        }
+        None
+    }
+
+    /// Snapshot a group member entity for clipboard storage.
+    fn snapshot_entity(&self, id: EntityId) -> Option<crate::types::GroupMemberSnapshot> {
+        use crate::types::GroupMemberSnapshot;
+        if let Some(obj) = self.objects.get(&id) {
+            return Some(GroupMemberSnapshot::Object(obj.clone()));
+        }
+        if let Some(wf) = self.waveforms.get(&id) {
+            let clip = self.audio_clips.get(&id).cloned();
+            return Some(GroupMemberSnapshot::Waveform(wf.clone(), clip));
+        }
+        if let Some(lr) = self.loop_regions.get(&id) {
+            return Some(GroupMemberSnapshot::LoopRegion(lr.clone()));
+        }
+        if let Some(xr) = self.export_regions.get(&id) {
+            return Some(GroupMemberSnapshot::ExportRegion(xr.clone()));
+        }
+        if let Some(mc) = self.midi_clips.get(&id) {
+            return Some(GroupMemberSnapshot::MidiClip(mc.clone()));
+        }
+        if let Some(tn) = self.text_notes.get(&id) {
+            return Some(GroupMemberSnapshot::TextNote(tn.clone()));
+        }
+        if let Some(ci) = self.component_instances.get(&id) {
+            return Some(GroupMemberSnapshot::ComponentInstance(ci.clone()));
+        }
+        if let Some(inst) = self.instruments.get(&id) {
+            let snap = crate::instruments::InstrumentSnapshot {
+                name: inst.name.clone(),
+                plugin_id: inst.plugin_id.clone(),
+                plugin_name: inst.plugin_name.clone(),
+                plugin_path: inst.plugin_path.clone(),
+                volume: inst.volume,
+                pan: inst.pan,
+                effect_chain_id: inst.effect_chain_id,
+                disabled: inst.disabled,
+            };
+            return Some(GroupMemberSnapshot::Instrument(snap));
+        }
+        None
     }
 
     pub(crate) fn split_sample_at_cursor(&mut self) {
@@ -406,7 +541,16 @@ impl App {
                 HitTarget::Group(i) => {
                     if let Some(g) = self.groups.get(&i).cloned() {
                         let mut g = g;
-                        g.position[0] += g.size[0];
+                        let shift_x = g.size[0];
+                        g.position[0] += shift_x;
+                        let old_member_ids = g.member_ids.clone();
+                        let mut new_member_ids = Vec::new();
+                        for mid in old_member_ids {
+                            let new_mid = self.clone_entity(mid).unwrap_or(mid);
+                            self.shift_entity_pos(new_mid, shift_x, 0.0);
+                            new_member_ids.push(new_mid);
+                        }
+                        g.member_ids = new_member_ids;
                         let nid = new_id();
                         self.groups.insert(nid, g);
                         new_selected.push(HitTarget::Group(nid));
@@ -513,7 +657,12 @@ impl App {
                 }
                 HitTarget::Group(i) => {
                     if let Some(g) = self.groups.get(i) {
-                        self.clipboard.items.push(ClipboardItem::Group(g.clone()));
+                        let members: Vec<(EntityId, crate::types::GroupMemberSnapshot)> = g
+                            .member_ids
+                            .iter()
+                            .filter_map(|&mid| self.snapshot_entity(mid).map(|s| (mid, s)))
+                            .collect();
+                        self.clipboard.items.push(ClipboardItem::Group(g.clone(), members));
                     }
                 }
                 HitTarget::Instrument(_) => {}
@@ -582,7 +731,7 @@ impl App {
                 ClipboardItem::MidiClip(mc) => mc.position,
                 ClipboardItem::MidiNotes(_) => continue,
                 ClipboardItem::TextNote(tn) => tn.position,
-                ClipboardItem::Group(g) => g.position,
+                ClipboardItem::Group(g, _) => g.position,
             };
             if pos[0] < min_x {
                 min_x = pos[0];
@@ -675,9 +824,71 @@ impl App {
                     self.text_notes.insert(nid, tn);
                     new_selected.push(HitTarget::TextNote(nid));
                 }
-                ClipboardItem::Group(mut g) => {
+                ClipboardItem::Group(mut g, members) => {
                     g.position[0] += dx;
                     g.position[1] += dy;
+                    let mut id_map: std::collections::HashMap<EntityId, EntityId> =
+                        std::collections::HashMap::new();
+                    for (old_id, snapshot) in members {
+                        use crate::types::GroupMemberSnapshot;
+                        let nid = new_id();
+                        id_map.insert(old_id, nid);
+                        match snapshot {
+                            GroupMemberSnapshot::Object(mut o) => {
+                                o.position[0] += dx;
+                                o.position[1] += dy;
+                                self.objects.insert(nid, o);
+                            }
+                            GroupMemberSnapshot::Waveform(mut w, c) => {
+                                w.position[0] += dx;
+                                w.position[1] += dy;
+                                self.waveforms.insert(nid, w);
+                                if let Some(c) = c {
+                                    self.audio_clips.insert(nid, c);
+                                }
+                            }
+                            GroupMemberSnapshot::LoopRegion(mut lr) => {
+                                lr.position[0] += dx;
+                                self.loop_regions.insert(nid, lr);
+                            }
+                            GroupMemberSnapshot::ExportRegion(mut xr) => {
+                                xr.position[0] += dx;
+                                xr.position[1] += dy;
+                                self.export_regions.insert(nid, xr);
+                            }
+                            GroupMemberSnapshot::MidiClip(mut mc) => {
+                                mc.position[0] += dx;
+                                mc.position[1] += dy;
+                                self.midi_clips.insert(nid, mc);
+                            }
+                            GroupMemberSnapshot::TextNote(mut tn) => {
+                                tn.position[0] += dx;
+                                tn.position[1] += dy;
+                                self.text_notes.insert(nid, tn);
+                            }
+                            GroupMemberSnapshot::ComponentInstance(mut ci) => {
+                                ci.position[0] += dx;
+                                ci.position[1] += dy;
+                                self.component_instances.insert(nid, ci);
+                            }
+                            GroupMemberSnapshot::Instrument(snap) => {
+                                let mut inst = crate::instruments::Instrument::new();
+                                inst.name = snap.name;
+                                inst.plugin_id = snap.plugin_id;
+                                inst.plugin_name = snap.plugin_name;
+                                inst.plugin_path = snap.plugin_path;
+                                inst.volume = snap.volume;
+                                inst.pan = snap.pan;
+                                inst.effect_chain_id = snap.effect_chain_id;
+                                self.instruments.insert(nid, inst);
+                            }
+                        }
+                    }
+                    g.member_ids = g
+                        .member_ids
+                        .iter()
+                        .map(|id| id_map.get(id).copied().unwrap_or(*id))
+                        .collect();
                     let nid = new_id();
                     self.groups.insert(nid, g);
                     new_selected.push(HitTarget::Group(nid));
@@ -745,7 +956,56 @@ impl App {
         for &id in &xr_ids { if let Some(d) = self.export_regions.get(&id) { del_ops.push(operations::Operation::DeleteExportRegion { id, data: d.clone() }); } self.export_regions.shift_remove(&id); }
         for &id in &mc_ids { if let Some(d) = self.midi_clips.get(&id) { del_ops.push(operations::Operation::DeleteMidiClip { id, data: d.clone() }); } self.midi_clips.shift_remove(&id); }
         for &id in &tn_ids { if let Some(d) = self.text_notes.get(&id) { del_ops.push(operations::Operation::DeleteTextNote { id, data: d.clone() }); } self.text_notes.shift_remove(&id); }
-        for &id in &group_ids { if let Some(d) = self.groups.get(&id) { del_ops.push(operations::Operation::DeleteGroup { id, data: d.clone() }); } self.groups.shift_remove(&id); }
+        // Collect all individually-selected IDs so we don't double-delete group members
+        let already_deleted: std::collections::HashSet<EntityId> = [&obj_ids as &[EntityId], &wf_ids, &lr_ids, &xr_ids, &mc_ids, &tn_ids, &inst_ids, &comp_ids]
+            .iter().flat_map(|v| v.iter().copied()).collect();
+        for &id in &group_ids {
+            if let Some(d) = self.groups.get(&id) {
+                // Delete all member entities that weren't already individually deleted
+                for mid in &d.member_ids {
+                    if already_deleted.contains(mid) { continue; }
+                    if let Some(w) = self.waveforms.get(mid) {
+                        let ac = self.audio_clips.get(mid).cloned();
+                        del_ops.push(operations::Operation::DeleteWaveform { id: *mid, data: w.clone(), audio_clip: ac.map(|c| (*mid, c)) });
+                        self.waveforms.shift_remove(mid);
+                        self.audio_clips.shift_remove(mid);
+                    } else if let Some(mc) = self.midi_clips.get(mid) {
+                        del_ops.push(operations::Operation::DeleteMidiClip { id: *mid, data: mc.clone() });
+                        self.midi_clips.shift_remove(mid);
+                    } else if let Some(obj) = self.objects.get(mid) {
+                        del_ops.push(operations::Operation::DeleteObject { id: *mid, data: obj.clone() });
+                        self.objects.shift_remove(mid);
+                    } else if let Some(tn) = self.text_notes.get(mid) {
+                        del_ops.push(operations::Operation::DeleteTextNote { id: *mid, data: tn.clone() });
+                        self.text_notes.shift_remove(mid);
+                    } else if let Some(lr) = self.loop_regions.get(mid) {
+                        del_ops.push(operations::Operation::DeleteLoopRegion { id: *mid, data: lr.clone() });
+                        self.loop_regions.shift_remove(mid);
+                    } else if let Some(xr) = self.export_regions.get(mid) {
+                        del_ops.push(operations::Operation::DeleteExportRegion { id: *mid, data: xr.clone() });
+                        self.export_regions.shift_remove(mid);
+                    } else if let Some(ci) = self.component_instances.get(mid) {
+                        del_ops.push(operations::Operation::DeleteComponentInstance { id: *mid, data: ci.clone() });
+                        self.component_instances.shift_remove(mid);
+                    } else if let Some(inst) = self.instruments.get(mid) {
+                        let snap = crate::instruments::InstrumentSnapshot {
+                            name: inst.name.clone(),
+                            plugin_id: inst.plugin_id.clone(),
+                            plugin_name: inst.plugin_name.clone(),
+                            plugin_path: inst.plugin_path.clone(),
+                            volume: inst.volume,
+                            pan: inst.pan,
+                            effect_chain_id: inst.effect_chain_id,
+                            disabled: inst.disabled,
+                        };
+                        del_ops.push(operations::Operation::DeleteInstrument { id: *mid, data: snap });
+                        self.instruments.shift_remove(mid);
+                    }
+                }
+                del_ops.push(operations::Operation::DeleteGroup { id, data: d.clone() });
+            }
+            self.groups.shift_remove(&id);
+        }
         if !del_ops.is_empty() {
             self.push_op(operations::Operation::Batch(del_ops));
         }

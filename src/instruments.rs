@@ -20,6 +20,7 @@ pub struct Instrument {
     pub volume: f32,
     pub pan: f32,
     pub effect_chain_id: Option<EntityId>,
+    pub disabled: bool,
 }
 
 impl Instrument {
@@ -35,6 +36,7 @@ impl Instrument {
             volume: 1.0,
             pan: 0.5,
             effect_chain_id: None,
+            disabled: false,
         }
     }
 
@@ -58,4 +60,6 @@ pub struct InstrumentSnapshot {
     pub pan: f32,
     #[serde(default)]
     pub effect_chain_id: Option<EntityId>,
+    #[serde(default)]
+    pub disabled: bool,
 }

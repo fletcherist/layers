@@ -85,6 +85,7 @@ fn record_to_committed(rec: &OpRecord) -> Option<CommittedOp> {
         user_id,
         timestamp_ms: rec.timestamp_ms,
         seq: rec.seq,
+        before_selection: Vec::new(),
     })
 }
 
@@ -95,6 +96,7 @@ fn record_to_committed(rec: &OpRecord) -> Option<CommittedOp> {
 pub fn spawn_surreal_client(
     url: String,
     project_id: String,
+    password: Option<String>,
     op_tx: mpsc::UnboundedSender<CommittedOp>,
     mut op_rx: mpsc::UnboundedReceiver<CommittedOp>,
     eph_tx: mpsc::UnboundedSender<EphemeralMessage>,
@@ -128,7 +130,18 @@ pub fn spawn_surreal_client(
             }
         };
 
-        // 2. Use namespace/database
+        // 2. Sign in if password provided
+        if let Some(ref pass) = password {
+            use surrealdb::opt::auth::Root;
+            if let Err(e) = db.signin(Root { username: "root".to_string(), password: pass.clone() }).await {
+                log::error!("[SurrealClient] Authentication failed: {e}");
+                connection_state.set(NetworkMode::Disconnected);
+                return;
+            }
+            log::info!("[SurrealClient] Authenticated as root");
+        }
+
+        // 3. Use namespace/database
         let db_name = format!("project_{project_id}");
         if let Err(e) = db.use_ns("layers").use_db(&db_name).await {
             log::error!("[SurrealClient] Failed to use ns/db: {e}");
@@ -289,12 +302,18 @@ pub fn spawn_surreal_client(
                         EphemeralMessage::DragEnd { .. } => {
                             ("DragEnd".to_string(), serde_json::to_string(&eph).unwrap_or_default(), true)
                         }
+                        EphemeralMessage::ViewportUpdate { .. } => {
+                            ("ViewportUpdate".to_string(), serde_json::to_string(&eph).unwrap_or_default(), false)
+                        }
+                        EphemeralMessage::PlaybackUpdate { .. } => {
+                            ("PlaybackUpdate".to_string(), serde_json::to_string(&eph).unwrap_or_default(), false)
+                        }
                         // Don't send UserJoined/UserLeft through ephemeral table
                         _ => continue,
                     };
                     let record = EphemeralRecord {
                         user_id: user_id_str.clone(),
-                        kind,
+                        kind: kind.clone(),
                         payload_json,
                         updated_at_ms: now_ms(),
                     };
@@ -303,9 +322,11 @@ pub fn spawn_surreal_client(
                         let _: Result<Option<EphemeralRecord>, _> =
                             db.create("ephemeral").content(record).await;
                     } else {
-                        // Use upsert for high-frequency updates (cursor, drag preview)
+                        // Use upsert keyed by user+kind so different message types
+                        // from the same user don't overwrite each other
+                        let record_key = format!("{}__{}", user_id_str, kind);
                         let _: Result<Option<EphemeralRecord>, _> =
-                            db.upsert(("ephemeral", &*user_id_str)).content(record).await;
+                            db.upsert(("ephemeral", &*record_key)).content(record).await;
                     }
                 }
 
@@ -422,8 +443,11 @@ pub fn spawn_surreal_client(
         log::info!("[SurrealClient] Cleaning up...");
         let _: Result<Option<PresenceRecord>, _> =
             db.delete(("presence", &*user_id_str)).await;
-        let _: Result<Option<EphemeralRecord>, _> =
-            db.delete(("ephemeral", &*user_id_str)).await;
+        // Delete all ephemeral records for this user (keyed by user__kind)
+        let _ = db
+            .query("DELETE ephemeral WHERE user_id = $uid")
+            .bind(("uid", user_id_str.clone()))
+            .await;
         connection_state.set(NetworkMode::Disconnected);
     })
 }

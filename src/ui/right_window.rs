@@ -1,8 +1,9 @@
 use crate::entity_id::EntityId;
 use crate::gpu::TextEntry;
 use crate::InstanceRaw;
-use crate::ui::palette::{gain_to_db, gain_to_vol_fader_pos, vol_fader_pos_to_gain,
-    VOL_FADER_DB_MAX, VOL_FADER_DB_BOTTOM, VOL_FADER_P_ZERO, VOL_FADER_P_BOTTOM};
+use crate::theme::{RMS_LOW, RMS_MID, RMS_HIGH};
+use crate::ui::palette::{db_to_gain, gain_to_db, gain_to_vol_fader_pos, vol_fader_pos_to_gain,
+    VOL_FADER_DB_BOTTOM, VOL_FADER_P_ZERO, VOL_FADER_P_BOTTOM};
 use crate::ui::value_entry::ValueEntry;
 use crate::ui::waveform::{WarpMode, WaveformView};
 
@@ -11,6 +12,7 @@ pub enum RightWindowTarget {
     Waveform(EntityId),
     Instrument(EntityId),
     Group(EntityId),
+    Master,
 }
 
 pub const RIGHT_WINDOW_WIDTH: f32 = 200.0;
@@ -25,14 +27,15 @@ const FADER_TRACK_HEIGHT: f32 = 160.0;
 const FADER_TOP_OFFSET: f32 = 32.0;
 
 const PAN_KNOB_Y_OFFSET: f32 = 264.0;
-const REVERSE_BUTTON_Y_OFFSET: f32 = 326.0;
-const PITCH_KNOB_Y_OFFSET: f32 = 368.0;
+const SOLO_MUTE_Y_OFFSET: f32 = 326.0;
+const REVERSE_BUTTON_Y_OFFSET: f32 = 370.0;
+const PITCH_KNOB_Y_OFFSET: f32 = 412.0;
 
 /// Extra vertical offset for group inspector (space for group name + member count above fader)
 const GROUP_EXTRA_Y: f32 = 40.0;
 
 // Effect chain section
-const EFFECT_CHAIN_TOP_OFFSET: f32 = 460.0;
+const EFFECT_CHAIN_TOP_OFFSET: f32 = 504.0;
 /// Group effect chain sits below the pan knob, mirroring the instrument layout
 const GROUP_EFFECT_CHAIN_TOP_OFFSET: f32 = REVERSE_BUTTON_Y_OFFSET + GROUP_EXTRA_Y;
 const EFFECT_SLOT_HEIGHT: f32 = 30.0;
@@ -125,12 +128,29 @@ pub struct RightWindow {
     pub multi_target_ids: Vec<EntityId>,
     /// Snapshots of waveforms at drag start (for batch undo)
     pub drag_start_snapshots: Vec<(EntityId, WaveformView)>,
+    /// Transient solo state for the target entity
+    pub is_soloed: bool,
+    /// Transient mute state for the target entity
+    pub is_muted: bool,
+    /// Smoothed RMS level (linear amplitude, 0.0–~1.5)
+    pub meter_rms: f32,
+    /// Peak hold level (linear amplitude)
+    pub meter_peak: f32,
+    /// Seconds since peak was last updated
+    pub peak_hold_timer: f32,
 }
+
+/// Sentinel EntityId for the Main Layer (used for effect chain keying).
+pub const MAIN_LAYER_ID: EntityId = uuid::Uuid::from_bytes([
+    0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x4f, 0xff,
+    0xbf, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x01,
+]);
 
 impl RightWindow {
     pub fn target_id(&self) -> EntityId {
         match self.target {
             RightWindowTarget::Waveform(id) | RightWindowTarget::Instrument(id) | RightWindowTarget::Group(id) => id,
+            RightWindowTarget::Master => MAIN_LAYER_ID,
         }
     }
 
@@ -146,6 +166,29 @@ impl RightWindow {
         matches!(self.target, RightWindowTarget::Group(_))
     }
 
+    pub fn is_master(&self) -> bool {
+        matches!(self.target, RightWindowTarget::Master)
+    }
+
+    pub fn update_rms(&mut self, raw: f32) {
+        let dt = 1.0 / 60.0_f32;
+        let attack_coeff = 1.0 - (-dt / 0.005).exp();
+        let release_coeff = 1.0 - (-dt / 0.300).exp();
+        let coeff = if raw > self.meter_rms { attack_coeff } else { release_coeff };
+        self.meter_rms += coeff * (raw - self.meter_rms);
+
+        if raw > self.meter_peak {
+            self.meter_peak = raw;
+            self.peak_hold_timer = 0.0;
+        } else {
+            self.peak_hold_timer += dt;
+            if self.peak_hold_timer > 1.5 {
+                let peak_decay = 1.0 - (-dt / 0.5).exp();
+                self.meter_peak += peak_decay * (self.meter_rms - self.meter_peak);
+            }
+        }
+    }
+
     pub fn is_multi(&self) -> bool {
         self.multi_target_ids.len() > 1
     }
@@ -155,11 +198,11 @@ impl RightWindow {
     }
 
     fn y_extra(&self) -> f32 {
-        if self.is_group() { GROUP_EXTRA_Y } else { 0.0 }
+        if self.is_group() || self.is_master() { GROUP_EXTRA_Y } else { 0.0 }
     }
 
     pub fn target_y_extra(target: &RightWindowTarget) -> f32 {
-        if matches!(target, RightWindowTarget::Group(_)) { GROUP_EXTRA_Y } else { 0.0 }
+        if matches!(target, RightWindowTarget::Group(_) | RightWindowTarget::Master) { GROUP_EXTRA_Y } else { 0.0 }
     }
 
     pub fn panel_rect(screen_w: f32, screen_h: f32, scale: f32) -> ([f32; 2], [f32; 2]) {
@@ -266,22 +309,34 @@ impl RightWindow {
         dx * dx + dy * dy <= r * r
     }
 
+    fn solo_mute_layout(screen_w: f32, screen_h: f32, scale: f32, y_extra: f32) -> super::solo_mute::SoloMuteLayout {
+        let (pp, ps) = Self::panel_rect(screen_w, screen_h, scale);
+        let cx = pp[0] + ps[0] * 0.5;
+        let cy = pp[1] + (HEADER_HEIGHT + SOLO_MUTE_Y_OFFSET + y_extra) * scale;
+        super::solo_mute::layout_centered(cx, cy, scale)
+    }
+
+    pub fn hit_test_solo_mute(&self, pos: [f32; 2], screen_w: f32, screen_h: f32, scale: f32) -> super::solo_mute::SoloMuteHit {
+        let layout = Self::solo_mute_layout(screen_w, screen_h, scale, self.y_extra());
+        super::solo_mute::hit_test(&layout, pos)
+    }
+
     pub fn hit_test_reverse_button(&self, pos: [f32; 2], screen_w: f32, screen_h: f32, scale: f32) -> bool {
-        if self.is_instrument() || self.is_multi() || self.is_group() { return false; }
+        if self.is_instrument() || self.is_multi() || self.is_group() || self.is_master() { return false; }
         let (rp, rs) = Self::reverse_button_rect(screen_w, screen_h, scale);
         pos[0] >= rp[0] && pos[0] <= rp[0] + rs[0]
             && pos[1] >= rp[1] && pos[1] <= rp[1] + rs[1]
     }
 
     pub fn hit_test_warp_mode_button(&self, pos: [f32; 2], screen_w: f32, screen_h: f32, scale: f32) -> bool {
-        if self.is_instrument() || self.is_multi() || self.is_group() { return false; }
+        if self.is_instrument() || self.is_multi() || self.is_group() || self.is_master() { return false; }
         let (rp, rs) = Self::warp_mode_button_rect(screen_w, screen_h, scale);
         pos[0] >= rp[0] && pos[0] <= rp[0] + rs[0]
             && pos[1] >= rp[1] && pos[1] <= rp[1] + rs[1]
     }
 
     pub fn hit_test_warp_mode_selector(&self, pos: [f32; 2], screen_w: f32, screen_h: f32, scale: f32) -> bool {
-        if self.is_instrument() || self.is_multi() || self.is_group() { return false; }
+        if self.is_instrument() || self.is_multi() || self.is_group() || self.is_master() { return false; }
         if self.warp_mode == WarpMode::Off { return false; }
         let (rp, rs) = Self::warp_mode_selector_rect(screen_w, screen_h, scale);
         pos[0] >= rp[0] && pos[0] <= rp[0] + rs[0]
@@ -289,7 +344,7 @@ impl RightWindow {
     }
 
     pub fn hit_test_sample_bpm_text(&self, pos: [f32; 2], screen_w: f32, screen_h: f32, scale: f32) -> bool {
-        if self.is_instrument() || self.is_multi() || self.is_group() { return false; }
+        if self.is_instrument() || self.is_multi() || self.is_group() || self.is_master() { return false; }
         if self.warp_mode != WarpMode::RePitch { return false; }
         let (rp, rs) = Self::warp_param_text_rect(screen_w, screen_h, scale);
         pos[0] >= rp[0] && pos[0] <= rp[0] + rs[0]
@@ -297,7 +352,7 @@ impl RightWindow {
     }
 
     pub fn hit_test_pitch_text(&self, pos: [f32; 2], screen_w: f32, screen_h: f32, scale: f32) -> bool {
-        if self.is_instrument() || self.is_multi() || self.is_group() { return false; }
+        if self.is_instrument() || self.is_multi() || self.is_group() || self.is_master() { return false; }
         if self.warp_mode != WarpMode::Semitone { return false; }
         let (rp, rs) = Self::warp_param_text_rect(screen_w, screen_h, scale);
         pos[0] >= rp[0] && pos[0] <= rp[0] + rs[0]
@@ -316,7 +371,7 @@ impl RightWindow {
             center_x,
             label_y: track_pos[1] - 18.0 * scale,
             triangle_x: track_pos[0] - 14.0 * scale,
-            scale_labels_x: track_pos[0] + track_size[0] + 11.0 * scale,
+            scale_labels_x: track_pos[0] + track_size[0] + 6.0 * scale,
             db_text_y,
             db_text_rect: ([pp[0], db_text_y], [rw_w, 20.0 * scale]),
             bracket_x0: center_x - 20.0 * scale,
@@ -493,8 +548,8 @@ impl RightWindow {
             border_radius: 0.0,
         });
 
-        // Group target: render export button (fall through to vol/pan below)
-        if self.is_group() {
+        // Group/MainLayer target: render export button (fall through to vol/pan below)
+        if self.is_group() || self.is_master() {
             let (ebp, ebs) = Self::export_button_rect(screen_w, screen_h, scale);
             out.push(InstanceRaw {
                 position: ebp,
@@ -523,6 +578,70 @@ impl RightWindow {
             color: settings.theme.bg_elevated,
             border_radius: FADER_TRACK_W * 0.5 * scale,
         });
+
+        // RMS meter fill inside fader track (rendered behind gain fill)
+        if self.meter_rms > 0.0001 {
+            let meter_fader_pos = gain_to_vol_fader_pos(self.meter_rms);
+            let meter_y = Self::vol_fader_thumb_y(meter_fader_pos, track_pos, track_size[1]);
+            let track_bottom = track_pos[1] + track_size[1];
+            let br = FADER_TRACK_W * 0.5 * scale;
+
+            // dB thresholds for color zones
+            let y_minus12 = Self::vol_fader_thumb_y(gain_to_vol_fader_pos(db_to_gain(-12.0)), track_pos, track_size[1]);
+            let y_minus3 = Self::vol_fader_thumb_y(gain_to_vol_fader_pos(db_to_gain(-3.0)), track_pos, track_size[1]);
+
+            // Green zone: bottom → -12dB
+            let green_top = meter_y.max(y_minus12);
+            let green_h = track_bottom - green_top;
+            if green_h > 0.5 {
+                out.push(InstanceRaw {
+                    position: [track_pos[0], green_top],
+                    size: [track_size[0], green_h],
+                    color: crate::theme::with_alpha(RMS_LOW, 0.5),
+                    border_radius: br,
+                });
+            }
+
+            // Yellow zone: -12dB → -3dB
+            if meter_y < y_minus12 {
+                let yellow_top = meter_y.max(y_minus3);
+                let yellow_h = y_minus12 - yellow_top;
+                if yellow_h > 0.5 {
+                    out.push(InstanceRaw {
+                        position: [track_pos[0], yellow_top],
+                        size: [track_size[0], yellow_h],
+                        color: crate::theme::with_alpha(RMS_MID, 0.5),
+                        border_radius: 0.0,
+                    });
+                }
+            }
+
+            // Red zone: above -3dB
+            if meter_y < y_minus3 {
+                let red_top = meter_y;
+                let red_h = y_minus3 - red_top;
+                if red_h > 0.5 {
+                    out.push(InstanceRaw {
+                        position: [track_pos[0], red_top],
+                        size: [track_size[0], red_h],
+                        color: crate::theme::with_alpha(RMS_HIGH, 0.5),
+                        border_radius: 0.0,
+                    });
+                }
+            }
+        }
+
+        // Peak hold indicator
+        if self.meter_peak > 0.0001 {
+            let peak_fader_pos = gain_to_vol_fader_pos(self.meter_peak);
+            let peak_y = Self::vol_fader_thumb_y(peak_fader_pos, track_pos, track_size[1]);
+            out.push(InstanceRaw {
+                position: [track_pos[0], peak_y - 1.0 * scale],
+                size: [track_size[0], 2.0 * scale],
+                color: crate::theme::with_alpha(settings.theme.text_primary, 0.7),
+                border_radius: 0.0,
+            });
+        }
 
         // Focus corner brackets — enclose Gain label, fader track, ticks, scale labels, dB value
         if self.vol_fader_focused {
@@ -616,6 +735,12 @@ impl RightWindow {
             // Bottom-right
             out.push(InstanceRaw { position: [x1 - bracket_len, y1 - thick], size: [bracket_len, thick], color, border_radius: 0.0 });
             out.push(InstanceRaw { position: [x1 - thick, y1 - bracket_len], size: [thick, bracket_len], color, border_radius: 0.0 });
+        }
+
+        // Solo/Mute buttons (all entity types except MainLayer)
+        if !self.is_master() {
+            let sm_layout = Self::solo_mute_layout(screen_w, screen_h, scale, self.y_extra());
+            out.extend(super::solo_mute::build_instances(&sm_layout, self.is_soloed, self.is_muted, false, true, &settings.theme, scale));
         }
 
         // Reverse / Warp / Pitch — waveform-only controls (hidden for multi-selection)
@@ -809,7 +934,9 @@ impl RightWindow {
         let rw_w = RIGHT_WINDOW_WIDTH * scale;
 
         // "INSPECTOR" header label (with selection count for multi-selection)
-        let header_text = if self.is_group() {
+        let header_text = if self.is_master() {
+            "MAIN".to_string()
+        } else if self.is_group() {
             "GROUP".to_string()
         } else if self.is_multi() {
             format!("{} CLIPS", self.selection_count())
@@ -829,8 +956,8 @@ impl RightWindow {
             center: false,
         });
 
-        // Group target: render group name, member count, export button text
-        if self.is_group() {
+        // Group/MainLayer target: render group name, member count, export button text
+        if self.is_group() || self.is_master() {
             // Group name
             out.push(TextEntry {
                 text: self.group_name.clone(),
@@ -864,12 +991,12 @@ impl RightWindow {
                 center: false,
             });
 
-            // "Export WAV" button text
+            // "Export" button text
             let (ebp, ebs) = Self::export_button_rect(screen_w, screen_h, scale);
             let icon_size = 14.0 * scale;
             let padding = 12.0 * scale;
             out.push(TextEntry {
-                text: "Export WAV".to_string(),
+                text: "Export".to_string(),
                 x: ebp[0] + padding + icon_size + 6.0 * scale,
                 y: ebp[1] + (ebs[1] - 12.0 * scale) * 0.5,
                 font_size: 12.0 * scale,
@@ -921,55 +1048,33 @@ impl RightWindow {
             center: false,
         });
 
-        // Scale labels to the right of tick marks
+        // Scale labels to the right of tick marks (centered)
         let scale_font = 9.0 * scale;
         let scale_line = 11.0 * scale;
         let label_x = layout.scale_labels_x;
-        let label_bounds = Some([label_x, 0.0, label_x + 30.0 * scale, screen_h]);
+        let label_w = 20.0 * scale;
+        let label_bounds = Some([label_x, 0.0, label_x + label_w, screen_h]);
 
-        // "+24" at fader top
-        out.push(TextEntry {
-            text: "24".to_string(),
-            x: label_x,
-            y: fader_pos[1] - scale_line * 0.5,
-            font_size: scale_font,
-            line_height: scale_line,
-            max_width: 30.0 * scale,
-            color: crate::theme::RuntimeTheme::text_u8(theme.text_dim, 220),
-            weight: 400,
-            bounds: label_bounds,
-            center: false,
-        });
-
-        // "0" at 0 dB position
-        let y_zero = fader_pos[1] + (1.0 - VOL_FADER_P_ZERO) * fader_size[1];
-        out.push(TextEntry {
-            text: "0".to_string(),
-            x: label_x,
-            y: y_zero - scale_line * 0.5,
-            font_size: scale_font,
-            line_height: scale_line,
-            max_width: 30.0 * scale,
-            color: crate::theme::RuntimeTheme::text_u8(theme.text_dim, 220),
-            weight: 400,
-            bounds: label_bounds,
-            center: false,
-        });
-
-        // "70" at -70 dB position (near bottom)
-        let y_70 = fader_pos[1] + (1.0 - VOL_FADER_P_BOTTOM) * fader_size[1];
-        out.push(TextEntry {
-            text: "70".to_string(),
-            x: label_x,
-            y: y_70 - scale_line * 0.5,
-            font_size: scale_font,
-            line_height: scale_line,
-            max_width: 30.0 * scale,
-            color: crate::theme::RuntimeTheme::text_u8(theme.text_dim, 220),
-            weight: 400,
-            bounds: label_bounds,
-            center: false,
-        });
+        let scale_labels: &[(&str, f32)] = &[
+            ("24",  fader_pos[1]),
+            ("0",   fader_pos[1] + (1.0 - VOL_FADER_P_ZERO) * fader_size[1]),
+            ("-24", fader_pos[1] + (1.0 - gain_to_vol_fader_pos(db_to_gain(-24.0))) * fader_size[1]),
+            ("-70", fader_pos[1] + (1.0 - VOL_FADER_P_BOTTOM) * fader_size[1]),
+        ];
+        for &(text, y_center) in scale_labels {
+            out.push(TextEntry {
+                text: text.to_string(),
+                x: label_x,
+                y: y_center - scale_line * 0.5,
+                font_size: scale_font,
+                line_height: scale_line,
+                max_width: label_w,
+                color: crate::theme::RuntimeTheme::text_u8(theme.text_dim, 220),
+                weight: 400,
+                bounds: label_bounds,
+                center: true,
+            });
+        }
 
         // dB value below fader — centered on the fader track
         let vol_idle = self.vol_text();
@@ -1016,6 +1121,12 @@ impl RightWindow {
             bounds: None,
             center: true,
         });
+
+        // Solo/Mute button text (all entity types except MainLayer)
+        if !self.is_master() {
+            let sm_layout = Self::solo_mute_layout(screen_w, screen_h, scale, self.y_extra());
+            out.extend(super::solo_mute::build_text_entries(&sm_layout, self.is_soloed, self.is_muted, true, theme, scale));
+        }
 
         // Reverse / Warp / Pitch text — waveform-only (hidden for multi-selection)
         if self.is_waveform() && !self.is_multi() {
@@ -1155,7 +1266,7 @@ impl RightWindow {
         let (pp, _) = Self::panel_rect(screen_w, screen_h, scale);
         let offset = match target {
             RightWindowTarget::Instrument(_) => REVERSE_BUTTON_Y_OFFSET,
-            RightWindowTarget::Group(_) => GROUP_EFFECT_CHAIN_TOP_OFFSET,
+            RightWindowTarget::Group(_) | RightWindowTarget::Master => GROUP_EFFECT_CHAIN_TOP_OFFSET,
             _ => EFFECT_CHAIN_TOP_OFFSET,
         };
         pp[1] + HEADER_HEIGHT * scale + offset * scale
@@ -1502,6 +1613,24 @@ impl RightWindow {
             },
         });
 
+        // "Export" button icon (groups / master only)
+        if self.is_group() || self.is_master() {
+            let (ebp, ebs) = Self::export_button_rect(screen_w, screen_h, scale);
+            let export_icon_size = 14.0 * scale;
+            let export_padding = 12.0 * scale;
+            out.push(crate::gpu::IconEntry {
+                codepoint: crate::icons::FILE_DOWNLOAD,
+                x: ebp[0] + export_padding,
+                y: ebp[1] + (ebs[1] - export_icon_size) * 0.5,
+                size: export_icon_size,
+                color: if self.export_button_hovered {
+                    crate::theme::RuntimeTheme::text_u8(settings.theme.text_primary, 255)
+                } else {
+                    crate::theme::RuntimeTheme::text_u8(settings.theme.text_secondary, 180)
+                },
+            });
+        }
+
         out
     }
 
@@ -1552,10 +1681,10 @@ impl RightWindow {
 
     // ---- Group panel helpers ----
 
-    /// Y offset for the "Export WAV" button inside the group panel.
+    /// Y offset for the "Export" button inside the group panel.
     const GROUP_EXPORT_BTN_Y: f32 = 90.0;
 
-    /// Rectangle for the "Export WAV" button when target is a Group.
+    /// Rectangle for the "Export" button when target is a Group.
     pub fn export_button_rect(screen_w: f32, screen_h: f32, scale: f32) -> ([f32; 2], [f32; 2]) {
         let (pp, ps) = Self::panel_rect(screen_w, screen_h, scale);
         let margin = 8.0 * scale;
@@ -1563,9 +1692,9 @@ impl RightWindow {
         ([pp[0] + margin, btn_y], [ps[0] - margin * 2.0, EFFECT_ADD_BUTTON_H * scale])
     }
 
-    /// Hit test: is pos on the group "Export WAV" button?
+    /// Hit test: is pos on the group/main "Export" button?
     pub fn hit_test_export_button(&self, pos: [f32; 2], screen_w: f32, screen_h: f32, scale: f32) -> bool {
-        if !self.is_group() { return false; }
+        if !self.is_group() && !self.is_master() { return false; }
         let (bp, bs) = Self::export_button_rect(screen_w, screen_h, scale);
         pos[0] >= bp[0] && pos[0] <= bp[0] + bs[0]
             && pos[1] >= bp[1] && pos[1] <= bp[1] + bs[1]

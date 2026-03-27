@@ -943,3 +943,75 @@ pub fn build_automation_dot_instances(
 
     out
 }
+
+/// Build a mini waveform for the browser preview strip (screen-space, no camera).
+/// Uses the same `push_filled_quad` rendering as canvas waveforms via `channel_triangles`.
+pub fn build_preview_waveform_triangles(
+    peaks: &WaveformPeaks,
+    rect_x: f32,
+    rect_y: f32,
+    rect_w: f32,
+    rect_h: f32,
+    color: [f32; 4],
+    progress: f32,
+) -> Vec<WaveformVertex> {
+    let mut verts = Vec::new();
+    if peaks.peaks.is_empty() || rect_w < 1.0 || rect_h < 1.0 {
+        return verts;
+    }
+
+    let total_samples = peaks.peaks.len() * peaks.block_size;
+    let center_y = rect_y + rect_h * 0.5;
+    let half_h = rect_h * 0.5 * 0.85;
+    let feather = 0.8; // screen-space feather (px)
+
+    // Step in 2px increments like channel_triangles
+    let step_px = 2.0f32;
+    let num_columns = ((rect_w / step_px).ceil() as usize).min(8192);
+
+    // Top half (direction = -1)
+    for dir in [-1.0f32, 1.0f32] {
+        let mut prev_x = rect_x;
+        let mut prev_amp = 0.0f32;
+        let mut first = true;
+
+        for col in 0..=num_columns {
+            let x = (rect_x + col as f32 * step_px).min(rect_x + rect_w);
+            let t0 = ((x - rect_x) / rect_w) as f64;
+            let t1 = (((x + step_px) - rect_x) / rect_w).min(1.0) as f64;
+            let s0 = (t0 * total_samples as f64) as usize;
+            let s1 = ((t1 * total_samples as f64) as usize).max(s0 + 1);
+            let peak = peaks.peak_in_range(s0, s1).min(1.0);
+
+            if first {
+                prev_x = x;
+                prev_amp = peak;
+                first = false;
+                continue;
+            }
+
+            push_filled_quad(
+                &mut verts, prev_x, prev_amp, x, peak,
+                center_y, half_h, dir, feather, color,
+            );
+
+            prev_x = x;
+            prev_amp = peak;
+        }
+    }
+
+    // Playhead line
+    if progress > 0.0 && progress <= 1.0 {
+        let px = rect_x + progress * rect_w;
+        let line_w = 1.5;
+        let lc = [1.0, 1.0, 1.0, 0.9];
+        verts.push(WaveformVertex { position: [px, rect_y], color: lc, edge: 0.0 });
+        verts.push(WaveformVertex { position: [px + line_w, rect_y], color: lc, edge: 0.0 });
+        verts.push(WaveformVertex { position: [px, rect_y + rect_h], color: lc, edge: 0.0 });
+        verts.push(WaveformVertex { position: [px + line_w, rect_y], color: lc, edge: 0.0 });
+        verts.push(WaveformVertex { position: [px + line_w, rect_y + rect_h], color: lc, edge: 0.0 });
+        verts.push(WaveformVertex { position: [px, rect_y + rect_h], color: lc, edge: 0.0 });
+    }
+
+    verts
+}

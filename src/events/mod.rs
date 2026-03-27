@@ -167,6 +167,13 @@ impl ApplicationHandler for App {
         if self.sample_browser.is_search_pending() {
             self.request_redraw();
         }
+        // Poll background file index build.
+        if self.sample_browser.tick_file_index() {
+            self.request_redraw();
+        }
+        if self.sample_browser.is_file_index_building() {
+            self.request_redraw();
+        }
 
         if is_playing || self.is_recording() {
             self.request_redraw();
@@ -200,6 +207,7 @@ impl ApplicationHandler for App {
             }
 
             // --- Auto-reconnect on disconnect ---
+            const MAX_RECONNECT_ATTEMPTS: u32 = 10;
             if self.network.mode() == crate::network::NetworkMode::Disconnected {
                 if let (Some(url), Some(pid)) = (self.connect_url.clone(), self.connect_project_id.clone()) {
                     let now = TimeInstant::now();
@@ -209,10 +217,18 @@ impl ApplicationHandler for App {
                         None => true,
                     };
                     if should_retry {
-                        log::info!("Reconnecting (attempt {})...", self.reconnect_attempt + 1);
+                        let attempt = self.reconnect_attempt + 1;
+                        self.toast_manager.push(
+                            format!("Connection lost. Reconnecting {attempt}/{MAX_RECONNECT_ATTEMPTS}…"),
+                            crate::ui::toast::ToastKind::Error,
+                        );
+                        log::info!("Reconnecting (attempt {attempt})...");
                         self.last_reconnect_time = Some(now);
                         self.reconnect_attempt += 1;
-                        self.connect_to_server(&url, &pid);
+                        if self.reconnect_attempt <= MAX_RECONNECT_ATTEMPTS {
+                            let pass = self.connect_password.clone();
+                            self.connect_to_server(&url, &pid, pass.as_deref());
+                        }
                     }
                 }
             }
@@ -246,6 +262,8 @@ impl ApplicationHandler for App {
                             cursor_world: Some(position),
                             drag_preview: None,
                             online: true,
+                            viewport: None,
+                            playback: None,
                         });
                     }
                 }
@@ -265,13 +283,63 @@ impl ApplicationHandler for App {
                         cursor_world: None,
                         drag_preview: None,
                         online: true,
+                        viewport: None,
+                        playback: None,
                     });
                 }
                 crate::user::EphemeralMessage::UserLeft { user_id } => {
                     self.remote_users.remove(&user_id);
+                    if self.following_user == Some(user_id) {
+                        self.following_user = None;
+                    }
+                }
+                crate::user::EphemeralMessage::ViewportUpdate { user_id, position, zoom } => {
+                    if let Some(state) = self.remote_users.get_mut(&user_id) {
+                        state.viewport = Some(crate::user::RemoteViewport { position, zoom });
+                    }
+                }
+                crate::user::EphemeralMessage::PlaybackUpdate { user_id, is_playing, position_seconds, timestamp_ms } => {
+                    // Follow mode: sync play/stop transitions from followed user
+                    #[cfg(feature = "native")]
+                    if self.following_user == Some(user_id) {
+                        if let Some(engine) = &self.audio_engine {
+                            if is_playing && !engine.is_playing() {
+                                engine.seek_to_seconds(position_seconds);
+                                engine.toggle_playback();
+                            } else if !is_playing && engine.is_playing() {
+                                engine.toggle_playback();
+                            }
+                        }
+                    }
+                    if let Some(state) = self.remote_users.get_mut(&user_id) {
+                        state.playback = Some(crate::user::RemotePlaybackState {
+                            is_playing, position_seconds, timestamp_ms,
+                        });
+                    }
                 }
             }
             self.request_redraw();
+        }
+
+        // --- Follow mode: sync camera and playback to followed user ---
+        if let Some(followed_id) = self.following_user {
+            let mut should_unfollow = false;
+            if let Some(remote) = self.remote_users.get(&followed_id) {
+                if !remote.online {
+                    should_unfollow = true;
+                } else {
+                    if let Some(viewport) = &remote.viewport {
+                        self.camera.position = viewport.position;
+                        self.camera.zoom = viewport.zoom;
+                        self.request_redraw();
+                    }
+                }
+            } else {
+                should_unfollow = true;
+            }
+            if should_unfollow {
+                self.following_user = None;
+            }
         }
     }
 

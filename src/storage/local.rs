@@ -1,17 +1,30 @@
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use surrealdb::engine::local::{Db, RocksDb};
+use surrealdb::types::{Bytes, SurrealValue};
 use surrealdb::Surreal;
 
-use super::helpers::f32_slice_to_u8;
 use super::models::*;
+use super::{ProjectStore, run_on_rt};
+
+// ---------------------------------------------------------------------------
+// Audio stored as original encoded file (shared with remote.rs)
+// ---------------------------------------------------------------------------
+
+#[derive(Clone, SurrealValue)]
+pub(crate) struct StoredAudioData {
+    pub(crate) waveform_id: String,
+    pub(crate) file_data: Bytes,
+    pub(crate) extension: String,
+}
 
 // ---------------------------------------------------------------------------
 // Storage
 // ---------------------------------------------------------------------------
 
 pub struct Storage {
-    rt: tokio::runtime::Runtime,
+    rt: Arc<tokio::runtime::Runtime>,
     temp_projects_dir: PathBuf,
     index_db: Surreal<Db>,
     project_db: Option<Surreal<Db>>,
@@ -27,8 +40,9 @@ fn now_ts() -> u64 {
 }
 
 fn open_db(rt: &tokio::runtime::Runtime, path: &Path) -> Option<Surreal<Db>> {
-    rt.block_on(async {
-        let db = Surreal::new::<RocksDb>(path.to_str()?).await.ok()?;
+    let path_str = path.to_str()?.to_string();
+    run_on_rt(rt, async move {
+        let db = Surreal::new::<RocksDb>(&path_str).await.ok()?;
         db.use_ns("layers").use_db("canvas").await.ok()?;
         Some(db)
     })
@@ -37,11 +51,13 @@ fn open_db(rt: &tokio::runtime::Runtime, path: &Path) -> Option<Surreal<Db>> {
 impl Storage {
     /// Opens the global index DB and prepares the temp projects directory.
     pub fn open(base_path: &Path) -> Option<Self> {
-        let rt = tokio::runtime::Builder::new_multi_thread()
-            .enable_all()
-            .thread_stack_size(10 * 1024 * 1024)
-            .build()
-            .ok()?;
+        let rt = Arc::new(
+            tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .thread_stack_size(10 * 1024 * 1024)
+                .build()
+                .ok()?,
+        );
 
         let temp_projects_dir = base_path.join("projects");
         std::fs::create_dir_all(&temp_projects_dir).ok()?;
@@ -61,7 +77,7 @@ impl Storage {
     }
 
     // -----------------------------------------------------------------------
-    // Project lifecycle
+    // Project lifecycle (local-only)
     // -----------------------------------------------------------------------
 
     /// Opens a per-project DB inside `path/db/`.
@@ -73,16 +89,14 @@ impl Storage {
             Some(db) => {
                 self.project_db = Some(db);
                 self.current_project_path = Some(path.to_path_buf());
-                // Check if this is a temp project by looking at the index
                 let key = path.to_string_lossy().to_string();
-                self.is_temp = self
-                    .rt
-                    .block_on(async {
-                        let entry: Option<ProjectIndexEntry> =
-                            self.index_db.select(("projects", &*key)).await.ok()?;
-                        entry.map(|e| e.is_temp)
-                    })
-                    .unwrap_or(false);
+                let index_db = self.index_db.clone();
+                self.is_temp = run_on_rt(&self.rt, async move {
+                    let entry: Option<ProjectIndexEntry> =
+                        index_db.select(("projects", &*key)).await.ok()?;
+                    entry.map(|e| e.is_temp)
+                })
+                .unwrap_or(false);
                 log::info!("Opened project DB at {:?} (temp={})", db_path, self.is_temp);
                 true
             }
@@ -110,7 +124,6 @@ impl Storage {
         }
         self.is_temp = true;
 
-        // Add to global index
         let entry = ProjectIndexEntry {
             name: "Untitled".to_string(),
             path: dir.to_string_lossy().to_string(),
@@ -150,7 +163,6 @@ impl Storage {
         // Remove old temp dir
         if was_temp {
             let _ = std::fs::remove_dir_all(&src);
-            // Remove old index entry
             self.delete_index_entry(&src.to_string_lossy());
         }
 
@@ -161,9 +173,8 @@ impl Storage {
         }
         self.is_temp = false;
 
-        // Update index
         let entry = ProjectIndexEntry {
-            name: String::new(), // will be updated on next save_project_state
+            name: String::new(),
             path: dest.to_string_lossy().to_string(),
             is_temp: false,
             created_at: now_ts(),
@@ -183,7 +194,7 @@ impl Storage {
     }
 
     // -----------------------------------------------------------------------
-    // project.json
+    // project.json (local-only)
     // -----------------------------------------------------------------------
 
     pub fn write_project_json(&self, name: &str) {
@@ -208,172 +219,53 @@ impl Storage {
     }
 
     // -----------------------------------------------------------------------
-    // Project state (per-project DB)
+    // Local-only save helpers (project.json + index updates)
     // -----------------------------------------------------------------------
 
-    pub fn save_project_state(&self, state: ProjectState) {
-        let db = match &self.project_db {
-            Some(db) => db,
-            None => return,
-        };
-
+    pub fn save_and_index_project(&self, state: ProjectState) {
         self.write_project_json(&state.name);
+        self.save_project_state(state);
 
-        let result = self.rt.block_on(async {
-            let _: Option<ProjectState> = db.upsert(("state", "main")).content(state).await?;
-            Ok::<(), surrealdb::Error>(())
-        });
-        if let Err(e) = result {
-            log::error!("Failed to save project state: {e}");
-        }
-
-        // Update index entry name + timestamp
         if let Some(path) = &self.current_project_path {
             let key = path.to_string_lossy().to_string();
             self.update_index_timestamp(&key);
         }
     }
 
-    pub fn load_project_state(&self) -> Option<ProjectState> {
-        let db = self.project_db.as_ref()?;
-        self.rt.block_on(async {
-            let state: Option<ProjectState> = db.select(("state", "main")).await.ok()?;
-            state
-        })
-    }
-
     // -----------------------------------------------------------------------
-    // Audio data (per-project DB) — keyed by EntityId string
-    // -----------------------------------------------------------------------
-
-    pub fn save_audio(
-        &self,
-        waveform_id: &str,
-        left: &[f32],
-        right: &[f32],
-        mono: &[f32],
-        sample_rate: u32,
-        duration_secs: f32,
-    ) {
-        let db = match &self.project_db {
-            Some(db) => db,
-            None => return,
-        };
-        let data = StoredAudioData {
-            waveform_id: waveform_id.to_string(),
-            left_samples: f32_slice_to_u8(left),
-            right_samples: f32_slice_to_u8(right),
-            mono_samples: f32_slice_to_u8(mono),
-            sample_rate,
-            duration_secs,
-        };
-        let result = self.rt.block_on(async {
-            let _: Option<StoredAudioData> =
-                db.upsert(("audio", waveform_id)).content(data).await?;
-            Ok::<(), surrealdb::Error>(())
-        });
-        if let Err(e) = result {
-            log::error!("Failed to save audio data for waveform {waveform_id}: {e}");
-        }
-    }
-
-    pub fn load_audio(&self, waveform_id: &str) -> Option<StoredAudioData> {
-        let db = self.project_db.as_ref()?;
-        self.rt.block_on(async {
-            let data: Option<StoredAudioData> =
-                db.select(("audio", waveform_id)).await.ok()?;
-            data
-        })
-    }
-
-    // -----------------------------------------------------------------------
-    // Peaks data (per-project DB) — keyed by EntityId string
-    // -----------------------------------------------------------------------
-
-    pub fn save_peaks(
-        &self,
-        waveform_id: &str,
-        block_size: u64,
-        left_peaks: &[f32],
-        right_peaks: &[f32],
-    ) {
-        let db = match &self.project_db {
-            Some(db) => db,
-            None => return,
-        };
-        let data = StoredPeaks {
-            waveform_id: waveform_id.to_string(),
-            block_size,
-            left_peaks: f32_slice_to_u8(left_peaks),
-            right_peaks: f32_slice_to_u8(right_peaks),
-        };
-        let result = self.rt.block_on(async {
-            let _: Option<StoredPeaks> =
-                db.upsert(("peaks", waveform_id)).content(data).await?;
-            Ok::<(), surrealdb::Error>(())
-        });
-        if let Err(e) = result {
-            log::error!("Failed to save peaks for waveform {waveform_id}: {e}");
-        }
-    }
-
-    pub fn load_peaks(&self, waveform_id: &str) -> Option<StoredPeaks> {
-        let db = self.project_db.as_ref()?;
-        self.rt.block_on(async {
-            let data: Option<StoredPeaks> =
-                db.select(("peaks", waveform_id)).await.ok()?;
-            data
-        })
-    }
-
-    /// Clear all audio and peaks records (called before full rewrite on save).
-    pub fn clear_audio_and_peaks(&self) {
-        let db = match &self.project_db {
-            Some(db) => db,
-            None => return,
-        };
-        let _ = self.rt.block_on(async {
-            let _: Vec<StoredAudioData> = db.delete("audio").await?;
-            let _: Vec<StoredPeaks> = db.delete("peaks").await?;
-            Ok::<(), surrealdb::Error>(())
-        });
-    }
-
-    // -----------------------------------------------------------------------
-    // Global index
+    // Global index (local-only)
     // -----------------------------------------------------------------------
 
     pub fn list_projects(&self) -> Vec<ProjectIndexEntry> {
-        let mut entries = self.rt
-            .block_on(async {
-                let entries: Vec<ProjectIndexEntry> =
-                    self.index_db.select("projects").await.ok()?;
-                Some(entries)
-            })
-            .unwrap_or_default();
+        let index_db = self.index_db.clone();
+        let mut entries = run_on_rt(&self.rt, async move {
+            let entries: Vec<ProjectIndexEntry> =
+                index_db.select("projects").await.ok()?;
+            Some(entries)
+        })
+        .unwrap_or_default();
         entries.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
         entries
     }
 
     pub fn delete_project(&mut self, path: &str) {
-        // Remove from index
         self.delete_index_entry(path);
-        // Remove folder
         let _ = std::fs::remove_dir_all(path);
         log::info!("Deleted project at {path}");
     }
 
     pub fn update_index_name(&self, path: &str, name: &str) {
-        let _result = self.rt.block_on(async {
-            // Load existing entry, update name
+        let index_db = self.index_db.clone();
+        let path = path.to_string();
+        let name = name.to_string();
+        run_on_rt(&self.rt, async move {
             let existing: Option<ProjectIndexEntry> =
-                self.index_db.select(("projects", path)).await.ok()?;
+                index_db.select(("projects", &*path)).await.ok()?;
             if let Some(mut entry) = existing {
-                entry.name = name.to_string();
+                entry.name = name;
                 entry.updated_at = now_ts();
-                let _: Option<ProjectIndexEntry> = self
-                    .index_db
-                    .upsert(("projects", path))
+                let _: Option<ProjectIndexEntry> = index_db
+                    .upsert(("projects", &*path))
                     .content(entry)
                     .await
                     .ok()?;
@@ -387,10 +279,11 @@ impl Storage {
     // -----------------------------------------------------------------------
 
     fn upsert_index_entry(&self, key: &str, entry: ProjectIndexEntry) {
-        let _ = self.rt.block_on(async {
-            let _: Option<ProjectIndexEntry> = self
-                .index_db
-                .upsert(("projects", key))
+        let index_db = self.index_db.clone();
+        let key = key.to_string();
+        let _ = run_on_rt(&self.rt, async move {
+            let _: Option<ProjectIndexEntry> = index_db
+                .upsert(("projects", &*key))
                 .content(entry)
                 .await?;
             Ok::<(), surrealdb::Error>(())
@@ -398,21 +291,24 @@ impl Storage {
     }
 
     fn delete_index_entry(&self, key: &str) {
-        let _ = self.rt.block_on(async {
-            let _: Option<ProjectIndexEntry> = self.index_db.delete(("projects", key)).await?;
+        let index_db = self.index_db.clone();
+        let key = key.to_string();
+        let _ = run_on_rt(&self.rt, async move {
+            let _: Option<ProjectIndexEntry> = index_db.delete(("projects", &*key)).await?;
             Ok::<(), surrealdb::Error>(())
         });
     }
 
     fn update_index_timestamp(&self, key: &str) {
-        let _ = self.rt.block_on(async {
+        let index_db = self.index_db.clone();
+        let key = key.to_string();
+        run_on_rt(&self.rt, async move {
             let existing: Option<ProjectIndexEntry> =
-                self.index_db.select(("projects", key)).await.ok()?;
+                index_db.select(("projects", &*key)).await.ok()?;
             if let Some(mut entry) = existing {
                 entry.updated_at = now_ts();
-                let _: Option<ProjectIndexEntry> = self
-                    .index_db
-                    .upsert(("projects", key))
+                let _: Option<ProjectIndexEntry> = index_db
+                    .upsert(("projects", &*key))
                     .content(entry)
                     .await
                     .ok()?;
@@ -421,6 +317,118 @@ impl Storage {
         });
     }
 }
+
+// ---------------------------------------------------------------------------
+// ProjectStore implementation
+// ---------------------------------------------------------------------------
+
+impl ProjectStore for Storage {
+    fn save_project_state(&self, state: ProjectState) {
+        let db = match &self.project_db {
+            Some(db) => db.clone(),
+            None => return,
+        };
+        let result = run_on_rt(&self.rt, async move {
+            let _: Option<ProjectState> = db.upsert(("state", "main")).content(state).await?;
+            Ok::<(), surrealdb::Error>(())
+        });
+        if let Err(e) = result {
+            log::error!("Failed to save project state: {e}");
+        }
+    }
+
+    fn load_project_state(&self) -> Option<ProjectState> {
+        let db = self.project_db.as_ref()?.clone();
+        run_on_rt(&self.rt, async move {
+            let state: Option<ProjectState> = db.select(("state", "main")).await.ok()?;
+            state
+        })
+    }
+
+    fn save_audio(&self, waveform_id: &str, file_bytes: &[u8], extension: &str) {
+        let db = match &self.project_db {
+            Some(db) => db.clone(),
+            None => return,
+        };
+        let data = StoredAudioData {
+            waveform_id: waveform_id.to_string(),
+            file_data: Bytes::from(file_bytes.to_vec()),
+            extension: extension.to_string(),
+        };
+        let wf_id = waveform_id.to_string();
+        let result = run_on_rt(&self.rt, async move {
+            let _: Option<StoredAudioData> =
+                db.upsert(("audio", &*wf_id)).content(data).await?;
+            Ok::<(), surrealdb::Error>(())
+        });
+        if let Err(e) = result {
+            log::error!("Failed to save audio data for waveform {waveform_id}: {e}");
+        }
+    }
+
+    fn load_audio(&self, waveform_id: &str) -> Option<(Vec<u8>, String)> {
+        let db = self.project_db.as_ref()?.clone();
+        let wf_id = waveform_id.to_string();
+        run_on_rt(&self.rt, async move {
+            let data: Option<StoredAudioData> =
+                db.select(("audio", &*wf_id)).await.ok()?;
+            data
+        })
+        .map(|d| (d.file_data.into_inner().to_vec(), d.extension))
+    }
+
+    fn save_peaks(&self, waveform_id: &str, block_size: u64, left: &[f32], right: &[f32]) {
+        let db = match &self.project_db {
+            Some(db) => db.clone(),
+            None => return,
+        };
+        let data = StoredPeaks {
+            waveform_id: waveform_id.to_string(),
+            block_size,
+            left_peaks: peaks_f32_to_u8(left),
+            right_peaks: peaks_f32_to_u8(right),
+        };
+        let wf_id = waveform_id.to_string();
+        let result = run_on_rt(&self.rt, async move {
+            let _: Option<StoredPeaks> =
+                db.upsert(("peaks", &*wf_id)).content(data).await?;
+            Ok::<(), surrealdb::Error>(())
+        });
+        if let Err(e) = result {
+            log::error!("Failed to save peaks for waveform {waveform_id}: {e}");
+        }
+    }
+
+    fn load_peaks(&self, waveform_id: &str) -> Option<(u64, Vec<f32>, Vec<f32>)> {
+        let db = self.project_db.as_ref()?.clone();
+        let wf_id = waveform_id.to_string();
+        let stored = run_on_rt(&self.rt, async move {
+            let data: Option<StoredPeaks> =
+                db.select(("peaks", &*wf_id)).await.ok()?;
+            data
+        })?;
+        Some((
+            stored.block_size,
+            peaks_u8_to_f32(&stored.left_peaks),
+            peaks_u8_to_f32(&stored.right_peaks),
+        ))
+    }
+
+    fn clear_audio_and_peaks(&self) {
+        let db = match &self.project_db {
+            Some(db) => db.clone(),
+            None => return,
+        };
+        let _ = run_on_rt(&self.rt, async move {
+            let _: Vec<StoredAudioData> = db.delete("audio").await?;
+            let _: Vec<StoredPeaks> = db.delete("peaks").await?;
+            Ok::<(), surrealdb::Error>(())
+        });
+    }
+}
+
+// Peak quantization: re-export from helpers
+use super::helpers::{peaks_f32_to_u8, peaks_u8_to_f32};
 
 // ---------------------------------------------------------------------------
 // Utility: recursive dir copy

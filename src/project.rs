@@ -5,7 +5,7 @@
 use super::*;
 
 use muda::{MenuId, Submenu as MudaSubmenu};
-use storage::{ProjectState, Storage};
+use storage::{ProjectState, ProjectStore, Storage};
 
 // ---------------------------------------------------------------------------
 // Types
@@ -23,6 +23,7 @@ pub(crate) struct MenuState {
     pub(crate) paste: MenuId,
     pub(crate) select_all: MenuId,
     pub(crate) open_project_items: Vec<(MenuId, String)>,
+    pub(crate) export_audio: MenuId,
     pub(crate) open_submenu: MudaSubmenu,
     pub(crate) initialized: bool,
 }
@@ -143,8 +144,13 @@ impl App {
                 layer_tree: layers::tree_to_stored(&self.layer_tree),
                 text_notes: storage::text_notes_to_stored(&self.text_notes),
                 groups: storage::groups_to_stored(&self.groups),
+                master_volume: self.master.volume,
+                master_pan: self.master.pan,
+                master_effect_chain_id: self.master.effect_chain_id
+                    .map(|id| id.to_string())
+                    .unwrap_or_default(),
             };
-            storage.save_project_state(state);
+            storage.save_and_index_project(state);
 
             // Update project name in index
             if let Some(path) = storage.current_project_path() {
@@ -156,19 +162,19 @@ impl App {
             storage.clear_audio_and_peaks();
             for (wf_id, wf) in self.waveforms.iter() {
                 let id_str = wf_id.to_string();
-                let (mono, duration) = if let Some(clip) = self.audio_clips.get(wf_id) {
-                    (&clip.samples, clip.duration_secs)
+                // Save original encoded audio file
+                if let Some((file_bytes, ext)) = self.source_audio_files.get(wf_id) {
+                    storage.save_audio(&id_str, file_bytes, ext);
                 } else {
-                    continue;
-                };
-                storage.save_audio(
-                    &id_str,
-                    &wf.audio.left_samples,
-                    &wf.audio.right_samples,
-                    mono,
-                    wf.audio.sample_rate,
-                    duration,
-                );
+                    // No source file cached — encode as WAV from PCM
+                    let wav_bytes = crate::audio::encode_wav_bytes(
+                        &wf.audio.left_samples,
+                        &wf.audio.right_samples,
+                        wf.audio.sample_rate,
+                    );
+                    storage.save_audio(&id_str, &wav_bytes, "wav");
+                }
+                // Save peaks (quantized to u8 by storage layer)
                 storage.save_peaks(
                     &id_str,
                     wf.audio.left_peaks.block_size as u64,
@@ -256,6 +262,14 @@ impl App {
         } else if id == menu.select_all {
             self.execute_command(CommandAction::SelectAll);
             self.request_redraw();
+        } else if id == menu.export_audio {
+            self.export_window = Some(
+                ui::export_window::ExportWindow::new(
+                    ui::right_window::MAIN_LAYER_ID,
+                    "Main".to_string(),
+                )
+            );
+            self.request_redraw();
         } else if let Some(project_path) = menu
             .open_project_items
             .iter()
@@ -283,6 +297,7 @@ impl App {
         self.objects = IndexMap::new();
         self.waveforms.clear();
         self.audio_clips.clear();
+        self.source_audio_files.clear();
         self.components.clear();
         self.component_instances.clear();
         self.next_component_id = entity_id::new_id();
@@ -400,6 +415,7 @@ impl App {
 
         // Restore audio data and peaks from DB
         self.audio_clips.clear();
+        self.source_audio_files.clear();
         if let Some(s) = &self.storage {
             let wf_ids: Vec<EntityId> = self.waveforms.keys().cloned().collect();
             for wf_id in &wf_ids {
@@ -411,16 +427,26 @@ impl App {
                 let mut left_peaks = wf.audio.left_peaks.clone();
                 let mut right_peaks = wf.audio.right_peaks.clone();
 
-                if let Some(audio) = s.load_audio(&id_str) {
-                    left_samples = Arc::new(storage::u8_slice_to_f32(&audio.left_samples));
-                    right_samples = Arc::new(storage::u8_slice_to_f32(&audio.right_samples));
-                    let mono = storage::u8_slice_to_f32(&audio.mono_samples);
-                    sample_rate = audio.sample_rate;
-                    self.audio_clips.insert(*wf_id, AudioClipData {
-                        samples: Arc::new(mono),
-                        sample_rate: audio.sample_rate,
-                        duration_secs: audio.duration_secs,
-                    });
+                if let Some((file_bytes, ext)) = s.load_audio(&id_str) {
+                    // Decode audio from original file bytes
+                    if let Some(loaded) = crate::audio::load_audio_from_bytes(&file_bytes, &ext) {
+                        left_samples = loaded.left_samples;
+                        right_samples = loaded.right_samples;
+                        sample_rate = loaded.sample_rate;
+                        self.audio_clips.insert(*wf_id, AudioClipData {
+                            samples: loaded.samples,
+                            sample_rate: loaded.sample_rate,
+                            duration_secs: loaded.duration_secs,
+                        });
+                    } else {
+                        self.audio_clips.insert(*wf_id, AudioClipData {
+                            samples: Arc::new(Vec::new()),
+                            sample_rate: 48000,
+                            duration_secs: 0.0,
+                        });
+                    }
+                    // Cache source file bytes for future saves
+                    self.source_audio_files.insert(*wf_id, (file_bytes, ext));
                 } else {
                     self.audio_clips.insert(*wf_id, AudioClipData {
                         samples: Arc::new(Vec::new()),
@@ -428,11 +454,9 @@ impl App {
                         duration_secs: 0.0,
                     });
                 }
-                if let Some(peaks) = s.load_peaks(&id_str) {
-                    let lp = storage::u8_slice_to_f32(&peaks.left_peaks);
-                    let rp = storage::u8_slice_to_f32(&peaks.right_peaks);
-                    left_peaks = Arc::new(WaveformPeaks::from_raw(peaks.block_size as usize, lp));
-                    right_peaks = Arc::new(WaveformPeaks::from_raw(peaks.block_size as usize, rp));
+                if let Some((block_size, lp, rp)) = s.load_peaks(&id_str) {
+                    left_peaks = Arc::new(WaveformPeaks::from_raw(block_size as usize, lp));
+                    right_peaks = Arc::new(WaveformPeaks::from_raw(block_size as usize, rp));
                 }
                 let filename = wf.audio.filename.clone();
                 self.waveforms.get_mut(wf_id).unwrap().audio = Arc::new(AudioData {
@@ -534,6 +558,24 @@ impl App {
             .collect();
 
         self.groups = storage::groups_from_stored(state.groups);
+
+        // Restore Main Layer
+        self.master.volume = if state.master_volume == 0.0 && state.master_pan == 0.0 && state.master_effect_chain_id.is_empty() {
+            // Likely an older project that doesn't have main layer data — use defaults
+            1.0
+        } else {
+            state.master_volume
+        };
+        self.master.pan = if state.master_pan == 0.0 && state.master_volume == 0.0 {
+            0.5
+        } else {
+            state.master_pan
+        };
+        self.master.effect_chain_id = if state.master_effect_chain_id.is_empty() {
+            None
+        } else {
+            uuid::Uuid::parse_str(&state.master_effect_chain_id).ok()
+        };
 
         {
             let mut tree = layers::tree_from_stored(&state.layer_tree);
@@ -676,6 +718,13 @@ pub(crate) fn build_app_menu(storage: Option<&Storage>) -> MenuState {
         let _ = open_submenu.append(&MenuItem::new("No Projects", false, None));
     }
     let _ = file_menu.append(&open_submenu);
+    let _ = file_menu.append(&PredefinedMenuItem::separator());
+    let export_audio_item = MenuItem::new(
+        "Export Audio...",
+        true,
+        Some(Accelerator::new(Some(cmd | Modifiers::SHIFT), Code::KeyE)),
+    );
+    let _ = file_menu.append(&export_audio_item);
     let _ = menu.append(&file_menu);
 
     // -- Edit menu --
@@ -728,6 +777,7 @@ pub(crate) fn build_app_menu(storage: Option<&Storage>) -> MenuState {
         copy: copy_item.id().clone(),
         paste: paste_item.id().clone(),
         select_all: select_all_item.id().clone(),
+        export_audio: export_audio_item.id().clone(),
         open_project_items: open_items,
         open_submenu,
         initialized: false,

@@ -317,7 +317,7 @@ impl App {
                                 let before = crate::instruments::InstrumentSnapshot {
                                     name: inst.name.clone(), plugin_id: inst.plugin_id.clone(),
                                     plugin_name: inst.plugin_name.clone(), plugin_path: inst.plugin_path.clone(),
-                                    volume: inst.volume, pan: inst.pan, effect_chain_id: inst.effect_chain_id,
+                                    volume: inst.volume, pan: inst.pan, effect_chain_id: inst.effect_chain_id, disabled: inst.disabled,
                                 };
                                 inst.volume = new_gain;
                                 let after = crate::instruments::InstrumentSnapshot { volume: new_gain, ..before.clone() };
@@ -334,6 +334,10 @@ impl App {
                                     self.push_op(crate::operations::Operation::UpdateGroup { id: gid, before, after });
                                 }
                             }
+                            self.sync_audio_clips();
+                        }
+                        ui::right_window::RightWindowTarget::Master => {
+                            self.master.volume = new_gain;
                             self.sync_audio_clips();
                         }
                     }
@@ -386,7 +390,7 @@ impl App {
                                 let before = crate::instruments::InstrumentSnapshot {
                                     name: inst.name.clone(), plugin_id: inst.plugin_id.clone(),
                                     plugin_name: inst.plugin_name.clone(), plugin_path: inst.plugin_path.clone(),
-                                    volume: inst.volume, pan: inst.pan, effect_chain_id: inst.effect_chain_id,
+                                    volume: inst.volume, pan: inst.pan, effect_chain_id: inst.effect_chain_id, disabled: inst.disabled,
                                 };
                                 inst.pan = new_pan;
                                 let after = crate::instruments::InstrumentSnapshot { pan: new_pan, ..before.clone() };
@@ -403,6 +407,10 @@ impl App {
                                     self.push_op(crate::operations::Operation::UpdateGroup { id: gid, before, after });
                                 }
                             }
+                            self.sync_audio_clips();
+                        }
+                        ui::right_window::RightWindowTarget::Master => {
+                            self.master.pan = new_pan;
                             self.sync_audio_clips();
                         }
                     }
@@ -1012,18 +1020,21 @@ impl App {
                         } else {
                             self.sample_browser.search_query.pop();
                         }
+                        self.sample_browser.text_dirty = true;
                         self.sample_browser.schedule_search_rebuild();
                         self.request_redraw();
                         return;
                     }
                     Key::Named(NamedKey::Space) => {
                         self.sample_browser.search_query.push(' ');
+                        self.sample_browser.text_dirty = true;
                         self.sample_browser.schedule_search_rebuild();
                         self.request_redraw();
                         return;
                     }
                     Key::Character(ch) if !self.cmd_held() => {
                         self.sample_browser.search_query.push_str(ch.as_ref());
+                        self.sample_browser.text_dirty = true;
                         self.sample_browser.schedule_search_rebuild();
                         self.request_redraw();
                         return;
@@ -1413,6 +1424,15 @@ impl App {
                     self.request_redraw();
                 }
                 Key::Named(NamedKey::Space) => {
+                    // Stop sample preview if playing (takes priority)
+                    #[cfg(feature = "native")]
+                    if let Some(engine) = &self.audio_engine {
+                        if engine.is_preview_playing() {
+                            engine.stop_preview();
+                            self.request_redraw();
+                            return;
+                        }
+                    }
                     if self.is_recording() {
                         self.toggle_recording();
                         self.request_redraw();
@@ -1434,7 +1454,56 @@ impl App {
                                 }
                             }
                             engine.toggle_playback();
+                            self.broadcast_playback_if_connected();
                             self.request_redraw();
+                        }
+                    }
+                }
+                Key::Named(NamedKey::ArrowUp) | Key::Named(NamedKey::ArrowDown)
+                    if self.sample_browser.visible
+                    && self.sample_browser.active_category == ui::browser::BrowserCategory::Samples
+                    && !self.sample_browser.entries.is_empty() =>
+                {
+                    let down = matches!(event.logical_key, Key::Named(NamedKey::ArrowDown));
+                    let entries = &self.sample_browser.entries;
+                    let cur = self.sample_browser.selected_entry;
+                    let new_idx = if down {
+                        // Move to next entry (from current+1, or from 0 if none)
+                        let start = cur.map_or(0, |i| i + 1);
+                        (start..entries.len()).next()
+                    } else {
+                        // Move to previous entry
+                        let start = cur.unwrap_or(0);
+                        if start > 0 { Some(start - 1) } else { None }
+                    };
+                    if let Some(idx) = new_idx {
+                        self.sample_browser.selected_entry = Some(idx);
+                        let (_, sh, scale) = self.screen_info();
+                        self.sample_browser.scroll_to_entry(idx, sh, scale);
+                        self.sample_browser.text_dirty = true;
+
+                        // Auto-play if it's an audio file and auto_preview is on
+                        let entry = &self.sample_browser.entries[idx];
+                        if matches!(entry.kind, ui::browser::EntryKind::File) {
+                            let ext = entry.path.extension()
+                                .map(|e| e.to_string_lossy().to_lowercase())
+                                .unwrap_or_default();
+                            if AUDIO_EXTENSIONS.contains(&ext.as_str()) {
+                                self.load_browser_preview(&entry.path.clone());
+                            }
+                        }
+                        self.request_redraw();
+                        return;
+                    }
+                }
+                Key::Named(NamedKey::ArrowRight) if self.sample_browser.selected_entry.is_some() => {
+                    // Right arrow with a selected sample: replay preview from start
+                    #[cfg(feature = "native")]
+                    if let Some(engine) = &self.audio_engine {
+                        if self.sample_browser.preview_audio.is_some() {
+                            engine.seek_preview(0.0);
+                            self.request_redraw();
+                            return;
                         }
                     }
                 }
@@ -1479,7 +1548,14 @@ impl App {
                                 if let HitTarget::LoopRegion(i) = t { Some(*i) } else { None }
                             })
                             .collect();
-                        if !wf_ids.is_empty() || !lr_ids.is_empty() {
+                        let group_ids: Vec<EntityId> = self
+                            .selected
+                            .iter()
+                            .filter_map(|t| {
+                                if let HitTarget::Group(i) = t { Some(*i) } else { None }
+                            })
+                            .collect();
+                        if !wf_ids.is_empty() || !lr_ids.is_empty() || !group_ids.is_empty() {
                             let mut ops = Vec::new();
                             if !wf_ids.is_empty() {
                                 let any_enabled = wf_ids.iter().any(|i| self.waveforms.get(i).map_or(false, |wf| !wf.disabled));
@@ -1504,12 +1580,116 @@ impl App {
                                 }
                                 self.sync_loop_region();
                             }
+                            if !group_ids.is_empty() {
+                                let any_enabled = group_ids.iter().any(|i| self.groups.get(i).map_or(false, |g| !g.disabled));
+                                let new_disabled = any_enabled;
+                                for i in &group_ids {
+                                    if let Some(g) = self.groups.get_mut(i) {
+                                        let before = g.clone();
+                                        g.disabled = new_disabled;
+                                        ops.push(crate::operations::Operation::UpdateGroup { id: *i, before, after: g.clone() });
+                                    }
+                                }
+                            }
                             if !ops.is_empty() {
                                 self.push_op(crate::operations::Operation::Batch(ops));
                             }
                             self.sync_audio_clips();
                             self.request_redraw();
                         }
+                    }
+                    "s" => {
+                        // Solo selected entities
+                        let shift = self.modifiers.shift_key();
+                        let targets: Vec<EntityId> = self.selected.iter().filter_map(|t| match t {
+                            HitTarget::Waveform(id) | HitTarget::Instrument(id) | HitTarget::Group(id) => Some(*id),
+                            _ => None,
+                        }).collect();
+                        if !targets.is_empty() {
+                            if shift {
+                                // Additive: toggle each target individually
+                                for &id in &targets {
+                                    self.toggle_solo(id, true);
+                                }
+                            } else {
+                                // Exclusive: if all targets are already the solo set, clear; otherwise solo exactly these
+                                let all_already_soloed = self.solo_ids.len() == targets.len()
+                                    && targets.iter().all(|id| self.solo_ids.contains(id));
+                                if all_already_soloed {
+                                    self.solo_ids.clear();
+                                } else {
+                                    self.solo_ids.clear();
+                                    for &id in &targets {
+                                        self.solo_ids.insert(id);
+                                    }
+                                }
+                            }
+                            self.refresh_project_browser_entries();
+                            #[cfg(feature = "native")]
+                            self.sync_audio_clips();
+                            self.mark_dirty();
+                        }
+                    }
+                    "m" => {
+                        // Mute selected entities — toggle disabled (same as pressing 0)
+                        let wf_ids: Vec<EntityId> = self.selected.iter().filter_map(|t| {
+                            if let HitTarget::Waveform(id) = t { Some(*id) } else { None }
+                        }).collect();
+                        let inst_ids: Vec<EntityId> = self.selected.iter().filter_map(|t| {
+                            if let HitTarget::Instrument(id) = t { Some(*id) } else { None }
+                        }).collect();
+                        let group_ids: Vec<EntityId> = self.selected.iter().filter_map(|t| {
+                            if let HitTarget::Group(id) = t { Some(*id) } else { None }
+                        }).collect();
+                        let mut ops = Vec::new();
+                        if !wf_ids.is_empty() {
+                            let any_enabled = wf_ids.iter().any(|i| self.waveforms.get(i).map_or(false, |wf| !wf.disabled));
+                            let new_disabled = any_enabled;
+                            for i in &wf_ids {
+                                if let Some(wf) = self.waveforms.get_mut(i) {
+                                    let before = wf.clone();
+                                    wf.disabled = new_disabled;
+                                    ops.push(crate::operations::Operation::UpdateWaveform { id: *i, before, after: wf.clone() });
+                                }
+                            }
+                        }
+                        if !inst_ids.is_empty() {
+                            let any_enabled = inst_ids.iter().any(|i| self.instruments.get(i).map_or(false, |inst| !inst.disabled));
+                            let new_disabled = any_enabled;
+                            for i in &inst_ids {
+                                if let Some(inst) = self.instruments.get_mut(i) {
+                                    let before = crate::instruments::InstrumentSnapshot {
+                                        name: inst.name.clone(), plugin_id: inst.plugin_id.clone(),
+                                        plugin_name: inst.plugin_name.clone(), plugin_path: inst.plugin_path.clone(),
+                                        volume: inst.volume, pan: inst.pan, effect_chain_id: inst.effect_chain_id, disabled: inst.disabled,
+                                    };
+                                    inst.disabled = new_disabled;
+                                    let after = crate::instruments::InstrumentSnapshot { disabled: new_disabled, ..before.clone() };
+                                    ops.push(crate::operations::Operation::UpdateInstrument { id: *i, before, after });
+                                }
+                            }
+                        }
+                        if !group_ids.is_empty() {
+                            let any_enabled = group_ids.iter().any(|i| self.groups.get(i).map_or(false, |g| !g.disabled));
+                            let new_disabled = any_enabled;
+                            for i in &group_ids {
+                                if let Some(before) = self.groups.get(i).cloned() {
+                                    if let Some(g) = self.groups.get_mut(i) {
+                                        g.disabled = new_disabled;
+                                    }
+                                    if let Some(after) = self.groups.get(i).cloned() {
+                                        ops.push(crate::operations::Operation::UpdateGroup { id: *i, before, after });
+                                    }
+                                }
+                            }
+                        }
+                        if !ops.is_empty() {
+                            self.push_op(crate::operations::Operation::Batch(ops));
+                        }
+                        self.refresh_project_browser_entries();
+                        #[cfg(feature = "native")]
+                        self.sync_audio_clips();
+                        self.mark_dirty();
                     }
                     _ => {}
                 },

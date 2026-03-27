@@ -1,5 +1,7 @@
 use std::collections::HashSet;
 use std::path::PathBuf;
+use std::sync::Arc;
+use std::sync::mpsc;
 
 #[cfg(target_arch = "wasm32")]
 use web_time::Instant as TimeInstant;
@@ -31,6 +33,8 @@ const PLACES_SECTION_GAP: f32 = 8.0;
 const PLACES_HEADER_HEIGHT: f32 = 20.0;
 /// Row height for each entry in the places section of the sidebar.
 const PLACES_ROW_HEIGHT: f32 = 24.0;
+/// Height of the sample preview strip at the bottom of the browser.
+pub const PREVIEW_STRIP_HEIGHT: f32 = 52.0;
 
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -66,7 +70,9 @@ pub enum EntryKind {
     PluginHeader,
     Plugin { unique_id: String, is_instrument: bool },
     ProjectInstrument { id: EntityId },
-    LayerNode { id: EntityId, kind: LayerNodeKind, has_children: bool, expanded: bool, color: [f32; 4] },
+    LayerNode { id: EntityId, kind: LayerNodeKind, has_children: bool, expanded: bool, color: [f32; 4], is_soloed: bool, is_muted: bool },
+    Master,
+    EmptyState,
 }
 
 #[derive(Clone)]
@@ -103,7 +109,7 @@ struct CachedFile {
 const MAX_SEARCH_RESULTS: usize = 500;
 
 /// Search debounce delay in milliseconds.
-const SEARCH_DEBOUNCE_MS: u64 = 50;
+const SEARCH_DEBOUNCE_MS: u64 = 150;
 
 pub struct SampleBrowser {
     pub root_folders: Vec<PathBuf>,
@@ -141,6 +147,10 @@ pub struct SampleBrowser {
     file_index: Vec<CachedFile>,
     /// Whether the file index needs rebuilding (root folders changed).
     file_index_dirty: bool,
+    /// Receiver for background file index build.
+    file_index_receiver: Option<mpsc::Receiver<Vec<CachedFile>>>,
+    /// Whether a background file index build is in progress.
+    file_index_building: bool,
     /// When set, a search rebuild is pending and should fire after this deadline.
     search_debounce_deadline: Option<TimeInstant>,
     /// Whether the search clear (X) button is hovered.
@@ -155,6 +165,18 @@ pub struct SampleBrowser {
     pub hovered_place: Option<usize>,
     /// Whether the "Add Folder…" row at the bottom of the places column is hovered.
     pub places_add_hovered: bool,
+    /// Audio data for the currently previewed sample (waveform display).
+    pub preview_audio: Option<Arc<super::waveform::AudioData>>,
+    /// Path of the currently previewed sample.
+    pub preview_path: Option<PathBuf>,
+    /// Whether auto-preview (headphones) is enabled — click plays the sample.
+    pub auto_preview: bool,
+    /// Whether the headphones toggle button is hovered.
+    pub preview_toggle_hovered: bool,
+    /// Index of the selected entry in the Samples tab (for preview highlight).
+    pub selected_entry: Option<usize>,
+    /// Whether the Master ("Main") entry is currently selected.
+    pub master_selected: bool,
 }
 
 impl SampleBrowser {
@@ -189,6 +211,8 @@ impl SampleBrowser {
             search_focused: false,
             file_index: Vec::new(),
             file_index_dirty: true,
+            file_index_receiver: None,
+            file_index_building: false,
             search_debounce_deadline: None,
             search_clear_hovered: false,
             layer_drop_indicator: None,
@@ -196,6 +220,12 @@ impl SampleBrowser {
             selected_place: 0,
             hovered_place: None,
             places_add_hovered: false,
+            preview_audio: None,
+            preview_path: None,
+            auto_preview: true,
+            preview_toggle_hovered: false,
+            selected_entry: None,
+            master_selected: false,
         }
     }
 
@@ -255,40 +285,48 @@ impl SampleBrowser {
         }
     }
 
-    /// Rebuild the flat file index by walking all root folders once.
-    /// Called lazily when a sample search is first performed after folders change.
+    /// Poll for a completed background file index build.
+    /// Returns true if the index was updated (caller should request redraw).
+    pub fn tick_file_index(&mut self) -> bool {
+        if let Some(rx) = &self.file_index_receiver {
+            if let Ok(index) = rx.try_recv() {
+                self.file_index = index;
+                self.file_index_dirty = false;
+                self.file_index_building = false;
+                self.file_index_receiver = None;
+                // Re-run search with the new index.
+                if !self.search_query.is_empty() {
+                    self.rebuild_entries();
+                }
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Ensure the file index is available. If dirty, kicks off a background
+    /// thread to walk directories without blocking the UI.
     fn ensure_file_index(&mut self) {
-        if !self.file_index_dirty {
+        if !self.file_index_dirty || self.file_index_building {
             return;
         }
         self.file_index.clear();
-        for root in &self.root_folders.clone() {
-            Self::index_walk_dir(&mut self.file_index, root);
-        }
-        self.file_index_dirty = false;
+        self.file_index_building = true;
+        let roots = self.root_folders.clone();
+        let (tx, rx) = mpsc::channel();
+        self.file_index_receiver = Some(rx);
+        std::thread::spawn(move || {
+            let mut index = Vec::new();
+            for root in &roots {
+                index_walk_dir(&mut index, root);
+            }
+            let _ = tx.send(index);
+        });
     }
 
-    fn index_walk_dir(index: &mut Vec<CachedFile>, dir: &std::path::Path) {
-        let Ok(read) = std::fs::read_dir(dir) else {
-            return;
-        };
-        for item in read.flatten() {
-            let path = item.path();
-            let fname = item.file_name().to_string_lossy().to_string();
-            if fname.starts_with('.') {
-                continue;
-            }
-            if path.is_dir() {
-                Self::index_walk_dir(index, &path);
-            } else {
-                let name_lower = fname.to_lowercase();
-                index.push(CachedFile {
-                    path,
-                    name: fname,
-                    name_lower,
-                });
-            }
-        }
+    /// Returns true if a background file index build is in progress.
+    pub fn is_file_index_building(&self) -> bool {
+        self.file_index_building
     }
 
     pub fn toggle_expand(&mut self, entry_idx: usize) {
@@ -330,10 +368,20 @@ impl SampleBrowser {
         self.entries.clear();
         let query = self.search_query.clone();
         let searching = !query.is_empty();
+        let query_lower = query.to_lowercase();
         match self.active_category {
             BrowserCategory::Layers => {
+                // Pinned "Main" layer row at the top
+                if !searching {
+                    self.entries.push(BrowserEntry {
+                        path: PathBuf::new(),
+                        name: "Main".to_string(),
+                        kind: EntryKind::Master,
+                        depth: 0,
+                    });
+                }
                 for row in &self.layer_rows {
-                    if searching && !fuzzy_match(&row.label, &query) {
+                    if searching && !fuzzy_match_lowered(&row.label.to_lowercase(), &query_lower) {
                         continue;
                     }
                     self.entries.push(BrowserEntry {
@@ -345,15 +393,24 @@ impl SampleBrowser {
                             has_children: row.has_children,
                             expanded: row.expanded,
                             color: row.color,
+                            is_soloed: row.is_soloed,
+                            is_muted: row.is_muted,
                         },
                         depth: if searching { 0 } else { row.depth },
                     });
                 }
+                if self.layer_rows.is_empty() && !searching {
+                    self.entries.push(BrowserEntry {
+                        path: PathBuf::new(),
+                        name: String::new(),
+                        kind: EntryKind::EmptyState,
+                        depth: 1,
+                    });
+                }
             }
             BrowserCategory::Samples => {
-                if searching {
+                if searching && query.len() >= 2 {
                     self.ensure_file_index();
-                    let query_lower = query.to_lowercase();
                     for cached in &self.file_index {
                         if fuzzy_match_lowered(&cached.name_lower, &query_lower) {
                             self.entries.push(BrowserEntry {
@@ -374,7 +431,7 @@ impl SampleBrowser {
             }
             BrowserCategory::Instruments => {
                 for inst in &self.instruments {
-                    if searching && !fuzzy_match(&inst.name, &query) {
+                    if searching && !fuzzy_match_lowered(&inst.name.to_lowercase(), &query_lower) {
                         continue;
                     }
                     self.entries.push(BrowserEntry {
@@ -390,7 +447,7 @@ impl SampleBrowser {
             }
             BrowserCategory::Effects => {
                 for plug in &self.plugins {
-                    if searching && !fuzzy_match(&plug.name, &query) {
+                    if searching && !fuzzy_match_lowered(&plug.name.to_lowercase(), &query_lower) {
                         continue;
                     }
                     self.entries.push(BrowserEntry {
@@ -426,6 +483,10 @@ impl SampleBrowser {
         self.panel_width(scale) - self.content_x(scale)
     }
 
+    pub(crate) fn content_width(&self, scale: f32) -> f32 {
+        self.panel_width(scale) - self.sidebar_width(scale)
+    }
+
     /// Y coordinate where the Places section starts inside the sidebar (below all category rows).
     fn places_section_y(&self, scale: f32) -> f32 {
         let ct = self.content_top(scale);
@@ -443,7 +504,23 @@ impl SampleBrowser {
     }
 
     fn visible_height(&self, screen_h: f32, scale: f32) -> f32 {
-        screen_h - self.content_top(scale)
+        let preview_h = if self.preview_audio.is_some() {
+            PREVIEW_STRIP_HEIGHT * scale
+        } else {
+            0.0
+        };
+        screen_h - self.content_top(scale) - preview_h
+    }
+
+    #[cfg(test)]
+    pub fn visible_height_for_test(&self, screen_h: f32, scale: f32) -> f32 {
+        self.visible_height(screen_h, scale)
+    }
+
+    pub fn preview_strip_rect(&self, screen_h: f32, scale: f32) -> [f32; 4] {
+        let strip_h = PREVIEW_STRIP_HEIGHT * scale;
+        let w = self.width * scale;
+        [0.0, screen_h - strip_h, w, strip_h]
     }
 
     fn max_scroll(&self, screen_h: f32, scale: f32) -> f32 {
@@ -457,6 +534,21 @@ impl SampleBrowser {
     pub fn clamp_scroll_for_screen(&mut self, screen_h: f32, scale: f32) {
         let max = self.max_scroll(screen_h, scale);
         self.scroll_offset = self.scroll_offset.clamp(0.0, max);
+    }
+
+    /// Scroll to ensure the given entry index is visible in the content area.
+    pub fn scroll_to_entry(&mut self, idx: usize, screen_h: f32, scale: f32) {
+        let item_h = ITEM_HEIGHT * scale;
+        let entry_top = idx as f32 * item_h;
+        let entry_bot = entry_top + item_h;
+        let vis_h = self.visible_height(screen_h, scale);
+
+        if entry_top < self.scroll_offset {
+            self.scroll_offset = entry_top;
+        } else if entry_bot > self.scroll_offset + vis_h {
+            self.scroll_offset = entry_bot - vis_h;
+        }
+        self.clamp_scroll_for_screen(screen_h, scale);
     }
 
     /// Trackpad: apply delta directly (OS provides momentum)
@@ -772,14 +864,8 @@ impl SampleBrowser {
             return None;
         }
         let y = pos[1] - top;
-        // "Library" label gap
-        let section_gap = SIDEBAR_SECTION_GAP * scale;
         let item_h = SIDEBAR_ITEM_HEIGHT * scale;
-        let content_y = y - section_gap;
-        if content_y < 0.0 {
-            return None;
-        }
-        let idx = (content_y / item_h) as usize;
+        let idx = (y / item_h) as usize;
         SIDEBAR_CATEGORIES.get(idx).copied()
     }
 
@@ -791,13 +877,8 @@ impl SampleBrowser {
             return None;
         }
         let y = pos[1] - top;
-        let section_gap = SIDEBAR_SECTION_GAP * scale;
         let item_h = SIDEBAR_ITEM_HEIGHT * scale;
-        let content_y = y - section_gap;
-        if content_y < 0.0 {
-            return None;
-        }
-        let idx = (content_y / item_h) as usize;
+        let idx = (y / item_h) as usize;
         if idx < SIDEBAR_CATEGORIES.len() {
             Some(idx)
         } else {
@@ -822,6 +903,14 @@ impl SampleBrowser {
         } else {
             self.item_at(pos, screen_h, scale)
         };
+        // Preview toggle hover
+        if self.preview_audio.is_some() {
+            let [bx, by, bw, bh] = self.preview_toggle_rect(screen_h, scale);
+            self.preview_toggle_hovered = pos[0] >= bx && pos[0] <= bx + bw
+                && pos[1] >= by && pos[1] <= by + bh;
+        } else {
+            self.preview_toggle_hovered = false;
+        }
     }
 
     pub fn build_instances(&self, settings: &crate::settings::Settings, _screen_w: f32, screen_h: f32, scale: f32, selected_ids: &std::collections::HashSet<crate::entity_id::EntityId>) -> Vec<InstanceRaw> {
@@ -992,10 +1081,9 @@ impl SampleBrowser {
 
         // --- Sidebar items (category tabs) ---
         let sb_item_h = SIDEBAR_ITEM_HEIGHT * scale;
-        let section_gap = SIDEBAR_SECTION_GAP * scale;
 
         for (i, cat) in SIDEBAR_CATEGORIES.iter().enumerate() {
-            let y = ct + section_gap + i as f32 * sb_item_h;
+            let y = ct + i as f32 * sb_item_h;
 
             // Active highlight
             if *cat == self.active_category {
@@ -1191,7 +1279,8 @@ impl SampleBrowser {
                         });
                     }
                 }
-                EntryKind::ProjectInstrument { .. } | EntryKind::LayerNode { .. } => {
+                EntryKind::EmptyState => {}
+                EntryKind::ProjectInstrument { .. } | EntryKind::LayerNode { .. } | EntryKind::Master => {
                     let indent = entry.depth as f32 * INDENT_PX * scale;
                     out.push(InstanceRaw {
                         position: [cx, clip_y],
@@ -1204,7 +1293,9 @@ impl SampleBrowser {
                         EntryKind::ProjectInstrument { id } => Some(*id),
                         _ => None,
                     };
-                    if entry_entity_id.map_or(false, |id| selected_ids.contains(&id)) {
+                    let is_selected = entry_entity_id.map_or(false, |id| selected_ids.contains(&id))
+                        || (matches!(entry.kind, EntryKind::Master) && self.master_selected);
+                    if is_selected {
                         let a = settings.theme.accent;
                         out.push(InstanceRaw {
                             position: [cx, clip_y],
@@ -1262,30 +1353,53 @@ impl SampleBrowser {
                         }
                     }
                     }
-                    // Category dot
-                    let dot_sz = 5.0 * scale;
-                    let dot_offset = indent + 20.0 * scale;
-                    let dot_x = cx + dot_offset;
-                    let dot_y = y + (item_h - dot_sz) * 0.5;
-                    if dot_y >= ct {
-                        let dot_color = match &entry.kind {
-                            EntryKind::LayerNode { kind, color, .. } => match kind {
-                                LayerNodeKind::Instrument => settings.theme.pill_instrument,
-                                LayerNodeKind::TextNote => settings.theme.category_dot,
-                                LayerNodeKind::Group => settings.theme.component_border_color,
-                                _ => *color,
-                            },
-                            _ => settings.theme.pill_instrument,
-                        };
-                        out.push(InstanceRaw {
-                            position: [dot_x, dot_y],
-                            size: [dot_sz, dot_sz],
-                            color: dot_color,
-                            border_radius: dot_sz * 0.5,
-                        });
+                    // Category dot (not for Master)
+                    if !matches!(entry.kind, EntryKind::Master) {
+                        let dot_sz = 5.0 * scale;
+                        let dot_offset = indent + 20.0 * scale;
+                        let dot_x = cx + dot_offset;
+                        let dot_y = y + (item_h - dot_sz) * 0.5;
+                        if dot_y >= ct {
+                            let dot_color = match &entry.kind {
+                                EntryKind::LayerNode { kind, color, .. } => match kind {
+                                    LayerNodeKind::Instrument => settings.theme.pill_instrument,
+                                    LayerNodeKind::TextNote => settings.theme.category_dot,
+                                    LayerNodeKind::Group => settings.theme.component_border_color,
+                                    _ => *color,
+                                },
+                                _ => settings.theme.pill_instrument,
+                            };
+                            out.push(InstanceRaw {
+                                position: [dot_x, dot_y],
+                                size: [dot_sz, dot_sz],
+                                color: dot_color,
+                                border_radius: dot_sz * 0.5,
+                            });
+                        }
+                    }
+                    // Solo/Mute buttons (right-aligned) — only for Waveform, Instrument, Group
+                    if let EntryKind::LayerNode { kind, is_soloed, is_muted, .. } = &entry.kind {
+                        if matches!(kind, LayerNodeKind::Waveform | LayerNodeKind::Instrument | LayerNodeKind::Group) {
+                            let row_right = cx + content_w;
+                            let row_cy = y + item_h * 0.5;
+                            let layout = super::solo_mute::layout_right_aligned(row_right, row_cy, scale);
+                            let is_hovered = self.hovered_entry == Some(i);
+                            let visible = *is_soloed || *is_muted || is_hovered;
+                            out.extend(super::solo_mute::build_instances(&layout, *is_soloed, *is_muted, is_hovered, visible, &settings.theme, scale));
+                        }
                     }
                 }
                 EntryKind::Dir | EntryKind::File => {
+                    // Selected highlight (like Layers tab)
+                    if self.selected_entry == Some(i) {
+                        let a = settings.theme.accent;
+                        out.push(InstanceRaw {
+                            position: [cx, y],
+                            size: [content_w, item_h],
+                            color: [a[0], a[1], a[2], 0.22],
+                            border_radius: 0.0,
+                        });
+                    }
                     // Hover
                     if self.hovered_entry == Some(i) {
                         out.push(InstanceRaw {
@@ -1409,7 +1523,86 @@ impl SampleBrowser {
             });
         }
 
+        // --- Preview strip at bottom ---
+        if self.preview_audio.is_some() {
+            let [strip_x, strip_y, strip_w, strip_h] = self.preview_strip_rect(screen_h, scale);
+
+            // Strip background
+            out.push(InstanceRaw {
+                position: [strip_x, strip_y],
+                size: [strip_w, strip_h],
+                color: settings.theme.bg_surface,
+                border_radius: 0.0,
+            });
+
+            // Separator line above strip
+            out.push(InstanceRaw {
+                position: [strip_x, strip_y],
+                size: [strip_w, 1.0 * scale],
+                color: crate::theme::with_alpha(settings.theme.text_primary, 0.07),
+                border_radius: 0.0,
+            });
+
+            // Headphones toggle button (left side)
+            let btn_size = 20.0 * scale;
+            let btn_x = strip_x + 8.0 * scale;
+            let btn_y = strip_y + (strip_h - btn_size) * 0.5;
+            let btn_radius = btn_size * 0.5;
+            let btn_color = if self.auto_preview {
+                settings.theme.accent
+            } else {
+                crate::theme::with_alpha(settings.theme.text_primary, 0.15)
+            };
+            out.push(InstanceRaw {
+                position: [btn_x, btn_y],
+                size: [btn_size, btn_size],
+                color: btn_color,
+                border_radius: btn_radius,
+            });
+            if self.preview_toggle_hovered {
+                out.push(InstanceRaw {
+                    position: [btn_x, btn_y],
+                    size: [btn_size, btn_size],
+                    color: [1.0, 1.0, 1.0, 0.08],
+                    border_radius: btn_radius,
+                });
+            }
+
+            // Waveform background rect (right of button, full height with padding)
+            let wf_x = btn_x + btn_size + 8.0 * scale;
+            let wf_w = strip_w - (wf_x - strip_x) - 8.0 * scale;
+            let wf_h = strip_h - 12.0 * scale;
+            let wf_y = strip_y + 6.0 * scale;
+            out.push(InstanceRaw {
+                position: [wf_x, wf_y],
+                size: [wf_w, wf_h],
+                color: [0.0, 0.0, 0.0, 0.3],
+                border_radius: 2.0 * scale,
+            });
+        }
+
         out
+    }
+
+    /// Returns the rect [x, y, w, h] of the preview waveform area (inside the strip).
+    pub fn preview_waveform_rect(&self, screen_h: f32, scale: f32) -> [f32; 4] {
+        let [strip_x, strip_y, strip_w, strip_h] = self.preview_strip_rect(screen_h, scale);
+        let btn_size = 20.0 * scale;
+        let btn_x = strip_x + 8.0 * scale;
+        let wf_x = btn_x + btn_size + 8.0 * scale;
+        let wf_w = strip_w - (wf_x - strip_x) - 8.0 * scale;
+        let wf_h = strip_h - 12.0 * scale;
+        let wf_y = strip_y + 6.0 * scale;
+        [wf_x, wf_y, wf_w, wf_h]
+    }
+
+    /// Returns the rect [x, y, w, h] of the headphones toggle button.
+    pub fn preview_toggle_rect(&self, screen_h: f32, scale: f32) -> [f32; 4] {
+        let [strip_x, strip_y, _, strip_h] = self.preview_strip_rect(screen_h, scale);
+        let btn_size = 20.0 * scale;
+        let btn_x = strip_x + 8.0 * scale;
+        let btn_y = strip_y + (strip_h - btn_size) * 0.5;
+        [btn_x, btn_y, btn_size, btn_size]
     }
 
     pub fn get_text_entries(&mut self, theme: &crate::theme::RuntimeTheme, screen_h: f32, scale: f32) -> &[TextEntry] {
@@ -1474,12 +1667,11 @@ impl SampleBrowser {
 
         // --- Sidebar: category labels then Places section (not scrolled) ---
         let sb_item_h = SIDEBAR_ITEM_HEIGHT * scale;
-        let section_gap = SIDEBAR_SECTION_GAP * scale;
         let font_sz = 12.0 * scale;
         let line_h = 15.0 * scale;
 
         for (i, cat) in SIDEBAR_CATEGORIES.iter().enumerate() {
-            let y = ct + section_gap + i as f32 * sb_item_h;
+            let y = ct + i as f32 * sb_item_h;
             let is_active = *cat == self.active_category;
             let color = if is_active {
                 crate::theme::RuntimeTheme::text_u8(theme.text_primary, 255)
@@ -1611,13 +1803,31 @@ impl SampleBrowser {
                         center: false,
                     });
                 }
-                EntryKind::ProjectInstrument { .. } | EntryKind::LayerNode { .. } => {
+                EntryKind::EmptyState => {
+                    let font_sz = 12.0 * scale;
+                    let line_h = 16.0 * scale;
+                    out.push(TextEntry {
+                        text: "Nothing here yet".to_string(),
+                        x: cx,
+                        y: base_y + (item_h - line_h) * 0.5,
+                        font_size: font_sz,
+                        line_height: line_h,
+                        max_width: w - cx - 8.0 * scale,
+                        color: crate::theme::RuntimeTheme::text_u8(theme.text_dim, 160),
+                        weight: 400,
+                        bounds: None,
+                        center: true,
+                    });
+                }
+                EntryKind::ProjectInstrument { .. } | EntryKind::LayerNode { .. } | EntryKind::Master => {
                     let indent = entry.depth as f32 * INDENT_PX * scale;
-                    let text_offset = indent + 28.0 * scale;
+                    let dot_offset = if matches!(entry.kind, EntryKind::Master) { 12.0 } else { 28.0 };
+                    let text_offset = indent + dot_offset * scale;
                     let text_x = cx + text_offset;
                     let font_sz = 12.0 * scale;
                     let line_h = 16.0 * scale;
                     let color = match &entry.kind {
+                        EntryKind::Master => crate::theme::RuntimeTheme::text_u8(theme.text_primary, 255),
                         EntryKind::LayerNode { kind, .. } => match kind {
                             LayerNodeKind::Instrument => crate::theme::RuntimeTheme::text_u8(theme.text_primary, 230),
                             LayerNodeKind::MidiClip => crate::theme::RuntimeTheme::text_u8(theme.text_secondary, 230),
@@ -1650,6 +1860,16 @@ impl SampleBrowser {
                         bounds: None,
                         center: false,
                     });
+                    // Solo/Mute button labels
+                    if let EntryKind::LayerNode { kind, is_soloed, is_muted, .. } = &entry.kind {
+                        if matches!(kind, LayerNodeKind::Waveform | LayerNodeKind::Instrument | LayerNodeKind::Group) {
+                            let row_right = cx + self.content_width(scale);
+                            let row_cy = base_y + item_h * 0.5;
+                            let layout = super::solo_mute::layout_right_aligned(row_right, row_cy, scale);
+                            let visible = *is_soloed || *is_muted || self.hovered_entry == Some(i);
+                            out.extend(super::solo_mute::build_text_entries(&layout, *is_soloed, *is_muted, visible, theme, scale));
+                        }
+                    }
                 }
                 EntryKind::Dir | EntryKind::File => {
                     let indent = entry.depth as f32 * INDENT_PX * scale + 8.0 * scale;
@@ -1677,6 +1897,44 @@ impl SampleBrowser {
                     });
                 }
             }
+        }
+
+        // --- Preview strip text ---
+        if let Some(ref audio) = self.preview_audio {
+            let [strip_x, strip_y, strip_w, strip_h] = self.preview_strip_rect(_screen_h, scale);
+            let strip_bounds = Some([strip_x, strip_y, strip_x + strip_w, strip_y + strip_h]);
+
+            let [btn_x, btn_y, btn_size, _] = self.preview_toggle_rect(_screen_h, scale);
+            let font_sz = 10.0 * scale;
+            let line_h = 12.0 * scale;
+            // Headphones icon "🎧" on the toggle button — centered
+            out.push(TextEntry {
+                text: "🎧".to_string(),
+                x: btn_x,
+                y: btn_y + (btn_size - line_h) * 0.5,
+                font_size: font_sz,
+                line_height: line_h,
+                max_width: btn_size,
+                color: [255, 255, 255, if self.auto_preview { 255 } else { 140 }],
+                weight: 400,
+                bounds: strip_bounds,
+                center: true,
+            });
+
+            // Filename label (inside waveform, top-left with padding — like canvas)
+            let [wf_x, wf_y, wf_w, _] = self.preview_waveform_rect(_screen_h, scale);
+            out.push(TextEntry {
+                text: audio.filename.clone(),
+                x: wf_x + 6.0 * scale,
+                y: wf_y + 4.0 * scale,
+                font_size: 9.0 * scale,
+                line_height: 11.0 * scale,
+                max_width: wf_w - 12.0 * scale,
+                color: crate::theme::RuntimeTheme::text_u8(theme.text_primary, 200),
+                weight: 400,
+                bounds: strip_bounds,
+                center: false,
+            });
         }
 
         out
@@ -1739,29 +1997,6 @@ fn walk_dir(
     }
 }
 
-/// Fuzzy match: returns true if all characters of `needle` appear in `haystack`
-/// in order (case-insensitive). Empty needle always matches.
-fn fuzzy_match(haystack: &str, needle: &str) -> bool {
-    if needle.is_empty() {
-        return true;
-    }
-    let mut h_chars = haystack.chars();
-    'outer: for nc in needle.chars() {
-        let nc_lo = nc.to_lowercase().next().unwrap_or(nc);
-        loop {
-            match h_chars.next() {
-                Some(hc) => {
-                    if hc.to_lowercase().next().unwrap_or(hc) == nc_lo {
-                        continue 'outer;
-                    }
-                }
-                None => return false,
-            }
-        }
-    }
-    true
-}
-
 /// Fuzzy match for pre-lowercased strings (no per-char lowercase conversion).
 fn fuzzy_match_lowered(haystack_lower: &str, needle_lower: &str) -> bool {
     if needle_lower.is_empty() {
@@ -1783,5 +2018,29 @@ fn fuzzy_match_lowered(haystack_lower: &str, needle_lower: &str) -> bool {
     true
 }
 
+
+/// Recursively walk a directory tree and collect file entries for the search index.
+fn index_walk_dir(index: &mut Vec<CachedFile>, dir: &std::path::Path) {
+    let Ok(read) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for item in read.flatten() {
+        let path = item.path();
+        let fname = item.file_name().to_string_lossy().to_string();
+        if fname.starts_with('.') {
+            continue;
+        }
+        if path.is_dir() {
+            index_walk_dir(index, &path);
+        } else {
+            let name_lower = fname.to_lowercase();
+            index.push(CachedFile {
+                path,
+                name: fname,
+                name_lower,
+            });
+        }
+    }
+}
 
 use crate::gpu::TextEntry;

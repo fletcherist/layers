@@ -151,6 +151,9 @@ impl App {
                                     g.volume = new_vol;
                                 }
                             }
+                            Some(ui::right_window::RightWindowTarget::Master) => {
+                                self.master.volume = new_vol;
+                            }
                             None => {}
                         }
                     } else if is_pan_drag {
@@ -187,6 +190,9 @@ impl App {
                                 if let Some(g) = self.groups.get_mut(&gid) {
                                     g.pan = new_pan;
                                 }
+                            }
+                            Some(ui::right_window::RightWindowTarget::Master) => {
+                                self.master.pan = new_pan;
                             }
                             None => {}
                         }
@@ -230,7 +236,7 @@ impl App {
             }
         }
 
-        // Right window "Add Effect" / "Export WAV" button hover
+        // Right window "Add Effect" / "Export" button hover
         if let Some(rw) = &self.right_window {
             let (sw, sh, scale) = self.screen_info();
             let (add_hovered, export_hovered) = {
@@ -238,12 +244,13 @@ impl App {
                     ui::right_window::RightWindowTarget::Waveform(wf_id) => self.waveforms.get(&wf_id).and_then(|w| w.effect_chain_id),
                     ui::right_window::RightWindowTarget::Instrument(inst_id) => self.instruments.get(&inst_id).and_then(|i| i.effect_chain_id),
                     ui::right_window::RightWindowTarget::Group(group_id) => self.groups.get(&group_id).and_then(|g| g.effect_chain_id),
+                    ui::right_window::RightWindowTarget::Master => self.master.effect_chain_id,
                 };
                 let slot_count = chain_id
                     .and_then(|cid| self.effect_chains.get(&cid))
                     .map_or(0, |c| c.slots.len());
                 let add_h = rw.hit_test_add_effect_button(self.mouse_pos, slot_count, sw, sh, scale);
-                let export_h = if rw.is_group() {
+                let export_h = if rw.is_group() || rw.is_master() {
                     rw.hit_test_export_button(self.mouse_pos, sw, sh, scale)
                 } else {
                     false
@@ -424,6 +431,20 @@ impl App {
             let (_, _, scale) = self.screen_info();
             self.sample_browser
                 .set_width_from_screen(self.mouse_pos[0], scale);
+            self.request_redraw();
+            return;
+        }
+
+        // Promote pending browser drag to real drag after threshold
+        if let DragState::PendingBrowserDrag { ref path, ref filename, start_mouse } = self.drag {
+            let dx = self.mouse_pos[0] - start_mouse[0];
+            let dy = self.mouse_pos[1] - start_mouse[1];
+            if dx * dx + dy * dy > 9.0 { // 3px threshold
+                self.drag = DragState::DraggingFromBrowser {
+                    path: path.clone(),
+                    filename: filename.clone(),
+                };
+            }
             self.request_redraw();
             return;
         }
@@ -794,6 +815,7 @@ impl App {
 
         match action {
             Action::Pan(sm, sc) => {
+                self.following_user = None;
                 self.camera.position[0] =
                     sc[0] - (self.mouse_pos[0] - sm[0]) / self.camera.zoom;
                 self.camera.position[1] =

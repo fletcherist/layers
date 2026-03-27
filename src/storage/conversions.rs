@@ -263,6 +263,7 @@ pub fn groups_from_stored(
                 },
                 volume: if s.volume == 0.0 { 1.0 } else { s.volume },
                 pan: if s.pan == 0.0 { 0.5 } else { s.pan },
+                disabled: false,
             };
             (id, g)
         })

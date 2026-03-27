@@ -293,6 +293,8 @@ pub(crate) struct Gpu {
     pub(crate) swash_cache: SwashCache,
     pub(crate) text_atlas: TextAtlas,
     pub(crate) text_renderer: TextRenderer,
+    pub(crate) overlay_text_atlas: TextAtlas,
+    pub(crate) overlay_text_renderer: TextRenderer,
     pub(crate) viewport: Viewport,
     pub(crate) scale_factor: f32,
 
@@ -644,6 +646,13 @@ impl Gpu {
             wgpu::MultisampleState::default(),
             None,
         );
+        let mut overlay_text_atlas = TextAtlas::new(&device, &queue, &cache, surface_format);
+        let overlay_text_renderer = TextRenderer::new(
+            &mut overlay_text_atlas,
+            &device,
+            wgpu::MultisampleState::default(),
+            None,
+        );
         let viewport = Viewport::new(&device, &cache);
 
         Self {
@@ -666,6 +675,8 @@ impl Gpu {
             swash_cache,
             text_atlas,
             text_renderer,
+            overlay_text_atlas,
+            overlay_text_renderer,
             viewport,
             scale_factor,
             browser_text_buffers: Vec::new(),
@@ -694,6 +705,7 @@ impl Gpu {
         camera: &Camera,
         world_instances: &[InstanceRaw],
         waveform_vertices: &[WaveformVertex],
+        preview_waveform_vertices: &[WaveformVertex],
         command_palette: Option<&CommandPalette>,
         context_menu: Option<&ContextMenu>,
         sample_browser: Option<&browser::SampleBrowser>,
@@ -762,12 +774,23 @@ impl Gpu {
         );
 
         let wf_vert_count = waveform_vertices.len().min(MAX_WAVEFORM_VERTICES);
-        if wf_vert_count > 0 {
-            self.queue.write_buffer(
-                &self.waveform_vertex_buffer,
-                0,
-                bytemuck::cast_slice(&waveform_vertices[..wf_vert_count]),
-            );
+        let preview_wf_count = preview_waveform_vertices.len().min(MAX_WAVEFORM_VERTICES.saturating_sub(wf_vert_count));
+        if wf_vert_count > 0 || preview_wf_count > 0 {
+            if wf_vert_count > 0 {
+                self.queue.write_buffer(
+                    &self.waveform_vertex_buffer,
+                    0,
+                    bytemuck::cast_slice(&waveform_vertices[..wf_vert_count]),
+                );
+            }
+            if preview_wf_count > 0 {
+                let offset = (wf_vert_count * std::mem::size_of::<WaveformVertex>()) as u64;
+                self.queue.write_buffer(
+                    &self.waveform_vertex_buffer,
+                    offset,
+                    bytemuck::cast_slice(&preview_waveform_vertices[..preview_wf_count]),
+                );
+            }
         }
 
         // Build overlay instances: browser panel + drag ghost + command palette
@@ -821,9 +844,7 @@ impl Gpu {
             overlay_instances.extend(p.build_instances(settings, w, h, self.scale_factor));
         }
 
-        if let Some(cm) = context_menu {
-            overlay_instances.extend(cm.build_instances(settings, w, h, self.scale_factor));
-        }
+        // Context menu is rendered in a separate top layer (after text) — see top_instances below
 
         if let Some(sw) = settings_window {
             overlay_instances.extend(sw.build_instances(settings, w, h, self.scale_factor));
@@ -865,6 +886,12 @@ impl Gpu {
                 });
             }
             }
+        }
+
+        // Top overlay: context menu renders above all other overlays and text
+        let mut top_instances: Vec<InstanceRaw> = Vec::new();
+        if let Some(cm) = context_menu {
+            top_instances.extend(cm.build_instances(settings, w, h, self.scale_factor));
         }
 
         // --- prepare text ---
@@ -1020,7 +1047,7 @@ impl Gpu {
             }
         }
 
-        // Transport panel text (rendered before menus so menus appear on top)
+        // Transport panel text and icons
         for te in TransportPanel::get_text_entries(&settings.theme, w, h, scale, playback_position, bpm, editing_bpm) {
             let buf = shape_text_entry(&mut self.font_system, &te);
             text_buffers.push(buf);
@@ -1031,7 +1058,6 @@ impl Gpu {
                 full_bounds,
             ));
         }
-        // Transport panel icon glyphs
         for ie in TransportPanel::get_icon_entries(
             settings, w, h, scale,
             is_playing, is_recording,
@@ -1060,18 +1086,7 @@ impl Gpu {
             }
         }
 
-        if let Some(cm) = context_menu {
-            for te in cm.get_text_entries(&settings.theme, w, h, scale) {
-                let buf = shape_text_entry(&mut self.font_system, &te);
-                text_buffers.push(buf);
-                text_meta.push((
-                    te.x,
-                    te.y,
-                    TextColor::rgba(te.color[0], te.color[1], te.color[2], te.color[3]),
-                    full_bounds,
-                ));
-            }
-        }
+        // Context menu text is rendered in the top overlay layer — see top_text_buffers below
 
         // Plugin editor text
         if let Some(pe) = plugin_editor {
@@ -1089,14 +1104,31 @@ impl Gpu {
 
         // Export window text
         if let Some(ew) = export_window {
+            let popup_rect = ew.open_dropdown_popup_rect(w, h, scale);
             for te in ew.get_text_entries(settings, w, h, scale) {
+                let is_popup_entry = te.bounds.is_some();
+                let mut bounds = full_bounds;
+                if !is_popup_entry {
+                    if let Some((pp, ps)) = popup_rect {
+                        let overlaps_v = te.y + te.line_height > pp[1]
+                            && te.y < pp[1] + ps[1];
+                        if overlaps_v {
+                            if te.x >= pp[0] && te.x < pp[0] + ps[0] {
+                                continue;
+                            }
+                            if te.x < pp[0] && te.x + te.max_width > pp[0] {
+                                bounds.right = bounds.right.min(pp[0] as i32);
+                            }
+                        }
+                    }
+                }
                 let buf = shape_text_entry(&mut self.font_system, &te);
                 text_buffers.push(buf);
                 text_meta.push((
                     te.x,
                     te.y,
                     TextColor::rgba(te.color[0], te.color[1], te.color[2], te.color[3]),
-                    full_bounds,
+                    bounds,
                 ));
             }
         }
@@ -1266,7 +1298,8 @@ impl Gpu {
         let mut old_wf_cache = std::mem::take(&mut self.cached_wf_label_bufs);
         let mut new_wf_cache: Vec<(TextLabelCacheKey, TextBuffer)> = Vec::new();
         let mut wf_label_meta: Vec<(f32, f32, TextColor, TextBounds)> = Vec::new();
-        for (wf_idx, wf) in waveforms.iter() {
+        if settings_window.is_none() && command_palette.is_none() && export_window.is_none()
+        { for (wf_idx, wf) in waveforms.iter() {
             if hidden_take_children.contains(wf_idx) { continue; }
             let wf_right = wf.position[0] + wf.size[0];
             let wf_bottom = wf.position[1] + wf.size[1];
@@ -1371,6 +1404,7 @@ impl Gpu {
                 TextColor::rgba(255, 255, 255, alpha),
                 wf_label_bounds,
             ));
+        }
         }
         self.cached_wf_label_bufs = new_wf_cache;
 
@@ -1537,6 +1571,17 @@ impl Gpu {
                 &self.instance_buffer,
                 offset,
                 bytemuck::cast_slice(&overlay_instances[..overlay_count]),
+            );
+        }
+
+        // Write top overlay instances (context menu) after regular overlays
+        let top_count = top_instances.len().min(MAX_INSTANCES - world_count - overlay_count);
+        if top_count > 0 {
+            let top_offset = ((world_count + overlay_count) * std::mem::size_of::<InstanceRaw>()) as u64;
+            self.queue.write_buffer(
+                &self.instance_buffer,
+                top_offset,
+                bytemuck::cast_slice(&top_instances[..top_count]),
             );
         }
 
@@ -2075,6 +2120,11 @@ impl Gpu {
             let panel_w = br.panel_width(scale);
             let header_h = browser::HEADER_HEIGHT * scale;
             let content_top_h = br.content_top(scale);
+            let content_bottom_h = if br.preview_audio.is_some() {
+                h - browser::PREVIEW_STRIP_HEIGHT * scale
+            } else {
+                h
+            };
             // Overlay rects that clip browser text (settings window, command palette)
             let sw_rect = settings_window.map(|sw| sw.win_rect(w, h, scale));
             let cp_rect = command_palette.map(|cp| cp.palette_rect(w, h, scale));
@@ -2096,7 +2146,7 @@ impl Gpu {
                 } else {
                     te.y - br.scroll_offset
                 };
-                if !is_header && (actual_y + te.line_height < content_top_h || actual_y > h) {
+                if !is_header && (actual_y + te.line_height < content_top_h || actual_y > content_bottom_h) {
                     continue;
                 }
                 let clip_top = if actual_y < content_top_h {
@@ -2142,7 +2192,11 @@ impl Gpu {
                         left: 0,
                         top: clip_top as i32,
                         right: clip_right,
-                        bottom: (actual_y + te.line_height) as i32,
+                        bottom: if is_header {
+                            (actual_y + te.line_height) as i32
+                        } else {
+                            ((actual_y + te.line_height) as i32).min(content_bottom_h as i32)
+                        },
                     },
                     custom_glyphs: &[],
                 });
@@ -2241,6 +2295,48 @@ impl Gpu {
             )
             .unwrap();
 
+        // Prepare top overlay text (context menu) — rendered after top overlay geometry
+        let mut top_text_buffers: Vec<TextBuffer> = Vec::new();
+        let mut top_text_meta: Vec<(f32, f32, TextColor, TextBounds)> = Vec::new();
+        if let Some(cm) = context_menu {
+            for te in cm.get_text_entries(&settings.theme, w, h, scale) {
+                let buf = shape_text_entry(&mut self.font_system, &te);
+                top_text_buffers.push(buf);
+                top_text_meta.push((
+                    te.x,
+                    te.y,
+                    TextColor::rgba(te.color[0], te.color[1], te.color[2], te.color[3]),
+                    full_bounds,
+                ));
+            }
+        }
+        let top_text_areas: Vec<TextArea> = top_text_buffers
+            .iter()
+            .zip(top_text_meta.iter())
+            .map(|(buffer, &(left, top, color, bounds))| TextArea {
+                buffer,
+                left,
+                top,
+                scale: 1.0,
+                bounds,
+                default_color: color,
+                custom_glyphs: &[],
+            })
+            .collect();
+        if !top_text_areas.is_empty() {
+            self.overlay_text_renderer
+                .prepare(
+                    &self.device,
+                    &self.queue,
+                    &mut self.font_system,
+                    &mut self.overlay_text_atlas,
+                    &self.viewport,
+                    top_text_areas,
+                    &mut self.swash_cache,
+                )
+                .unwrap();
+        }
+
         // --- render pass ---
         let output = match self.surface.get_current_texture() {
             Ok(t) => t,
@@ -2312,9 +2408,37 @@ impl Gpu {
                 );
             }
 
+            // Preview waveform (screen-space, drawn on top of overlay/browser panel)
+            if preview_wf_count > 0 {
+                pass.set_pipeline(&self.waveform_pipeline);
+                pass.set_bind_group(0, &self.screen_camera_bind_group, &[]);
+                pass.set_vertex_buffer(0, self.waveform_vertex_buffer.slice(..));
+                pass.draw(wf_vert_count as u32..(wf_vert_count + preview_wf_count) as u32, 0..1);
+            }
+
             self.text_renderer
                 .render(&self.text_atlas, &self.viewport, &mut pass)
                 .unwrap();
+
+            // Top overlay: context menu geometry drawn after all text
+            if top_count > 0 {
+                pass.set_pipeline(&self.pipeline);
+                pass.set_bind_group(0, &self.screen_camera_bind_group, &[]);
+                pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
+                pass.set_vertex_buffer(1, self.instance_buffer.slice(..));
+                pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
+                pass.draw_indexed(
+                    0..QUAD_INDICES.len() as u32,
+                    0,
+                    (world_count + overlay_count) as u32..(world_count + overlay_count + top_count) as u32,
+                );
+            }
+            // Context menu text drawn on top of context menu geometry
+            if !top_text_buffers.is_empty() {
+                self.overlay_text_renderer
+                    .render(&self.overlay_text_atlas, &self.viewport, &mut pass)
+                    .unwrap();
+            }
         }
 
         self.queue.submit(std::iter::once(encoder.finish()));

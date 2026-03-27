@@ -17,6 +17,7 @@ mod icons;
 mod history;
 mod instruments;
 mod layers;
+mod master;
 mod midi;
 mod midi_keyboard;
 mod network;
@@ -90,7 +91,7 @@ use settings::Settings;
 #[cfg(feature = "native")]
 use ui::settings_window::{SettingsWindow, CATEGORIES};
 #[cfg(feature = "native")]
-use storage::{default_base_path, Storage};
+use storage::{default_base_path, ProjectStore, Storage};
 use winit::{
     event_loop::EventLoop,
     keyboard::{KeyCode, ModifiersState},
@@ -215,6 +216,7 @@ enum PendingAudioLoad {
         wf_id: EntityId,
         wf_data: WaveformView,
         ac_data: AudioClipData,
+        source_file: (Vec<u8>, String),
     },
     /// Remote storage save finished — safe to push op to network now.
     /// Carries the decoded audio data so it can be applied at this point.
@@ -222,9 +224,18 @@ enum PendingAudioLoad {
         wf_id: EntityId,
         wf_data: WaveformView,
         ac_data: AudioClipData,
+        source_file: (Vec<u8>, String),
     },
     /// Load failed — remove placeholder.
     Failed { wf_id: EntityId },
+    /// Browser preview sample loaded.
+    PreviewLoaded {
+        path: std::path::PathBuf,
+        audio: std::sync::Arc<ui::waveform::AudioData>,
+        left_samples: std::sync::Arc<Vec<f32>>,
+        right_samples: std::sync::Arc<Vec<f32>>,
+        sample_rate: u32,
+    },
 }
 
 struct App {
@@ -237,6 +248,8 @@ struct App {
     objects: IndexMap<EntityId, CanvasObject>,
     waveforms: IndexMap<EntityId, WaveformView>,
     audio_clips: IndexMap<EntityId, AudioClipData>,
+    /// Original encoded audio file bytes + extension per waveform (for saving).
+    source_audio_files: IndexMap<EntityId, (Vec<u8>, String)>,
     audio_engine: Option<NativeAudioEngine>,
     recorder: Option<NativeAudioRecorder>,
     recording_waveform_id: Option<EntityId>,
@@ -284,6 +297,7 @@ struct App {
     loop_hover: LoopHover,
     select_area: Option<SelectArea>,
     component_def_hover: ComponentDefHover,
+    pub(crate) master: master::Master,
     groups: IndexMap<EntityId, group::Group>,
     group_hover: GroupHover,
     text_notes: IndexMap<EntityId, text_note::TextNote>,
@@ -340,11 +354,13 @@ struct App {
     ws_runtime: Option<NativeTokioRuntime>,
     connect_url: Option<String>,
     connect_project_id: Option<String>,
+    connect_password: Option<String>,
     pending_welcome: Option<NativeWelcomeReceiver>,
     reconnect_attempt: u32,
     last_reconnect_time: Option<TimeInstant>,
     cached_instances: Vec<InstanceRaw>,
     cached_wf_verts: Vec<WaveformVertex>,
+    cached_preview_wf_verts: Vec<WaveformVertex>,
     render_generation: u64,
     last_rendered_generation: u64,
     last_rendered_camera_pos: [f32; 2],
@@ -357,6 +373,41 @@ struct App {
     pub(crate) computer_keyboard_velocity: u8,
     pub(crate) keyboard_instrument_id: Option<EntityId>,
     pub(crate) midi_keyboard_held: HashMap<KeyCode, (EntityId, u8)>,
+    /// Transient solo state — not persisted, not in undo history.
+    pub(crate) solo_ids: std::collections::HashSet<EntityId>,
+    /// Follow mode: when set, camera and playback sync to this remote user.
+    following_user: Option<user::UserId>,
+}
+
+/// Whether an entity should be audible, considering solo/mute and group membership.
+/// Shared logic used by both audio routing (`App::should_play`) and rendering (`is_dimmed_by_solo_mute`).
+/// Mute is now handled via entity `disabled` fields, so this only checks solo logic.
+pub(crate) fn is_entity_audible(
+    id: EntityId,
+    solo_ids: &std::collections::HashSet<EntityId>,
+    groups: &IndexMap<EntityId, crate::group::Group>,
+) -> bool {
+    // Check group disabled — members of a disabled group should not play
+    for group in groups.values() {
+        if group.member_ids.contains(&id) && group.disabled {
+            return false;
+        }
+    }
+    // If no solos active, play everything
+    if solo_ids.is_empty() {
+        return true;
+    }
+    // Check direct solo
+    if solo_ids.contains(&id) {
+        return true;
+    }
+    // Check group solo — members of a soloed group should play
+    for group in groups.values() {
+        if group.member_ids.contains(&id) && solo_ids.contains(&group.id) {
+            return true;
+        }
+    }
+    false
 }
 
 impl App {
@@ -372,6 +423,7 @@ impl App {
             objects: IndexMap::new(),
             waveforms: IndexMap::new(),
             audio_clips: IndexMap::new(),
+            source_audio_files: IndexMap::new(),
             audio_engine: None,
             recorder: None,
             recording_waveform_id: None,
@@ -418,6 +470,7 @@ impl App {
             loop_hover: LoopHover::None,
             select_area: None,
             component_def_hover: ComponentDefHover::None,
+            master: master::Master::default(),
             groups: IndexMap::new(),
             group_hover: GroupHover::None,
             text_notes: IndexMap::new(),
@@ -476,11 +529,13 @@ impl App {
             ws_runtime: None,
             connect_url: None,
             connect_project_id: None,
+            connect_password: None,
             pending_welcome: None,
             reconnect_attempt: 0,
             last_reconnect_time: None,
             cached_instances: Vec::new(),
             cached_wf_verts: Vec::new(),
+            cached_preview_wf_verts: Vec::new(),
             render_generation: 1,
             last_rendered_generation: 0,
             last_rendered_camera_pos: [f32::NAN, f32::NAN],
@@ -492,6 +547,8 @@ impl App {
             computer_keyboard_velocity: midi_keyboard::DEFAULT_VELOCITY,
             keyboard_instrument_id: None,
             midi_keyboard_held: HashMap::new(),
+            solo_ids: std::collections::HashSet::new(),
+            following_user: None,
         }
     }
 
@@ -607,6 +664,7 @@ impl App {
             &self.midi_clips,
             &self.waveforms,
             &self.groups,
+            &self.solo_ids,
         );
         self.sample_browser.layer_rows = rows;
         if self.sample_browser.active_category == ui::browser::BrowserCategory::Layers {
@@ -773,6 +831,7 @@ impl App {
             stored_components,
             stored_component_instances,
             audio_clips,
+            source_audio_files,
             loaded_bpm,
             stored_midi_clips,
             stored_layer_tree,
@@ -842,6 +901,7 @@ impl App {
 
                 // Restore audio data and peaks from DB
                 let mut audio_clips: IndexMap<EntityId, AudioClipData> = IndexMap::new();
+                let mut source_audio_files: IndexMap<EntityId, (Vec<u8>, String)> = IndexMap::new();
                 if let Some(s) = &storage {
                     let wf_ids: Vec<EntityId> = waveforms.keys().cloned().collect();
                     for wf_id in &wf_ids {
@@ -853,17 +913,24 @@ impl App {
                         let mut left_peaks = wf.audio.left_peaks.clone();
                         let mut right_peaks = wf.audio.right_peaks.clone();
 
-                        if let Some(audio) = s.load_audio(&id_str) {
-                            left_samples = Arc::new(storage::u8_slice_to_f32(&audio.left_samples));
-                            right_samples =
-                                Arc::new(storage::u8_slice_to_f32(&audio.right_samples));
-                            let mono = storage::u8_slice_to_f32(&audio.mono_samples);
-                            sample_rate = audio.sample_rate;
-                            audio_clips.insert(*wf_id, AudioClipData {
-                                samples: Arc::new(mono),
-                                sample_rate: audio.sample_rate,
-                                duration_secs: audio.duration_secs,
-                            });
+                        if let Some((file_bytes, ext)) = s.load_audio(&id_str) {
+                            if let Some(loaded) = crate::audio::load_audio_from_bytes(&file_bytes, &ext) {
+                                left_samples = loaded.left_samples;
+                                right_samples = loaded.right_samples;
+                                sample_rate = loaded.sample_rate;
+                                audio_clips.insert(*wf_id, AudioClipData {
+                                    samples: loaded.samples,
+                                    sample_rate: loaded.sample_rate,
+                                    duration_secs: loaded.duration_secs,
+                                });
+                            } else {
+                                audio_clips.insert(*wf_id, AudioClipData {
+                                    samples: Arc::new(Vec::new()),
+                                    sample_rate: 48000,
+                                    duration_secs: 0.0,
+                                });
+                            }
+                            source_audio_files.insert(*wf_id, (file_bytes, ext));
                         } else {
                             audio_clips.insert(*wf_id, AudioClipData {
                                 samples: Arc::new(Vec::new()),
@@ -871,13 +938,11 @@ impl App {
                                 duration_secs: 0.0,
                             });
                         }
-                        if let Some(peaks) = s.load_peaks(&id_str) {
-                            let lp = storage::u8_slice_to_f32(&peaks.left_peaks);
-                            let rp = storage::u8_slice_to_f32(&peaks.right_peaks);
+                        if let Some((block_size, lp, rp)) = s.load_peaks(&id_str) {
                             left_peaks =
-                                Arc::new(WaveformPeaks::from_raw(peaks.block_size as usize, lp));
+                                Arc::new(WaveformPeaks::from_raw(block_size as usize, lp));
                             right_peaks =
-                                Arc::new(WaveformPeaks::from_raw(peaks.block_size as usize, rp));
+                                Arc::new(WaveformPeaks::from_raw(block_size as usize, rp));
                         }
                         let filename = wf.audio.filename.clone();
                         waveforms.get_mut(wf_id).unwrap().audio = Arc::new(AudioData {
@@ -904,6 +969,7 @@ impl App {
                     storage::components_from_stored(state.components),
                     storage::component_instances_from_stored(state.component_instances),
                     audio_clips,
+                    source_audio_files,
                     if state.bpm > 0.0 { state.bpm } else { DEFAULT_BPM },
                     storage::midi_clips_from_stored(state.midi_clips),
                     state.layer_tree,
@@ -925,6 +991,7 @@ impl App {
                     Vec::new(),  // stored_components
                     Vec::new(),  // stored_component_instances
                     IndexMap::new(),  // audio_clips
+                    IndexMap::new(),  // source_audio_files
                     DEFAULT_BPM,
                     Vec::new(),  // stored_midi_clips
                     Vec::new(),  // stored_layer_tree
@@ -1083,6 +1150,7 @@ impl App {
             objects,
             waveforms,
             audio_clips,
+            source_audio_files,
             audio_engine,
             recorder,
             recording_waveform_id: None,
@@ -1129,6 +1197,7 @@ impl App {
             loop_hover: LoopHover::None,
             select_area: None,
             component_def_hover: ComponentDefHover::None,
+            master: master::Master::default(),
             groups: IndexMap::new(),
             group_hover: GroupHover::None,
             text_notes: restored_text_notes,
@@ -1187,11 +1256,13 @@ impl App {
             ws_runtime: None,
             connect_url: None,
             connect_project_id: None,
+            connect_password: None,
             pending_welcome: None,
             reconnect_attempt: 0,
             last_reconnect_time: None,
             cached_instances: Vec::with_capacity(2048),
             cached_wf_verts: Vec::with_capacity(32768),
+            cached_preview_wf_verts: Vec::new(),
             render_generation: 1,
             last_rendered_generation: 0,
             last_rendered_camera_pos: [f32::NAN, f32::NAN],
@@ -1203,6 +1274,8 @@ impl App {
             computer_keyboard_velocity: midi_keyboard::DEFAULT_VELOCITY,
             keyboard_instrument_id: None,
             midi_keyboard_held: HashMap::new(),
+            solo_ids: std::collections::HashSet::new(),
+            following_user: None,
         }
     }
 
@@ -1231,13 +1304,64 @@ impl App {
                     user_id: self.local_user.id,
                     position: world_pos,
                 });
+                self.network.send_ephemeral(crate::user::EphemeralMessage::ViewportUpdate {
+                    user_id: self.local_user.id,
+                    position: self.camera.position,
+                    zoom: self.camera.zoom,
+                });
                 self.last_cursor_send = now;
             }
         }
     }
 
+    /// Broadcast playback state to remote users. Call after any local playback change.
+    fn broadcast_playback_if_connected(&mut self) {
+        #[cfg(not(feature = "native"))]
+        return;
+        #[cfg(feature = "native")]
+        if self.network.is_connected() {
+            if let Some(engine) = &self.audio_engine {
+                self.network.send_ephemeral(crate::user::EphemeralMessage::PlaybackUpdate {
+                    user_id: self.local_user.id,
+                    is_playing: engine.is_playing(),
+                    position_seconds: engine.position_seconds(),
+                    timestamp_ms: std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_millis() as u64,
+                });
+            }
+        }
+    }
+
+    /// Hit-test avatar circles in the top-right corner (screen-space).
+    /// Returns the UserId of the clicked avatar, if any.
+    fn hit_test_avatar_circles(&self) -> Option<user::UserId> {
+        let r = 14.0_f32;
+        let margin = 12.0_f32;
+        let gap = 6.0_f32;
+        let (sw, _sh, _scale) = self.screen_info();
+        let mut x = sw - margin - r;
+        let y = margin + r + 28.0; // offset for macOS titlebar
+
+        let mut sorted_users: Vec<_> = self.remote_users.iter()
+            .filter(|(_, s)| s.online)
+            .collect();
+        sorted_users.sort_by_key(|(uid, _)| **uid);
+
+        for (uid, _remote) in &sorted_users {
+            let dx = self.mouse_pos[0] - x;
+            let dy = self.mouse_pos[1] - y;
+            if dx * dx + dy * dy <= r * r {
+                return Some(**uid);
+            }
+            x -= r * 2.0 + gap;
+        }
+        None
+    }
+
     #[cfg(feature = "native")]
-    fn connect_to_server(&mut self, url: &str, project_id: &str) {
+    fn connect_to_server(&mut self, url: &str, project_id: &str, password: Option<&str>) {
         // Reuse existing runtime or create one
         if self.ws_runtime.is_none() {
             self.ws_runtime = Some(
@@ -1258,6 +1382,7 @@ impl App {
         let _handle = surreal_client::spawn_surreal_client(
             url.to_string(),
             project_id.to_string(),
+            password.map(|s| s.to_string()),
             remote_op_tx,
             remote_op_rx,
             remote_eph_tx,
@@ -1274,6 +1399,7 @@ impl App {
         self.network = mgr;
         self.connect_url = Some(url.to_string());
         self.connect_project_id = Some(project_id.to_string());
+        self.connect_password = password.map(|s| s.to_string());
         self.pending_welcome = Some(welcome_rx);
         log::info!("Connecting to SurrealDB at {}", url);
     }
@@ -1289,13 +1415,13 @@ impl App {
                 .build()
                 .expect("tokio rt for remote storage"),
         );
-        if let Some(rs) = storage::RemoteStorage::connect(url, rs_rt) {
+        if let Some(rs) = storage::RemoteStorage::connect(url, None, rs_rt) {
             rs.use_project(project_id);
             self.remote_storage = Some(std::sync::Arc::new(rs));
         }
 
         // Real-time op sync
-        self.connect_to_server(url, project_id);
+        self.connect_to_server(url, project_id, None);
 
         self.toast_manager.push(
             format!("Connecting to {SESSION_DB_HOST}/{project_id}…"),
@@ -1409,6 +1535,10 @@ impl App {
     }
 
     pub(crate) fn update_right_window(&mut self) {
+        // Don't clobber a deliberately-opened Master right window when nothing else is selected
+        if self.right_window.as_ref().map_or(false, |rw| rw.is_master()) && self.selected.is_empty() {
+            return;
+        }
         // Collect all selected waveform IDs
         let wf_ids: Vec<EntityId> = self.selected.iter().filter_map(|t| {
             if let HitTarget::Waveform(id) = t { Some(*id) } else { None }
@@ -1453,6 +1583,11 @@ impl App {
                     group_member_count: 0,
                     multi_target_ids: wf_ids,
                     drag_start_snapshots: Vec::new(),
+                    is_soloed: self.solo_ids.contains(&first_id),
+                    is_muted: wf.disabled,
+                    meter_rms: 0.0,
+                    meter_peak: 0.0,
+                    peak_hold_timer: 0.0,
                 });
                 return;
             }
@@ -1505,6 +1640,11 @@ impl App {
                     group_member_count: member_count,
                     multi_target_ids: Vec::new(),
                     drag_start_snapshots: Vec::new(),
+                    is_soloed: self.solo_ids.contains(&group_id),
+                    is_muted: g.disabled,
+                    meter_rms: 0.0,
+                    meter_peak: 0.0,
+                    peak_hold_timer: 0.0,
                 });
                 return;
             }
@@ -1542,6 +1682,11 @@ impl App {
                 group_member_count: 0,
                 multi_target_ids: vec![wf_id],
                 drag_start_snapshots: Vec::new(),
+                is_soloed: self.solo_ids.contains(&wf_id),
+                is_muted: wf.disabled,
+                meter_rms: 0.0,
+                meter_peak: 0.0,
+                peak_hold_timer: 0.0,
             });
         }
     }
@@ -1583,8 +1728,57 @@ impl App {
                 group_member_count: 0,
                 multi_target_ids: Vec::new(),
                 drag_start_snapshots: Vec::new(),
+                is_soloed: self.solo_ids.contains(&inst_id),
+                is_muted: inst.disabled,
+                meter_rms: 0.0,
+                meter_peak: 0.0,
+                peak_hold_timer: 0.0,
             });
         }
+    }
+
+    pub(crate) fn open_right_window_for_master(&mut self) {
+        let (vol_entry, vol_fader_focused, pan_knob_focused) =
+            if self.right_window.as_ref().map_or(false, |rw| rw.is_master()) {
+                let rw = self.right_window.take().unwrap();
+                (rw.vol_entry, rw.vol_fader_focused, rw.pan_knob_focused)
+            } else {
+                (ui::value_entry::ValueEntry::new(), false, false)
+            };
+        let member_count = self.waveforms.len() + self.instruments.len();
+        self.right_window = Some(ui::right_window::RightWindow {
+            target: ui::right_window::RightWindowTarget::Master,
+            volume: self.master.volume,
+            pan: self.master.pan,
+            warp_mode: ui::waveform::WarpMode::Off,
+            sample_bpm: 120.0,
+            pitch_semitones: 0.0,
+            is_reversed: false,
+            vol_dragging: false,
+            pan_dragging: false,
+            sample_bpm_dragging: false,
+            pitch_dragging: false,
+            drag_start_y: 0.0,
+            drag_start_value: 0.0,
+            vol_entry,
+            sample_bpm_entry: ui::value_entry::ValueEntry::new(),
+            pitch_entry: ui::value_entry::ValueEntry::new(),
+            vol_fader_focused,
+            pan_knob_focused,
+            pitch_focused: false,
+            sample_bpm_focused: false,
+            add_effect_hovered: false,
+            export_button_hovered: false,
+            group_name: "Main".to_string(),
+            group_member_count: member_count,
+            multi_target_ids: Vec::new(),
+            drag_start_snapshots: Vec::new(),
+            is_soloed: false,
+            is_muted: false,
+            meter_rms: 0.0,
+            meter_peak: 0.0,
+            peak_hold_timer: 0.0,
+        });
     }
 
     /// Detach a waveform's effect chain — clone the shared chain into a new independent one.
@@ -1673,6 +1867,90 @@ impl App {
             g.effect_chain_id = Some(new_chain_id);
         }
         self.request_redraw();
+    }
+
+    /// Toggle solo on an entity. Click = exclusive, shift = additive.
+    pub(crate) fn toggle_solo(&mut self, id: EntityId, shift: bool) {
+        if shift {
+            // Additive: toggle this one
+            if !self.solo_ids.remove(&id) {
+                self.solo_ids.insert(id);
+            }
+        } else {
+            // Exclusive: if already the only solo, clear; otherwise set as only solo
+            if self.solo_ids.len() == 1 && self.solo_ids.contains(&id) {
+                self.solo_ids.clear();
+            } else {
+                self.solo_ids.clear();
+                self.solo_ids.insert(id);
+            }
+        }
+    }
+
+    /// Toggle mute (disabled) on a single entity, creating an undoable operation.
+    pub(crate) fn toggle_mute_disabled(&mut self, id: EntityId) {
+        if self.waveforms.contains_key(&id) {
+            let before = self.waveforms[&id].clone();
+            self.waveforms.get_mut(&id).unwrap().disabled = !before.disabled;
+            let after = self.waveforms[&id].clone();
+            self.push_op(crate::operations::Operation::UpdateWaveform { id, before, after });
+        } else if self.instruments.contains_key(&id) {
+            let inst = &self.instruments[&id];
+            let before = crate::instruments::InstrumentSnapshot {
+                name: inst.name.clone(), plugin_id: inst.plugin_id.clone(),
+                plugin_name: inst.plugin_name.clone(), plugin_path: inst.plugin_path.clone(),
+                volume: inst.volume, pan: inst.pan, effect_chain_id: inst.effect_chain_id, disabled: inst.disabled,
+            };
+            let new_disabled = !inst.disabled;
+            self.instruments.get_mut(&id).unwrap().disabled = new_disabled;
+            let after = crate::instruments::InstrumentSnapshot { disabled: new_disabled, ..before.clone() };
+            self.push_op(crate::operations::Operation::UpdateInstrument { id, before, after });
+        } else if let Some(before) = self.groups.get(&id).cloned() {
+            if let Some(g) = self.groups.get_mut(&id) {
+                g.disabled = !g.disabled;
+            }
+            if let Some(after) = self.groups.get(&id).cloned() {
+                self.push_op(crate::operations::Operation::UpdateGroup { id, before, after });
+            }
+        }
+    }
+
+    /// Whether an entity should produce audio, considering solo and group membership.
+    pub(crate) fn should_play(&self, id: EntityId) -> bool {
+        // Check disabled on the entity itself
+        if self.waveforms.get(&id).map_or(false, |wf| wf.disabled) {
+            return false;
+        }
+        if self.instruments.get(&id).map_or(false, |inst| inst.disabled) {
+            return false;
+        }
+        if self.groups.get(&id).map_or(false, |g| g.disabled) {
+            return false;
+        }
+        is_entity_audible(id, &self.solo_ids, &self.groups)
+    }
+
+    /// Whether a group bus should be active (not disabled, and passes solo check).
+    #[cfg(feature = "native")]
+    fn should_play_group(&self, gid: EntityId) -> bool {
+        if self.groups.get(&gid).map_or(false, |g| g.disabled) {
+            return false;
+        }
+        if self.solo_ids.is_empty() {
+            return true;
+        }
+        // Group is soloed, or any member is soloed
+        if self.solo_ids.contains(&gid) {
+            return true;
+        }
+        if let Some(group) = self.groups.get(&gid) {
+            for mid in &group.member_ids {
+                if self.solo_ids.contains(mid) {
+                    return true;
+                }
+            }
+        }
+        false
     }
 
     /// Build a member → group lookup map.
@@ -1770,6 +2048,22 @@ impl App {
         out
     }
 
+    fn collect_master_chain_plugins(
+        &self,
+    ) -> Vec<std::sync::Arc<std::sync::Mutex<Option<effects::PluginGuiHandle>>>> {
+        let mut out = Vec::new();
+        if let Some(chain_id) = self.master.effect_chain_id {
+            if let Some(chain) = self.effect_chains.get(&chain_id) {
+                for slot in &chain.slots {
+                    if !slot.bypass {
+                        out.push(slot.gui.clone());
+                    }
+                }
+            }
+        }
+        out
+    }
+
     #[cfg(feature = "native")]
     fn sync_audio_clips(&self) {
         if let Some(engine) = &self.audio_engine {
@@ -1781,6 +2075,9 @@ impl App {
             let mut group_id_to_bus_idx: std::collections::HashMap<EntityId, usize> = std::collections::HashMap::new();
             let mut group_buses: Vec<audio::GroupBus> = Vec::new();
             for (&gid, group) in &self.groups {
+                if !self.should_play_group(gid) {
+                    continue;
+                }
                 let plugins = self.collect_group_chain_plugins(gid);
                 let has_audio_member = group.member_ids.iter().any(|mid| {
                     self.waveforms.get(mid).map_or(false, |wf| !wf.disabled && self.audio_clips.contains_key(mid))
@@ -1794,12 +2091,13 @@ impl App {
                 let latency = Self::collect_chain_latency(&plugins);
                 let bus_idx = group_buses.len();
                 group_id_to_bus_idx.insert(gid, bus_idx);
-                group_buses.push(audio::GroupBus { plugins, latency_samples: latency, volume: group.volume, pan: group.pan });
+                group_buses.push(audio::GroupBus { entity_id: gid, plugins, latency_samples: latency, volume: group.volume, pan: group.pan });
             }
 
             let mut positions: Vec<[f32; 2]> = Vec::new();
             let mut sizes: Vec<[f32; 2]> = Vec::new();
             let mut clips: Vec<&AudioClipData> = Vec::new();
+            let mut entity_ids: Vec<EntityId> = Vec::new();
             let mut fade_ins: Vec<f32> = Vec::new();
             let mut fade_outs: Vec<f32> = Vec::new();
             let mut fade_in_curves: Vec<f32> = Vec::new();
@@ -1856,6 +2154,9 @@ impl App {
                 if wf.disabled {
                     continue;
                 }
+                if !self.should_play(wf_id) {
+                    continue;
+                }
                 let clip = match self.audio_clips.get(&wf_id) {
                     Some(c) => c,
                     None => continue,
@@ -1863,6 +2164,7 @@ impl App {
                 positions.push(wf.position);
                 sizes.push(wf.size);
                 clips.push(clip);
+                entity_ids.push(wf_id);
                 fade_ins.push(wf.fade_in_px);
                 fade_outs.push(wf.fade_out_px);
                 fade_in_curves.push(wf.fade_in_curve);
@@ -1918,6 +2220,7 @@ impl App {
                                 positions.push([wf.position[0] + offset[0], wf.position[1] + offset[1]]);
                                 sizes.push(wf.size);
                                 clips.push(clip);
+                                entity_ids.push(wf_id);
                                 fade_ins.push(wf.fade_in_px);
                                 fade_outs.push(wf.fade_out_px);
                                 fade_in_curves.push(wf.fade_in_curve);
@@ -1964,10 +2267,14 @@ impl App {
             }
 
             let owned_clips: Vec<AudioClipData> = clips.iter().map(|c| (*c).clone()).collect();
-            engine.update_clips(&positions, &sizes, &owned_clips, &fade_ins, &fade_outs, &fade_in_curves, &fade_out_curves, &volumes, &pans, &sample_offsets, &vol_autos, &pan_autos, &warp_modes, &sample_bpms, self.bpm, &pitch_semitones_vec, &chain_plugins_per_clip, &chain_latencies, &group_bus_indices, &chain_bus_indices);
+            engine.update_clips(&positions, &sizes, &owned_clips, &fade_ins, &fade_outs, &fade_in_curves, &fade_out_curves, &volumes, &pans, &sample_offsets, &vol_autos, &pan_autos, &warp_modes, &sample_bpms, self.bpm, &pitch_semitones_vec, &chain_plugins_per_clip, &chain_latencies, &group_bus_indices, &chain_bus_indices, &entity_ids);
             self.sync_instrument_regions(&group_id_to_bus_idx, &group_buses);
             engine.update_group_buses(group_buses);
             engine.update_chain_buses(chain_buses);
+
+            // Update master bus (Main Layer vol/pan/effects)
+            let master_plugins = self.collect_master_chain_plugins();
+            engine.update_master_bus(master_plugins, self.master.volume, self.master.pan);
 
             let regions: Vec<audio::AudioEffectRegion> = Vec::new();
             engine.update_effect_regions(regions);
@@ -2154,7 +2461,10 @@ impl App {
 
             // Build from lightweight instruments (new path)
             for (&inst_id, inst) in self.instruments.iter() {
-                if !inst.has_plugin() {
+                if !inst.has_plugin() || inst.disabled {
+                    continue;
+                }
+                if !self.should_play(inst_id) {
                     continue;
                 }
                 let mut midi_events = Vec::new();
@@ -2231,6 +2541,9 @@ impl App {
         let mut group_id_to_bus_idx = std::collections::HashMap::new();
         let mut group_buses = Vec::new();
         for (&gid, group) in &self.groups {
+            if !self.should_play_group(gid) {
+                continue;
+            }
             let plugins = self.collect_group_chain_plugins(gid);
             let has_audio_member = group.member_ids.iter().any(|mid| {
                 self.waveforms.get(mid).map_or(false, |wf| !wf.disabled && self.audio_clips.contains_key(mid))
@@ -2244,7 +2557,7 @@ impl App {
             let latency = Self::collect_chain_latency(&plugins);
             let bus_idx = group_buses.len();
             group_id_to_bus_idx.insert(gid, bus_idx);
-            group_buses.push(audio::GroupBus { plugins, latency_samples: latency, volume: group.volume, pan: group.pan });
+            group_buses.push(audio::GroupBus { entity_id: gid, plugins, latency_samples: latency, volume: group.volume, pan: group.pan });
         }
         (group_id_to_bus_idx, group_buses)
     }
@@ -2494,16 +2807,17 @@ impl App {
                             duration_secs: loaded.duration_secs,
                         };
                     }
+                    // Encode recorded PCM as WAV bytes for storage
+                    let wav_bytes = audio::encode_wav_bytes(
+                        &loaded.left_samples,
+                        &loaded.right_samples,
+                        loaded.sample_rate,
+                    );
                     if let Some(rs) = &self.remote_storage {
                         let wf_id_str = wf_id.to_string();
-                        // Encode recorded PCM as WAV bytes for remote storage
-                        let wav_bytes = audio::encode_wav_bytes(
-                            &loaded.left_samples,
-                            &loaded.right_samples,
-                            loaded.sample_rate,
-                        );
                         rs.save_audio(&wf_id_str, &wav_bytes, "wav");
                     }
+                    self.source_audio_files.insert(wf_id, (wav_bytes, "wav".to_string()));
                     // Finalize take group if recording into a selected waveform
                     if let Some(parent_id) = self.recording_take_parent_id.take() {
                         if let Some(parent) = self.waveforms.get(&parent_id) {
@@ -2722,6 +3036,8 @@ impl App {
     fn update_recording_waveform(&mut self) {}
     #[cfg(not(feature = "native"))]
     fn drop_audio_from_browser(&mut self, _path: &std::path::Path) {}
+    #[cfg(not(feature = "native"))]
+    fn load_browser_preview(&mut self, _path: &std::path::Path) {}
     #[cfg(not(feature = "native"))]
     fn poll_pending_audio_loads(&mut self) {}
     #[cfg(not(feature = "native"))]
@@ -3048,7 +3364,34 @@ impl App {
                     }
                     HitTarget::Group(i) => {
                         if let Some(g) = self.groups.get(&i).cloned() {
+                            let mut g = g;
+                            let old_member_ids = g.member_ids.clone();
+                            let mut new_member_ids = Vec::new();
+                            for mid in old_member_ids {
+                                let new_mid = self.clone_entity(mid).unwrap_or(mid);
+                                new_member_ids.push(new_mid);
+                            }
+                            g.member_ids = new_member_ids;
                             let nid = new_id();
+                            // Emit create ops for cloned members so undo removes them
+                            for mid in &g.member_ids {
+                                if let Some(w) = self.waveforms.get(mid) {
+                                    let ac = self.audio_clips.get(mid).cloned();
+                                    copy_ops.push(operations::Operation::CreateWaveform { id: *mid, data: w.clone(), audio_clip: ac.map(|c| (*mid, c)) });
+                                } else if let Some(mc) = self.midi_clips.get(mid) {
+                                    copy_ops.push(operations::Operation::CreateMidiClip { id: *mid, data: mc.clone() });
+                                } else if let Some(obj) = self.objects.get(mid) {
+                                    copy_ops.push(operations::Operation::CreateObject { id: *mid, data: obj.clone() });
+                                } else if let Some(tn) = self.text_notes.get(mid) {
+                                    copy_ops.push(operations::Operation::CreateTextNote { id: *mid, data: tn.clone() });
+                                } else if let Some(lr) = self.loop_regions.get(mid) {
+                                    copy_ops.push(operations::Operation::CreateLoopRegion { id: *mid, data: lr.clone() });
+                                } else if let Some(xr) = self.export_regions.get(mid) {
+                                    copy_ops.push(operations::Operation::CreateExportRegion { id: *mid, data: xr.clone() });
+                                } else if let Some(ci) = self.component_instances.get(mid) {
+                                    copy_ops.push(operations::Operation::CreateComponentInstance { id: *mid, data: ci.clone() });
+                                }
+                            }
                             self.groups.insert(nid, g.clone());
                             copy_ops.push(operations::Operation::CreateGroup { id: nid, data: g });
                             new_selected.push(HitTarget::Group(nid));
@@ -3218,6 +3561,11 @@ impl App {
                             ops.push(crate::operations::Operation::UpdateTextNote { id, before, after: after.clone() });
                         }
                     }
+                    (HitTarget::Group(id), EntityBeforeState::Group(before)) => {
+                        if let Some(after) = self.groups.get(&id) {
+                            ops.push(crate::operations::Operation::UpdateGroup { id, before, after: after.clone() });
+                        }
+                    }
                     _ => {}
                 }
             }
@@ -3346,6 +3694,49 @@ impl App {
     /// Spawn audio loading on a background thread. A placeholder waveform
     /// (empty audio) is placed on the canvas immediately so the user sees
     /// feedback. When decoding finishes the placeholder is filled in by
+    #[cfg(feature = "native")]
+    fn load_browser_preview(&mut self, path: &std::path::Path) {
+        // Stop any currently playing preview
+        if let Some(engine) = &self.audio_engine {
+            engine.stop_preview();
+        }
+
+        let path_owned = path.to_owned();
+        self.sample_browser.preview_path = Some(path_owned.clone());
+        self.sample_browser.preview_audio = None;
+        self.sample_browser.text_dirty = true;
+
+        let tx = self.pending_audio_tx.clone();
+        let filename = path
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string();
+
+        std::thread::spawn(move || {
+            let Some(loaded) = load_audio_file(&path_owned) else {
+                return;
+            };
+            let left_peaks = std::sync::Arc::new(WaveformPeaks::build(&loaded.left_samples));
+            let right_peaks = std::sync::Arc::new(WaveformPeaks::build(&loaded.right_samples));
+            let audio = std::sync::Arc::new(AudioData {
+                left_samples: loaded.left_samples.clone(),
+                right_samples: loaded.right_samples.clone(),
+                left_peaks,
+                right_peaks,
+                sample_rate: loaded.sample_rate,
+                filename,
+            });
+            let _ = tx.send(PendingAudioLoad::PreviewLoaded {
+                path: path_owned,
+                audio,
+                left_samples: loaded.left_samples,
+                right_samples: loaded.right_samples,
+                sample_rate: loaded.sample_rate,
+            });
+        });
+    }
+
     /// `poll_pending_audio_loads`.
     #[cfg(feature = "native")]
     fn drop_audio_from_browser(&mut self, path: &std::path::Path) {
@@ -3466,31 +3857,35 @@ impl App {
                 duration_secs: loaded.duration_secs,
             };
 
+            // Read original file bytes for storage
+            let ext = path
+                .extension()
+                .and_then(|s| s.to_str())
+                .unwrap_or("wav")
+                .to_string();
+            let source_file = match std::fs::read(&path) {
+                Ok(bytes) => (bytes, ext.clone()),
+                Err(e) => {
+                    eprintln!("[BgAudioLoad] Failed to read file bytes: {e}");
+                    (Vec::new(), ext.clone())
+                }
+            };
+
             if let Some(rs) = &rs {
                 // Remote storage mode: defer waveform display until upload completes.
                 // Do NOT send Decoded — keep the placeholder visible with "uploading..." label.
                 let wf_id_str = wf_id.to_string();
-                let ext = path
-                    .extension()
-                    .and_then(|s| s.to_str())
-                    .unwrap_or("wav")
-                    .to_string();
                 let save_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    if let Ok(file_bytes) = std::fs::read(&path) {
-                        rs.save_audio(&wf_id_str, &file_bytes, &ext);
-                    } else {
-                        eprintln!("[BgAudioLoad] Failed to re-read file for remote save: {}", path.display());
-                    }
+                    rs.save_audio(&wf_id_str, &source_file.0, &ext);
                 }));
                 match save_result {
                     Ok(()) => {
                         println!("[BgAudioLoad] Remote save done for {wf_id}, sending SyncReady");
-                        let _ = tx.send(PendingAudioLoad::SyncReady { wf_id, wf_data, ac_data });
+                        let _ = tx.send(PendingAudioLoad::SyncReady { wf_id, wf_data, ac_data, source_file });
                     }
                     Err(e) => {
                         eprintln!("[BgAudioLoad] Remote save PANICKED for {wf_id}: {e:?}");
-                        // Still send SyncReady so the op gets pushed (data may be missing on remote)
-                        let _ = tx.send(PendingAudioLoad::SyncReady { wf_id, wf_data, ac_data });
+                        let _ = tx.send(PendingAudioLoad::SyncReady { wf_id, wf_data, ac_data, source_file });
                     }
                 }
             } else {
@@ -3499,6 +3894,7 @@ impl App {
                     wf_id,
                     wf_data,
                     ac_data,
+                    source_file,
                 });
             }
         });
@@ -3511,9 +3907,12 @@ impl App {
         let mut any = false;
         while let Ok(load) = self.pending_audio_rx.try_recv() {
             match load {
-                PendingAudioLoad::Decoded { wf_id, wf_data, ac_data } => {
+                PendingAudioLoad::Decoded { wf_id, wf_data, ac_data, source_file } => {
                     self.waveforms.insert(wf_id, wf_data.clone());
                     self.audio_clips.insert(wf_id, ac_data.clone());
+                    if !source_file.0.is_empty() {
+                        self.source_audio_files.insert(wf_id, source_file);
+                    }
                     let mut ops = vec![operations::Operation::CreateWaveform {
                         id: wf_id,
                         data: wf_data,
@@ -3524,9 +3923,12 @@ impl App {
                     self.push_op(operations::Operation::Batch(ops));
                     self.pending_audio_loads_count = self.pending_audio_loads_count.saturating_sub(1);
                 }
-                PendingAudioLoad::SyncReady { wf_id, wf_data, ac_data } => {
+                PendingAudioLoad::SyncReady { wf_id, wf_data, ac_data, source_file } => {
                     self.waveforms.insert(wf_id, wf_data.clone());
                     self.audio_clips.insert(wf_id, ac_data.clone());
+                    if !source_file.0.is_empty() {
+                        self.source_audio_files.insert(wf_id, source_file);
+                    }
                     let mut ops = vec![operations::Operation::CreateWaveform {
                         id: wf_id,
                         data: wf_data,
@@ -3545,6 +3947,19 @@ impl App {
                         ui::toast::ToastKind::Error,
                     );
                     self.pending_audio_loads_count = self.pending_audio_loads_count.saturating_sub(1);
+                }
+                PendingAudioLoad::PreviewLoaded { path, audio, left_samples, right_samples, sample_rate } => {
+                    // Only apply if this is still the requested preview
+                    if self.sample_browser.preview_path.as_ref() == Some(&path) {
+                        self.sample_browser.preview_audio = Some(audio);
+                        self.sample_browser.text_dirty = true;
+                        if self.sample_browser.auto_preview {
+                            #[cfg(feature = "native")]
+                            if let Some(engine) = &self.audio_engine {
+                                engine.play_preview(left_samples, right_samples, sample_rate);
+                            }
+                        }
+                    }
                 }
             }
             any = true;
@@ -3606,6 +4021,10 @@ fn main() {
         .position(|a| a == "--project")
         .and_then(|i| std::env::args().nth(i + 1));
 
+    let db_password = std::env::args()
+        .position(|a| a == "--db-password")
+        .and_then(|i| std::env::args().nth(i + 1));
+
     let event_loop = EventLoop::new().unwrap();
 
     let mut app = App::new(skip_load);
@@ -3622,7 +4041,7 @@ fn main() {
                 .build()
                 .expect("Failed to create tokio runtime for remote storage"),
         );
-        if let Some(rs) = storage::RemoteStorage::connect(url, rt) {
+        if let Some(rs) = storage::RemoteStorage::connect(url, db_password.as_deref(), rt) {
             rs.use_project(pid);
             println!("[RemoteStorage] Connected to {url}, project '{pid}'");
             app.remote_storage = Some(Arc::new(rs));
@@ -3631,7 +4050,7 @@ fn main() {
         }
 
         // Real-time sync via SurrealDB live queries
-        app.connect_to_server(url, pid);
+        app.connect_to_server(url, pid, db_password.as_deref());
     }
 
     event_loop.run_app(&mut app).unwrap();

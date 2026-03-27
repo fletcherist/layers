@@ -861,3 +861,68 @@ fn test_single_select_still_works() {
     assert!(!rw.is_multi(), "single selection should not be multi");
     assert_eq!(rw.target_id(), id);
 }
+
+#[test]
+fn test_rms_meter_smoothing() {
+    let mut app = App::new_headless();
+    let id = new_id();
+    let wf = make_waveform();
+    app.waveforms.insert(id, wf);
+    app.selected.push(HitTarget::Waveform(id));
+    app.update_right_window();
+
+    let rw = app.right_window.as_mut().unwrap();
+    assert_eq!(rw.meter_rms, 0.0);
+    assert_eq!(rw.meter_peak, 0.0);
+
+    // Feed a loud signal — meter should rise quickly
+    rw.update_rms(0.8);
+    assert!(rw.meter_rms > 0.0, "meter should respond to input");
+    assert!(rw.meter_peak >= 0.8, "peak should capture the maximum");
+
+    // Feed several more frames to converge
+    for _ in 0..100 {
+        rw.update_rms(0.8);
+    }
+    assert!((rw.meter_rms - 0.8).abs() < 0.05, "meter should converge near input");
+
+    // Drop to silence — meter should decay but not instantly
+    rw.update_rms(0.0);
+    assert!(rw.meter_rms > 0.1, "meter should decay slowly, not drop instantly");
+    assert!(rw.meter_peak >= 0.75, "peak should hold");
+
+    // After many silent frames, meter should approach zero
+    for _ in 0..300 {
+        rw.update_rms(0.0);
+    }
+    assert!(rw.meter_rms < 0.01, "meter should decay near zero after silence");
+}
+
+#[test]
+fn test_rms_meter_peak_hold_decay() {
+    let mut app = App::new_headless();
+    let id = new_id();
+    let wf = make_waveform();
+    app.waveforms.insert(id, wf);
+    app.selected.push(HitTarget::Waveform(id));
+    app.update_right_window();
+
+    let rw = app.right_window.as_mut().unwrap();
+
+    // Hit a transient
+    rw.update_rms(0.9);
+    let peak_after_hit = rw.meter_peak;
+    assert!(peak_after_hit >= 0.9);
+
+    // Silence for 80 frames (~1.3s at 60fps) — peak should hold
+    for _ in 0..80 {
+        rw.update_rms(0.0);
+    }
+    assert!(rw.meter_peak >= 0.85, "peak should hold for ~1.5s");
+
+    // After enough frames past hold time, peak should start decaying
+    for _ in 0..200 {
+        rw.update_rms(0.0);
+    }
+    assert!(rw.meter_peak < 0.5, "peak should decay after hold period");
+}

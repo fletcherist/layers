@@ -24,11 +24,26 @@ pub enum DragPreview {
 }
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct RemoteViewport {
+    pub position: [f32; 2],
+    pub zoom: f32,
+}
+
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct RemotePlaybackState {
+    pub is_playing: bool,
+    pub position_seconds: f64,
+    pub timestamp_ms: u64,
+}
+
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct RemoteUserState {
     pub user: User,
     pub cursor_world: Option<[f32; 2]>,
     pub drag_preview: Option<DragPreview>,
     pub online: bool,
+    pub viewport: Option<RemoteViewport>,
+    pub playback: Option<RemotePlaybackState>,
 }
 
 /// Pre-defined colors for remote user cursors.
@@ -66,5 +81,16 @@ pub enum EphemeralMessage {
     },
     UserLeft {
         user_id: UserId,
+    },
+    ViewportUpdate {
+        user_id: UserId,
+        position: [f32; 2],
+        zoom: f32,
+    },
+    PlaybackUpdate {
+        user_id: UserId,
+        is_playing: bool,
+        position_seconds: f64,
+        timestamp_ms: u64,
     },
 }

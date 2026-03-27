@@ -41,8 +41,8 @@ pub(crate) fn render_button(
         color: t.bg_input,
         border_radius: dd_br,
     });
-    let arrow_size = 6.0 * scale;
-    let arrow_x = dp[0] + ds[0] - 14.0 * scale;
+    let arrow_size = 10.0 * scale;
+    let arrow_x = dp[0] + ds[0] - 18.0 * scale;
     let arrow_y = dp[1] + (ds[1] - arrow_size) * 0.5;
     out.push(InstanceRaw {
         position: [arrow_x, arrow_y],

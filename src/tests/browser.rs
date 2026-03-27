@@ -208,3 +208,46 @@ fn test_hit_place_row_and_places_add() {
     assert_eq!(browser.hit_place_row([120.0, row_y], scale), None);
     assert!(!browser.hit_places_add([120.0, add_row_y], scale));
 }
+
+#[test]
+fn test_browser_preview_state() {
+    let mut app = App::new_headless();
+
+    // Initially no preview
+    assert!(app.sample_browser.preview_audio.is_none());
+    assert!(app.sample_browser.preview_path.is_none());
+    assert!(app.sample_browser.auto_preview);
+
+    // Toggle auto-preview
+    app.sample_browser.auto_preview = false;
+    assert!(!app.sample_browser.auto_preview);
+
+    // Set a preview path
+    let path = PathBuf::from("/tmp/test.wav");
+    app.sample_browser.preview_path = Some(path.clone());
+    assert_eq!(app.sample_browser.preview_path, Some(path));
+
+    // Visible height should NOT shrink when no preview audio loaded
+    let screen_h = 800.0;
+    let scale = 1.0;
+    let h_no_preview = app.sample_browser.visible_height_for_test(screen_h, scale);
+
+    // Set preview audio
+    use std::sync::Arc;
+    use crate::ui::waveform::{AudioData, WaveformPeaks};
+    let audio = Arc::new(AudioData {
+        left_samples: Arc::new(vec![0.0; 1000]),
+        right_samples: Arc::new(vec![0.0; 1000]),
+        left_peaks: Arc::new(WaveformPeaks::build(&[0.0; 1000])),
+        right_peaks: Arc::new(WaveformPeaks::build(&[0.0; 1000])),
+        sample_rate: 44100,
+        filename: "test.wav".to_string(),
+    });
+    app.sample_browser.preview_audio = Some(audio);
+
+    // Visible height should shrink by PREVIEW_STRIP_HEIGHT
+    let h_with_preview = app.sample_browser.visible_height_for_test(screen_h, scale);
+    assert!(h_with_preview < h_no_preview);
+    let expected_diff = crate::ui::browser::PREVIEW_STRIP_HEIGHT * scale;
+    assert!((h_no_preview - h_with_preview - expected_diff).abs() < 0.1);
+}

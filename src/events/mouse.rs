@@ -11,6 +11,7 @@ impl App {
                     return;
                 }
                 self.command_palette = None;
+                self.following_user = None;
                 self.drag = DragState::Panning {
                     start_mouse: self.mouse_pos,
                     start_camera: self.camera.position,
@@ -84,6 +85,11 @@ impl App {
                                         self.selected.push(target);
                                     }
                                     MenuContext::LayerNode { kind: *kind }
+                                }
+                                ui::browser::EntryKind::Master => {
+                                    // No context menu for Main Layer
+                                    self.request_redraw();
+                                    return;
                                 }
                                 _ => {
                                     self.browser_context_path = Some(entry.path.clone());
@@ -199,6 +205,25 @@ impl App {
 
         MouseButton::Left => match state {
             ElementState::Pressed => {
+                // Stop sample preview when clicking anywhere except the preview strip
+                #[cfg(feature = "native")]
+                {
+                    let (_, sh, scale) = self.screen_info();
+                    let in_preview_strip = self.sample_browser.visible
+                        && self.sample_browser.preview_audio.is_some()
+                        && {
+                            let strip = self.sample_browser.preview_strip_rect(sh, scale);
+                            self.mouse_pos[0] <= strip[0] + strip[2]
+                                && self.mouse_pos[1] >= strip[1]
+                        };
+                    if !in_preview_strip {
+                        if let Some(engine) = &self.audio_engine {
+                            if engine.is_preview_playing() {
+                                engine.stop_preview();
+                            }
+                        }
+                    }
+                }
                 // Handle browser toggle button click (≡ in header or collapsed strip)
                 {
                     let (_, _, scale) = self.screen_info();
@@ -208,6 +233,25 @@ impl App {
                         if self.sample_browser.visible {
                             self.refresh_project_browser_entries();
                             self.ensure_plugins_scanned();
+                        }
+                        self.request_redraw();
+                        return;
+                    }
+                }
+                // Handle follow mode avatar click
+                if self.network.is_connected() {
+                    if let Some(clicked_uid) = self.hit_test_avatar_circles() {
+                        if self.following_user == Some(clicked_uid) {
+                            self.following_user = None;
+                        } else {
+                            self.following_user = Some(clicked_uid);
+                            // Immediately sync camera to followed user's viewport
+                            if let Some(remote) = self.remote_users.get(&clicked_uid) {
+                                if let Some(vp) = &remote.viewport {
+                                    self.camera.position = vp.position;
+                                    self.camera.zoom = vp.zoom;
+                                }
+                            }
                         }
                         self.request_redraw();
                         return;
@@ -330,15 +374,12 @@ impl App {
                         ew.contains(self.mouse_pos, scr_w, scr_h, scale)
                     });
                     if inside {
-                        // Format button clicks
-                        if let Some(fmt) = self.export_window.as_ref().and_then(|ew| {
-                            ew.hit_test_format(self.mouse_pos, scr_w, scr_h, scale)
-                        }) {
-                            if let Some(ew) = &mut self.export_window {
-                                ew.format = fmt;
+                        // Format dropdown clicks
+                        if let Some(ew) = &mut self.export_window {
+                            if ew.handle_format_click(self.mouse_pos, scr_w, scr_h, scale) {
+                                self.request_redraw();
+                                return;
                             }
-                            self.request_redraw();
-                            return;
                         }
 
                         // Export button click
@@ -351,12 +392,19 @@ impl App {
                             return;
                         }
                     } else {
-                        // Click outside closes export window (only if idle)
+                        // Click outside: close dropdown first, then window
                         let is_idle = self.export_window.as_ref().map_or(false, |ew| {
                             ew.state == ui::export_window::ExportState::Idle
                         });
                         if is_idle {
-                            self.export_window = None;
+                            let dd_open = self.export_window.as_ref().map_or(false, |ew| ew.format_dropdown_open);
+                            if dd_open {
+                                if let Some(ew) = &mut self.export_window {
+                                    ew.format_dropdown_open = false;
+                                }
+                            } else {
+                                self.export_window = None;
+                            }
                         }
                     }
                     self.request_redraw();
@@ -617,6 +665,7 @@ impl App {
                     let in_panel = self.mouse_pos[0] >= pp[0] && self.mouse_pos[0] <= pp[0] + ps[0];
                     if in_panel {
                         let wf_id = rw.target_id();
+                        let hit_sm = rw.hit_test_solo_mute(self.mouse_pos, sw, sh, scale);
                         let hit_vol_text = rw.hit_test_vol_text(self.mouse_pos, sw, sh, scale);
                         let hit_vol = rw.hit_test_vol_knob(self.mouse_pos, sw, sh, scale);
                         let hit_vol_track = rw.hit_test_vol_track(self.mouse_pos, sw, sh, scale);
@@ -626,7 +675,25 @@ impl App {
                         let hit_warp_sel = rw.hit_test_warp_mode_selector(self.mouse_pos, sw, sh, scale);
                         let hit_sbpm_text = rw.hit_test_sample_bpm_text(self.mouse_pos, sw, sh, scale);
                         let hit_pitch_text = rw.hit_test_pitch_text(self.mouse_pos, sw, sh, scale);
-                        if hit_reverse_btn {
+                        if hit_sm != ui::solo_mute::SoloMuteHit::None {
+                            let target_id = rw.target_id();
+                            match hit_sm {
+                                ui::solo_mute::SoloMuteHit::Solo => {
+                                    let shift = self.modifiers.shift_key();
+                                    self.toggle_solo(target_id, shift);
+                                }
+                                ui::solo_mute::SoloMuteHit::Mute => {
+                                    self.toggle_mute_disabled(target_id);
+                                }
+                                ui::solo_mute::SoloMuteHit::None => {}
+                            }
+                            self.update_right_window();
+                            self.refresh_project_browser_entries();
+                            #[cfg(feature = "native")]
+                            self.sync_audio_clips();
+                            self.mark_dirty();
+                            return;
+                        } else if hit_reverse_btn {
                             self.execute_command(ui::palette::CommandAction::ReverseSample);
                             self.update_right_window();
                             self.request_redraw();
@@ -884,7 +951,7 @@ impl App {
                             return;
                         }
 
-                        // --- Group export button click → open export window ---
+                        // --- Group/MainLayer export button click → open export window ---
                         if rw.hit_test_export_button(self.mouse_pos, sw, sh, scale) {
                             if let ui::right_window::RightWindowTarget::Group(group_id) = rw.target {
                                 let group_name = self.groups.get(&group_id)
@@ -892,6 +959,13 @@ impl App {
                                     .unwrap_or_else(|| "export".to_string());
                                 self.export_window = Some(
                                     ui::export_window::ExportWindow::new(group_id, group_name)
+                                );
+                            } else if let ui::right_window::RightWindowTarget::Master = rw.target {
+                                self.export_window = Some(
+                                    ui::export_window::ExportWindow::new(
+                                        ui::right_window::MAIN_LAYER_ID,
+                                        "Main".to_string(),
+                                    )
                                 );
                             }
                             self.request_redraw();
@@ -905,6 +979,7 @@ impl App {
                                 ui::right_window::RightWindowTarget::Waveform(wf_id) => self.waveforms.get(&wf_id).and_then(|w| w.effect_chain_id),
                                 ui::right_window::RightWindowTarget::Instrument(inst_id) => self.instruments.get(&inst_id).and_then(|i| i.effect_chain_id),
                                 ui::right_window::RightWindowTarget::Group(group_id) => self.groups.get(&group_id).and_then(|g| g.effect_chain_id),
+                                ui::right_window::RightWindowTarget::Master => self.master.effect_chain_id,
                             };
                             let slot_count = chain_id
                                 .and_then(|cid| self.effect_chains.get(&cid))
@@ -919,6 +994,9 @@ impl App {
                                     ui::right_window::RightWindowTarget::Waveform(wf_id) => self.detach_effect_chain(wf_id),
                                     ui::right_window::RightWindowTarget::Instrument(inst_id) => self.detach_instrument_effect_chain(inst_id),
                                     ui::right_window::RightWindowTarget::Group(group_id) => self.detach_group_effect_chain(group_id),
+                                    ui::right_window::RightWindowTarget::Master => {
+                                        self.master.effect_chain_id = None;
+                                    }
                                 }
                                 self.request_redraw();
                                 return;
@@ -1180,6 +1258,42 @@ impl App {
                                 self.sample_browser.scroll_velocity = 0.0;
                                 self.sample_browser.rebuild_entries();
                             }
+                        } else if self.sample_browser.preview_audio.is_some() && {
+                            let strip = self.sample_browser.preview_strip_rect(sh, scale);
+                            self.mouse_pos[1] >= strip[1]
+                        } {
+                            // Click is in the preview strip area
+                            let toggle_rect = self.sample_browser.preview_toggle_rect(sh, scale);
+                            let wf_rect = self.sample_browser.preview_waveform_rect(sh, scale);
+                            let [mx, my] = self.mouse_pos;
+                            if mx >= toggle_rect[0] && mx <= toggle_rect[0] + toggle_rect[2]
+                                && my >= toggle_rect[1] && my <= toggle_rect[1] + toggle_rect[3]
+                            {
+                                self.sample_browser.auto_preview = !self.sample_browser.auto_preview;
+                                self.sample_browser.text_dirty = true;
+                            } else if mx >= wf_rect[0] && mx <= wf_rect[0] + wf_rect[2]
+                                && my >= wf_rect[1] && my <= wf_rect[1] + wf_rect[3]
+                            {
+                                let norm = ((mx - wf_rect[0]) / wf_rect[2]).clamp(0.0, 1.0) as f64;
+                                #[cfg(feature = "native")]
+                                if let Some(engine) = &self.audio_engine {
+                                    engine.seek_preview(norm);
+                                }
+                                // Set up pending drag so user can drag preview to canvas
+                                if let Some(ref path) = self.sample_browser.preview_path {
+                                    let filename = path.file_name()
+                                        .unwrap_or_default()
+                                        .to_string_lossy()
+                                        .to_string();
+                                    self.drag = DragState::PendingBrowserDrag {
+                                        path: path.clone(),
+                                        filename,
+                                        start_mouse: self.mouse_pos,
+                                    };
+                                }
+                            }
+                            self.request_redraw();
+                            return;
                         } else if let Some(idx) =
                             self.sample_browser.item_at(self.mouse_pos, sh, scale)
                         {
@@ -1195,10 +1309,12 @@ impl App {
                                         .map(|e| e.to_string_lossy().to_lowercase())
                                         .unwrap_or_default();
                                     if AUDIO_EXTENSIONS.contains(&ext.as_str()) {
-                                        self.drag = DragState::DraggingFromBrowser {
+                                        self.drag = DragState::PendingBrowserDrag {
                                             path: entry.path.clone(),
                                             filename: entry.name.clone(),
+                                            start_mouse: self.mouse_pos,
                                         };
+                                        self.sample_browser.selected_entry = Some(idx);
                                     }
                                 }
                                 ui::browser::EntryKind::Plugin { unique_id, is_instrument } => {
@@ -1226,6 +1342,11 @@ impl App {
                                                 self.request_redraw();
                                                 return;
                                             }
+                                            if let ui::right_window::RightWindowTarget::Master = rw.target {
+                                                self.add_plugin_to_master_chain(unique_id, &entry.name);
+                                                self.request_redraw();
+                                                return;
+                                            }
                                         }
                                     }
                                     self.drag = DragState::DraggingPlugin {
@@ -1239,7 +1360,41 @@ impl App {
                                     #[cfg(feature = "native")]
                                     self.sync_computer_keyboard_to_engine();
                                 }
+                                ui::browser::EntryKind::EmptyState => {}
+                                ui::browser::EntryKind::Master => {
+                                    self.selected.clear();
+                                    self.sample_browser.master_selected = true;
+                                    self.open_right_window_for_master();
+                                    self.request_redraw();
+                                }
                                 ui::browser::EntryKind::LayerNode { id, kind, has_children, .. } => {
+                                    self.sample_browser.master_selected = false;
+                                    // Solo/Mute button hit test (right-aligned buttons)
+                                    if matches!(kind, crate::layers::LayerNodeKind::Waveform | crate::layers::LayerNodeKind::Instrument | crate::layers::LayerNodeKind::Group) {
+                                        let (_, _, scale) = self.screen_info();
+                                        let row_right = self.sample_browser.content_x(scale) + self.sample_browser.content_width(scale);
+                                        let row_cy = self.mouse_pos[1]; // Y doesn't matter for horizontal hit-test
+                                        let layout = ui::solo_mute::layout_right_aligned(row_right, row_cy, scale);
+                                        let hit = ui::solo_mute::hit_test(&layout, self.mouse_pos);
+                                        if hit != ui::solo_mute::SoloMuteHit::None {
+                                            match hit {
+                                                ui::solo_mute::SoloMuteHit::Solo => {
+                                                    let shift = self.modifiers.shift_key();
+                                                    self.toggle_solo(*id, shift);
+                                                }
+                                                ui::solo_mute::SoloMuteHit::Mute => {
+                                                    self.toggle_mute_disabled(*id);
+                                                }
+                                                ui::solo_mute::SoloMuteHit::None => {}
+                                            }
+                                            self.update_right_window();
+                                            self.refresh_project_browser_entries();
+                                            #[cfg(feature = "native")]
+                                            self.sync_audio_clips();
+                                            self.mark_dirty();
+                                            return;
+                                        }
+                                    }
                                     // Double-click enters inline rename in the browser
                                     let now = TimeInstant::now();
                                     let is_dbl = now.duration_since(self.last_browser_click_time).as_millis() < 400
@@ -1414,11 +1569,13 @@ impl App {
                             if let Some(engine) = &self.audio_engine {
                                 engine.toggle_playback();
                             }
+                            self.broadcast_playback_if_connected();
                         } else {
                             #[cfg(feature = "native")]
                             if let Some(engine) = &self.audio_engine {
                                 engine.toggle_playback();
                             }
+                            self.broadcast_playback_if_connected();
                         }
                         self.request_redraw();
                         return;
@@ -1891,6 +2048,7 @@ impl App {
                                     let secs = snapped_x as f64 / PIXELS_PER_SECOND as f64;
                                     engine.seek_to_seconds(secs);
                                 }
+                                self.broadcast_playback_if_connected();
                             }
 
                             // TODO: refactor velocity lane rendering before re-enabling
@@ -2239,6 +2397,7 @@ impl App {
                                             volume: inst.volume,
                                             pan: inst.pan,
                                             effect_chain_id: inst.effect_chain_id,
+                                            disabled: inst.disabled,
                                         };
                                         let after_snap = before_snap.clone();
                                         if is_vol_drag {
@@ -2266,6 +2425,9 @@ impl App {
                                             id: gid, before, after,
                                         });
                                     }
+                                }
+                                ui::right_window::RightWindowTarget::Master => {
+                                    // MainLayer vol/pan — no undo for now
                                 }
                             }
                         }
@@ -2769,6 +2931,22 @@ impl App {
                 }
 
                 // --- drop from browser to canvas ---
+                // --- pending browser drag released = click → trigger preview ---
+                if let DragState::PendingBrowserDrag { ref path, .. } = self.drag {
+                    // Only load if not already previewing this file (avoid restarting on preview strip click)
+                    let already_loaded = self.sample_browser.preview_path.as_ref() == Some(path)
+                        && self.sample_browser.preview_audio.is_some();
+                    if !already_loaded {
+                        let path = path.clone();
+                        self.load_browser_preview(&path);
+                    }
+                    self.drag = DragState::None;
+                    self.update_hover();
+                    self.request_redraw();
+                    return;
+                }
+
+                // --- drop from browser to canvas ---
                 if let DragState::DraggingFromBrowser { ref path, .. } = self.drag {
                     let (_, sh, scale) = self.screen_info();
                     let in_browser = self.sample_browser.visible
@@ -2812,6 +2990,8 @@ impl App {
                                             self.add_plugin_to_instrument_chain(id, &plugin_id, &plugin_name),
                                         ui::right_window::RightWindowTarget::Group(id) =>
                                             self.add_plugin_to_group_chain(id, &plugin_id, &plugin_name),
+                                        ui::right_window::RightWindowTarget::Master =>
+                                            self.add_plugin_to_master_chain(&plugin_id, &plugin_name),
                                     }
                                     self.drag = DragState::None;
                                     self.update_hover();
@@ -2927,6 +3107,11 @@ impl App {
                                     ops.push(crate::operations::Operation::UpdateMidiClip { id, before, after: after.clone() });
                                 }
                             }
+                            (HitTarget::Group(id), EntityBeforeState::Group(before)) => {
+                                if let Some(after) = self.groups.get(&id) {
+                                    ops.push(crate::operations::Operation::UpdateGroup { id, before, after: after.clone() });
+                                }
+                            }
                             _ => {}
                         }
                     }
@@ -2984,11 +3169,14 @@ impl App {
                         self.selected.clear();
                         let snapped_x = snap_to_grid(current[0], &self.settings, self.camera.zoom, self.bpm);
                         #[cfg(feature = "native")]
-                        if let Some(engine) = &self.audio_engine {
-                            if !engine.is_playing() {
-                                let secs = snapped_x as f64 / PIXELS_PER_SECOND as f64;
-                                engine.seek_to_seconds(secs);
+                        {
+                            if let Some(engine) = &self.audio_engine {
+                                if !engine.is_playing() {
+                                    let secs = snapped_x as f64 / PIXELS_PER_SECOND as f64;
+                                    engine.seek_to_seconds(secs);
+                                }
                             }
+                            self.broadcast_playback_if_connected();
                         }
                         let h = self.clip_height();
                         let line_y = grid::snap_to_clip_row(current[1], self.bpm);
@@ -3052,7 +3240,12 @@ impl App {
                 None => return, // user cancelled
             };
 
-            match crate::export::start_export(self, group_id, path, format) {
+            let export_result = if group_id == ui::right_window::MAIN_LAYER_ID {
+                crate::export::start_export_main(self, path, format)
+            } else {
+                crate::export::start_export(self, group_id, path, format)
+            };
+            match export_result {
                 Ok(rx) => {
                     if let Some(ew) = &mut self.export_window {
                         ew.state = ui::export_window::ExportState::Exporting;

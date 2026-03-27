@@ -25,3 +25,6 @@ mod selection;
 mod takes;
 mod latency_compensation;
 mod session;
+mod solo_mute;
+mod master;
+mod follow_mode;

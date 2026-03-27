@@ -133,6 +133,7 @@ fn collect_clip_chain_plugins_excludes_group_chain() {
         effect_chain_id: Some(group_chain_id),
         volume: 1.0,
         pan: 0.5,
+        disabled: false,
     });
 
     // collect_chain_plugins (old path, used by instruments) includes group
@@ -183,6 +184,7 @@ fn grouped_waveform_without_own_chain_gets_group_bus() {
         effect_chain_id: Some(group_chain_id),
         volume: 1.0,
         pan: 0.5,
+        disabled: false,
     });
 
     // clip has no own chain → collect_clip_chain_plugins returns empty
@@ -218,6 +220,7 @@ fn bypassed_group_chain_slots_excluded() {
         effect_chain_id: Some(group_chain_id),
         volume: 1.0,
         pan: 0.5,
+        disabled: false,
     });
 
     let group_plugins = app.collect_group_chain_plugins(group_id);

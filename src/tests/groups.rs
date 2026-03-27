@@ -524,6 +524,7 @@ fn instrument_inside_group_shows_midi_clip_children_in_layer_tree() {
     );
     let rows = crate::layers::flatten_tree(
         &app.layer_tree, &app.instruments, &app.midi_clips, &app.waveforms, &app.groups,
+        &app.solo_ids,
     );
 
     // Should have: Group (depth 0) → Instrument (depth 1) → MIDI clip (depth 2)
@@ -640,4 +641,348 @@ fn marquee_selecting_midi_clip_auto_includes_instrument() {
     let group = app.groups.values().next().unwrap();
     assert!(group.member_ids.contains(&inst_id), "instrument should be in group");
     assert!(group.member_ids.contains(&mc_id), "midi clip should be in group");
+}
+
+#[test]
+fn duplicate_group_deep_clones_members() {
+    let mut app = App::new_headless();
+
+    // Create two waveforms and a group containing them
+    let wf_id1 = new_id();
+    let wf_id2 = new_id();
+    app.waveforms.insert(wf_id1, make_waveform(0.0, 0.0));
+    app.waveforms.insert(wf_id2, make_waveform(200.0, 0.0));
+
+    app.selected.push(HitTarget::Waveform(wf_id1));
+    app.selected.push(HitTarget::Waveform(wf_id2));
+    app.execute_command(CommandAction::CreateGroup);
+    assert_eq!(app.groups.len(), 1);
+    let group_id = *app.groups.keys().next().unwrap();
+    let original_members = app.groups[&group_id].member_ids.clone();
+
+    // Duplicate the group
+    app.selected = vec![HitTarget::Group(group_id)];
+    app.duplicate_selected();
+
+    // Should now have 2 groups
+    assert_eq!(app.groups.len(), 2, "duplicate should create a second group");
+
+    // Find the new group
+    let dup_group = app.groups.values()
+        .find(|g| g.member_ids != original_members)
+        .expect("duplicated group should have different member_ids");
+
+    // Duplicated group must have the same count of members
+    assert_eq!(dup_group.member_ids.len(), 2, "duplicated group should have 2 members");
+
+    // All member IDs must be different from the original
+    for mid in &dup_group.member_ids {
+        assert!(!original_members.contains(mid), "member ID {:?} should be a new clone, not the original", mid);
+    }
+
+    // The cloned waveforms must actually exist in app.waveforms
+    for mid in &dup_group.member_ids {
+        assert!(app.waveforms.contains_key(mid), "cloned waveform {:?} must exist in app.waveforms", mid);
+    }
+
+    // Total waveforms: 2 original + 2 cloned = 4
+    assert_eq!(app.waveforms.len(), 4, "should have 4 waveforms total after duplicate");
+
+    // Verify cloned member positions are shifted by group width
+    let orig_group = &app.groups[&group_id];
+    let shift_x = orig_group.size[0];
+    for mid in &dup_group.member_ids {
+        let pos = app.waveforms[mid].position;
+        // Each cloned waveform should be shifted right by shift_x from its original
+        assert!(pos[0] >= shift_x, "cloned waveform at x={} should be shifted by {} from original", pos[0], shift_x);
+    }
+    // More specifically: original waveforms at 0.0 and 200.0, so clones should be at shift_x and 200+shift_x
+    let mut dup_positions: Vec<f32> = dup_group.member_ids.iter()
+        .map(|mid| app.waveforms[mid].position[0])
+        .collect();
+    dup_positions.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    let mut orig_positions: Vec<f32> = original_members.iter()
+        .map(|mid| app.waveforms[mid].position[0])
+        .collect();
+    orig_positions.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    for (dup_x, orig_x) in dup_positions.iter().zip(orig_positions.iter()) {
+        assert!(
+            (*dup_x - (*orig_x + shift_x)).abs() < 0.01,
+            "duplicated waveform x={} should equal original x={} + shift={}",
+            dup_x, orig_x, shift_x
+        );
+    }
+}
+
+#[test]
+fn copy_paste_group_deep_clones_members() {
+    let mut app = App::new_headless();
+
+    // Create two waveforms and a group containing them
+    let wf_id1 = new_id();
+    let wf_id2 = new_id();
+    app.waveforms.insert(wf_id1, make_waveform(0.0, 0.0));
+    app.waveforms.insert(wf_id2, make_waveform(200.0, 0.0));
+
+    app.selected.push(HitTarget::Waveform(wf_id1));
+    app.selected.push(HitTarget::Waveform(wf_id2));
+    app.execute_command(CommandAction::CreateGroup);
+    assert_eq!(app.groups.len(), 1);
+    let group_id = *app.groups.keys().next().unwrap();
+    let original_members = app.groups[&group_id].member_ids.clone();
+
+    // Copy then paste
+    app.selected = vec![HitTarget::Group(group_id)];
+    app.copy_selected();
+    app.paste_clipboard();
+
+    // Should now have 2 groups
+    assert_eq!(app.groups.len(), 2, "paste should create a second group");
+
+    // Find the pasted group
+    let pasted_group = app.groups.values()
+        .find(|g| g.member_ids != original_members)
+        .expect("pasted group should have different member_ids");
+
+    // Pasted group must have 2 members
+    assert_eq!(pasted_group.member_ids.len(), 2, "pasted group should have 2 members");
+
+    // All member IDs must be different from the original
+    for mid in &pasted_group.member_ids {
+        assert!(!original_members.contains(mid), "member ID {:?} should be a new clone, not the original", mid);
+    }
+
+    // The cloned waveforms must actually exist in app.waveforms
+    for mid in &pasted_group.member_ids {
+        assert!(app.waveforms.contains_key(mid), "cloned waveform {:?} must exist in app.waveforms", mid);
+    }
+
+    // Total waveforms: 2 original + 2 cloned = 4
+    assert_eq!(app.waveforms.len(), 4, "should have 4 waveforms total after paste");
+
+    // Verify pasted member positions are offset consistently with the pasted group
+    let orig_group = &app.groups[&group_id];
+    let dx = pasted_group.position[0] - orig_group.position[0];
+    let dy = pasted_group.position[1] - orig_group.position[1];
+    let mut pasted_positions: Vec<[f32; 2]> = pasted_group.member_ids.iter()
+        .map(|mid| app.waveforms[mid].position)
+        .collect();
+    pasted_positions.sort_by(|a, b| a[0].partial_cmp(&b[0]).unwrap());
+    let mut orig_positions: Vec<[f32; 2]> = original_members.iter()
+        .map(|mid| app.waveforms[mid].position)
+        .collect();
+    orig_positions.sort_by(|a, b| a[0].partial_cmp(&b[0]).unwrap());
+    for (pasted_pos, orig_pos) in pasted_positions.iter().zip(orig_positions.iter()) {
+        assert!(
+            (pasted_pos[0] - (orig_pos[0] + dx)).abs() < 0.01,
+            "pasted waveform x={} should equal original x={} + dx={}",
+            pasted_pos[0], orig_pos[0], dx
+        );
+        assert!(
+            (pasted_pos[1] - (orig_pos[1] + dy)).abs() < 0.01,
+            "pasted waveform y={} should equal original y={} + dy={}",
+            pasted_pos[1], orig_pos[1], dy
+        );
+    }
+}
+
+#[test]
+fn undo_paste_group_removes_members() {
+    let mut app = App::new_headless();
+
+    // Create two waveforms and a group containing them
+    let wf_id1 = new_id();
+    let wf_id2 = new_id();
+    app.waveforms.insert(wf_id1, make_waveform(0.0, 0.0));
+    app.waveforms.insert(wf_id2, make_waveform(200.0, 0.0));
+
+    app.selected.push(HitTarget::Waveform(wf_id1));
+    app.selected.push(HitTarget::Waveform(wf_id2));
+    app.execute_command(CommandAction::CreateGroup);
+    assert_eq!(app.groups.len(), 1);
+    let group_id = *app.groups.keys().next().unwrap();
+
+    // Copy then paste
+    app.selected = vec![HitTarget::Group(group_id)];
+    app.copy_selected();
+    app.paste_clipboard();
+
+    // Should now have 2 groups and 4 waveforms
+    assert_eq!(app.groups.len(), 2);
+    assert_eq!(app.waveforms.len(), 4);
+
+    // Undo the paste
+    app.undo_op();
+
+    // Should be back to 1 group and 2 waveforms
+    assert_eq!(app.groups.len(), 1, "undo paste should remove the pasted group");
+    assert_eq!(app.waveforms.len(), 2, "undo paste should remove the pasted waveforms");
+
+    // Original waveforms should still exist
+    assert!(app.waveforms.contains_key(&wf_id1), "original waveform 1 should still exist");
+    assert!(app.waveforms.contains_key(&wf_id2), "original waveform 2 should still exist");
+}
+
+#[test]
+fn undo_duplicate_group_removes_members() {
+    let mut app = App::new_headless();
+
+    let wf_id1 = new_id();
+    let wf_id2 = new_id();
+    app.waveforms.insert(wf_id1, make_waveform(0.0, 0.0));
+    app.waveforms.insert(wf_id2, make_waveform(200.0, 0.0));
+
+    app.selected.push(HitTarget::Waveform(wf_id1));
+    app.selected.push(HitTarget::Waveform(wf_id2));
+    app.execute_command(CommandAction::CreateGroup);
+    assert_eq!(app.groups.len(), 1);
+
+    // Duplicate
+    let group_id = *app.groups.keys().next().unwrap();
+    app.selected = vec![HitTarget::Group(group_id)];
+    app.duplicate_selected();
+
+    assert_eq!(app.groups.len(), 2);
+    assert_eq!(app.waveforms.len(), 4);
+
+    // Undo
+    app.undo_op();
+
+    assert_eq!(app.groups.len(), 1, "undo duplicate should remove the duplicated group");
+    assert_eq!(app.waveforms.len(), 2, "undo duplicate should remove the duplicated waveforms");
+    assert!(app.waveforms.contains_key(&wf_id1));
+    assert!(app.waveforms.contains_key(&wf_id2));
+}
+
+#[test]
+fn undo_move_group_restores_member_positions() {
+    let mut app = App::new_headless();
+
+    let wf_id1 = new_id();
+    let wf_id2 = new_id();
+    app.waveforms.insert(wf_id1, make_waveform(100.0, 50.0));
+    app.waveforms.insert(wf_id2, make_waveform(300.0, 50.0));
+
+    app.selected.push(HitTarget::Waveform(wf_id1));
+    app.selected.push(HitTarget::Waveform(wf_id2));
+    app.execute_command(CommandAction::CreateGroup);
+    let group_id = *app.groups.keys().next().unwrap();
+
+    // Capture before positions
+    let before_wf1_pos = app.waveforms[&wf_id1].position;
+    let before_wf2_pos = app.waveforms[&wf_id2].position;
+    let before_group = app.groups[&group_id].clone();
+
+    // Simulate moving the group by capturing before states and applying move
+    let before_wf1 = app.waveforms[&wf_id1].clone();
+    let before_wf2 = app.waveforms[&wf_id2].clone();
+
+    // Move group right by 200px
+    app.set_target_pos(&HitTarget::Group(group_id), [
+        before_group.position[0] + 200.0,
+        before_group.position[1],
+    ]);
+
+    // Verify members moved
+    assert!((app.waveforms[&wf_id1].position[0] - (before_wf1_pos[0] + 200.0)).abs() < 0.01);
+    assert!((app.waveforms[&wf_id2].position[0] - (before_wf2_pos[0] + 200.0)).abs() < 0.01);
+
+    // Commit ops like drag-end does: update ops for group + members
+    let after_group = app.groups[&group_id].clone();
+    let after_wf1 = app.waveforms[&wf_id1].clone();
+    let after_wf2 = app.waveforms[&wf_id2].clone();
+    let ops = vec![
+        crate::operations::Operation::UpdateWaveform { id: wf_id1, before: before_wf1, after: after_wf1 },
+        crate::operations::Operation::UpdateWaveform { id: wf_id2, before: before_wf2, after: after_wf2 },
+        crate::operations::Operation::UpdateGroup { id: group_id, before: before_group, after: after_group },
+    ];
+    app.push_op(crate::operations::Operation::Batch(ops));
+
+    // Undo
+    app.undo_op();
+
+    // Members should be back at original positions
+    assert!(
+        (app.waveforms[&wf_id1].position[0] - before_wf1_pos[0]).abs() < 0.01,
+        "wf1 x={} should be back to {}", app.waveforms[&wf_id1].position[0], before_wf1_pos[0]
+    );
+    assert!(
+        (app.waveforms[&wf_id2].position[0] - before_wf2_pos[0]).abs() < 0.01,
+        "wf2 x={} should be back to {}", app.waveforms[&wf_id2].position[0], before_wf2_pos[0]
+    );
+    assert!(
+        (app.groups[&group_id].position[0] - before_wf1_pos[0]).abs() < 0.01,
+        "group position should be restored"
+    );
+}
+
+#[test]
+fn delete_group_also_deletes_members() {
+    let mut app = App::new_headless();
+
+    let wf_id1 = new_id();
+    let wf_id2 = new_id();
+    app.waveforms.insert(wf_id1, make_waveform(0.0, 0.0));
+    app.waveforms.insert(wf_id2, make_waveform(200.0, 0.0));
+
+    app.selected.push(HitTarget::Waveform(wf_id1));
+    app.selected.push(HitTarget::Waveform(wf_id2));
+    app.execute_command(CommandAction::CreateGroup);
+    let group_id = *app.groups.keys().next().unwrap();
+
+    // Select just the group and delete
+    app.selected = vec![HitTarget::Group(group_id)];
+    app.delete_selected();
+
+    assert_eq!(app.groups.len(), 0, "group should be deleted");
+    assert_eq!(app.waveforms.len(), 0, "member waveforms should also be deleted");
+
+    // Undo should restore both group and members
+    app.undo_op();
+    assert_eq!(app.groups.len(), 1, "group should be restored on undo");
+    assert_eq!(app.waveforms.len(), 2, "member waveforms should be restored on undo");
+}
+
+#[test]
+fn alt_drag_group_deep_clones_members() {
+    let mut app = App::new_headless();
+
+    let wf_id1 = new_id();
+    let wf_id2 = new_id();
+    app.waveforms.insert(wf_id1, make_waveform(0.0, 0.0));
+    app.waveforms.insert(wf_id2, make_waveform(200.0, 0.0));
+
+    app.selected.push(HitTarget::Waveform(wf_id1));
+    app.selected.push(HitTarget::Waveform(wf_id2));
+    app.execute_command(CommandAction::CreateGroup);
+    assert_eq!(app.groups.len(), 1);
+    let group_id = *app.groups.keys().next().unwrap();
+    let original_members = app.groups[&group_id].member_ids.clone();
+
+    // Simulate option+drag: begin_move_selection with alt_copy=true
+    app.selected = vec![HitTarget::Group(group_id)];
+    app.begin_move_selection([100.0, 100.0], true, Some(HitTarget::Group(group_id)));
+
+    // Should now have 2 groups
+    assert_eq!(app.groups.len(), 2, "alt+drag should create a second group");
+
+    // Find the new group (not the original)
+    let new_group_id = *app.groups.keys().find(|id| **id != group_id).unwrap();
+    let new_members = app.groups[&new_group_id].member_ids.clone();
+
+    // New group must have same number of members
+    assert_eq!(new_members.len(), 2, "cloned group should have 2 members");
+
+    // All member IDs must be different from the original
+    for mid in &new_members {
+        assert!(!original_members.contains(mid), "member {:?} should be a new clone", mid);
+    }
+
+    // Cloned waveforms must exist
+    for mid in &new_members {
+        assert!(app.waveforms.contains_key(mid), "cloned waveform {:?} must exist", mid);
+    }
+
+    // Total: 2 original + 2 cloned = 4
+    assert_eq!(app.waveforms.len(), 4, "should have 4 waveforms total");
 }

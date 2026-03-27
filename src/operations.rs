@@ -1,6 +1,8 @@
 use crate::ui::waveform::AudioClipData;
 use crate::component::{ComponentDef, ComponentInstance};
 use crate::entity_id::EntityId;
+#[cfg(feature = "native")]
+use crate::storage::ProjectStore;
 use crate::instruments::InstrumentSnapshot;
 use crate::midi::{MidiClip, MidiNote};
 use crate::regions::{ExportRegion, LoopRegion};
@@ -16,6 +18,8 @@ pub struct CommittedOp {
     pub user_id: UserId,
     pub timestamp_ms: u64,
     pub seq: u64,
+    #[serde(skip, default)]
+    pub before_selection: Vec<crate::types::HitTarget>,
 }
 
 /// Invertible operations for undo/redo and network sync.
@@ -213,6 +217,7 @@ pub fn commit_op(op: Operation) -> CommittedOp {
         user_id: local_user_id(),
         timestamp_ms: now_ms(),
         seq: OP_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+        before_selection: Vec::new(),
     }
 }
 
@@ -222,6 +227,7 @@ pub fn commit_op_as(op: Operation, user_id: UserId) -> CommittedOp {
         user_id,
         timestamp_ms: now_ms(),
         seq: OP_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+        before_selection: Vec::new(),
     }
 }
 
@@ -408,6 +414,7 @@ impl Operation {
                 inst.volume = data.volume;
                 inst.pan = data.pan;
                 inst.effect_chain_id = data.effect_chain_id;
+                inst.disabled = data.disabled;
                 app.instruments.insert(*id, inst);
             }
             Operation::DeleteInstrument { id, .. } => {
@@ -422,6 +429,7 @@ impl Operation {
                     inst.volume = after.volume;
                     inst.pan = after.pan;
                     inst.effect_chain_id = after.effect_chain_id;
+                    inst.disabled = after.disabled;
                 }
             }
 
@@ -528,6 +536,11 @@ impl App {
                                 nudge_ops.push(Operation::UpdateTextNote { id, before, after: after.clone() });
                             }
                         }
+                        (HitTarget::Group(id), EntityBeforeState::Group(before)) => {
+                            if let Some(after) = self.groups.get(&id) {
+                                nudge_ops.push(Operation::UpdateGroup { id, before, after: after.clone() });
+                            }
+                        }
                         _ => {}
                     }
                 }
@@ -581,7 +594,8 @@ impl App {
             );
             return;
         }
-        let committed = commit_op_as(op, self.local_user.id);
+        let mut committed = commit_op_as(op, self.local_user.id);
+        committed.before_selection = self.selected.clone();
         log::info!("[SYNC] push_op: {} (seq={}, user={})", committed.op.variant_name(), committed.seq, committed.user_id);
         // If connected, also broadcast to network
         self.network.send_op(committed.clone());
@@ -598,11 +612,14 @@ impl App {
         if let Some(committed) = self.op_undo_stack.pop() {
             // Check if this is a position-only batch (arrow nudge) before applying
             let restore_targets = Self::batch_update_targets(&committed.op);
+            let before_selection = committed.before_selection.clone();
             let inverse = committed.op.invert();
             inverse.apply(self);
             self.op_redo_stack.push(committed);
             if let Some(targets) = restore_targets {
                 self.selected = targets;
+            } else if !before_selection.is_empty() {
+                self.selected = before_selection;
             } else {
                 self.selected.clear();
             }
@@ -646,6 +663,7 @@ impl App {
             Operation::UpdateComponentInstance { id, .. } => return Some(vec![HitTarget::ComponentInstance(*id)]),
             Operation::UpdateMidiClip { id, .. } => return Some(vec![HitTarget::MidiClip(*id)]),
             Operation::UpdateTextNote { id, .. } => return Some(vec![HitTarget::TextNote(*id)]),
+            Operation::UpdateGroup { id, .. } => return Some(vec![HitTarget::Group(*id)]),
             _ => {}
         }
         // Handle batch of update operations (arrow nudge)
@@ -661,6 +679,7 @@ impl App {
                     Operation::UpdateComponentInstance { id, .. } => targets.push(HitTarget::ComponentInstance(*id)),
                     Operation::UpdateMidiClip { id, .. } => targets.push(HitTarget::MidiClip(*id)),
                     Operation::UpdateTextNote { id, .. } => targets.push(HitTarget::TextNote(*id)),
+                    Operation::UpdateGroup { id, .. } => targets.push(HitTarget::Group(*id)),
                     _ => return None, // non-update op → don't preserve selection
                 }
             }

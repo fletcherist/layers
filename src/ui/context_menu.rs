@@ -454,6 +454,13 @@ impl ContextMenu {
                 }
                 entries.push(ContextMenuEntry::Separator);
                 entries.push(ContextMenuEntry::Item(ContextMenuItem {
+                    label: "Create Group",
+                    shortcut: "⌘G",
+                    action: CommandAction::CreateGroup,
+                    checked: false,
+                }));
+                entries.push(ContextMenuEntry::Separator);
+                entries.push(ContextMenuEntry::Item(ContextMenuItem {
                     label: "Select All",
                     shortcut: "⌘A",
                     action: CommandAction::SelectAll,
