@@ -89,6 +89,18 @@ fn record_to_committed(rec: &OpRecord) -> Option<CommittedOp> {
     })
 }
 
+fn eph_kind(msg: &EphemeralMessage) -> &'static str {
+    match msg {
+        EphemeralMessage::CursorMove { .. } => "CursorMove",
+        EphemeralMessage::DragUpdate { .. } => "DragUpdate",
+        EphemeralMessage::DragEnd { .. } => "DragEnd",
+        EphemeralMessage::ViewportUpdate { .. } => "ViewportUpdate",
+        EphemeralMessage::PlaybackUpdate { .. } => "PlaybackUpdate",
+        EphemeralMessage::UserJoined { .. } => "UserJoined",
+        EphemeralMessage::UserLeft { .. } => "UserLeft",
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Spawn the SurrealDB sync client
 // ---------------------------------------------------------------------------
@@ -155,7 +167,7 @@ pub fn spawn_surreal_client(
             .query(
                 "DEFINE TABLE IF NOT EXISTS ops; \
                  DEFINE TABLE IF NOT EXISTS presence; \
-                 DEFINE TABLE IF NOT EXISTS ephemeral;",
+                 DEFINE TABLE IF NOT EXISTS ephemeral DROP;",
             )
             .await
         {
@@ -290,43 +302,62 @@ pub fn spawn_surreal_client(
                     }
                 }
 
-                // Outbound: local ephemeral → SurrealDB
+                // Outbound: local ephemeral → SurrealDB (fire-and-forget)
                 Some(eph) = eph_rx.recv() => {
-                    let (kind, payload_json, fire_and_forget) = match &eph {
-                        EphemeralMessage::CursorMove { .. } => {
-                            ("CursorMove".to_string(), serde_json::to_string(&eph).unwrap_or_default(), false)
+                    // Drain all pending messages and coalesce: keep only the
+                    // latest per kind so we don't flood SurrealDB with stale
+                    // cursor positions when the sender is faster than the DB.
+                    let mut latest: std::collections::HashMap<String, EphemeralMessage> =
+                        std::collections::HashMap::new();
+                    let mut fire_and_forget_msgs: Vec<EphemeralMessage> = Vec::new();
+
+                    // Classify the first message
+                    match &eph {
+                        EphemeralMessage::DragEnd { .. } => fire_and_forget_msgs.push(eph),
+                        EphemeralMessage::UserJoined { .. } | EphemeralMessage::UserLeft { .. } => {}
+                        _ => { let kind = eph_kind(&eph).to_string(); latest.insert(kind, eph); }
+                    }
+
+                    // Drain remaining queued messages
+                    while let Ok(msg) = eph_rx.try_recv() {
+                        match &msg {
+                            EphemeralMessage::DragEnd { .. } => fire_and_forget_msgs.push(msg),
+                            EphemeralMessage::UserJoined { .. } | EphemeralMessage::UserLeft { .. } => {}
+                            _ => { let kind = eph_kind(&msg).to_string(); latest.insert(kind, msg); }
                         }
-                        EphemeralMessage::DragUpdate { .. } => {
-                            ("DragUpdate".to_string(), serde_json::to_string(&eph).unwrap_or_default(), false)
-                        }
-                        EphemeralMessage::DragEnd { .. } => {
-                            ("DragEnd".to_string(), serde_json::to_string(&eph).unwrap_or_default(), true)
-                        }
-                        EphemeralMessage::ViewportUpdate { .. } => {
-                            ("ViewportUpdate".to_string(), serde_json::to_string(&eph).unwrap_or_default(), false)
-                        }
-                        EphemeralMessage::PlaybackUpdate { .. } => {
-                            ("PlaybackUpdate".to_string(), serde_json::to_string(&eph).unwrap_or_default(), false)
-                        }
-                        // Don't send UserJoined/UserLeft through ephemeral table
-                        _ => continue,
-                    };
-                    let record = EphemeralRecord {
-                        user_id: user_id_str.clone(),
-                        kind: kind.clone(),
-                        payload_json,
-                        updated_at_ms: now_ms(),
-                    };
-                    if fire_and_forget {
-                        // Use create for one-shot messages so they aren't overwritten
-                        let _: Result<Option<EphemeralRecord>, _> =
-                            db.create("ephemeral").content(record).await;
-                    } else {
-                        // Use upsert keyed by user+kind so different message types
-                        // from the same user don't overwrite each other
+                    }
+
+                    // Send coalesced messages (fire-and-forget, don't block select loop)
+                    for (kind, msg) in latest {
+                        let payload_json = serde_json::to_string(&msg).unwrap_or_default();
+                        let record = EphemeralRecord {
+                            user_id: user_id_str.clone(),
+                            kind: kind.clone(),
+                            payload_json,
+                            updated_at_ms: now_ms(),
+                        };
                         let record_key = format!("{}__{}", user_id_str, kind);
-                        let _: Result<Option<EphemeralRecord>, _> =
-                            db.upsert(("ephemeral", &*record_key)).content(record).await;
+                        let db2 = db.clone();
+                        tokio::spawn(async move {
+                            let _: Result<Option<EphemeralRecord>, _> =
+                                db2.upsert(("ephemeral", &*record_key)).content(record).await;
+                        });
+                    }
+
+                    // Send fire-and-forget messages (DragEnd etc.)
+                    for msg in fire_and_forget_msgs {
+                        let payload_json = serde_json::to_string(&msg).unwrap_or_default();
+                        let record = EphemeralRecord {
+                            user_id: user_id_str.clone(),
+                            kind: eph_kind(&msg).to_string(),
+                            payload_json,
+                            updated_at_ms: now_ms(),
+                        };
+                        let db2 = db.clone();
+                        tokio::spawn(async move {
+                            let _: Result<Option<EphemeralRecord>, _> =
+                                db2.create("ephemeral").content(record).await;
+                        });
                     }
                 }
 
@@ -429,12 +460,8 @@ pub fn spawn_surreal_client(
                         .bind(("cutoff", cutoff))
                         .await;
 
-                    // GC old fire-and-forget ephemeral records (>5s old)
-                    let eph_cutoff = now_ms().saturating_sub(5_000);
-                    let _ = db
-                        .query("DELETE ephemeral WHERE updated_at_ms < $cutoff")
-                        .bind(("cutoff", eph_cutoff))
-                        .await;
+                    // No ephemeral GC needed — table is DEFINE TABLE ... DROP,
+                    // so records are discarded automatically after broadcast.
                 }
             }
         }
