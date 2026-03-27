@@ -1054,11 +1054,7 @@ impl CommandPalette {
                                 let pill_h = 20.0 * scale;
                                 let pill_x = pos[0] + size[0] - margin - (pill_w + 10.0) * scale;
                                 let pill_y = y + (PALETTE_ITEM_HEIGHT * scale - pill_h) * 0.5;
-                                let border_color = if is_inst {
-                                    crate::theme::with_alpha(settings.theme.pill_instrument, 0.25)
-                                } else {
-                                    crate::theme::with_alpha(settings.theme.pill_effect, 0.25)
-                                };
+                                let border_color = crate::theme::with_alpha(settings.theme.text_secondary, 0.25);
                                 out.push(InstanceRaw {
                                     position: [pill_x, pill_y],
                                     size: [pill_w * scale, pill_h],
@@ -1404,11 +1400,7 @@ impl CommandPalette {
 
                             // Type label pill: "Instrument" or "Effect"
                             let label = if entry.is_instrument { "Instrument" } else { "Effect" };
-                            let color = if entry.is_instrument {
-                                crate::theme::RuntimeTheme::text_u8(theme.pill_instrument, 220)
-                            } else {
-                                crate::theme::RuntimeTheme::text_u8(theme.pill_effect, 220)
-                            };
+                            let color = crate::theme::RuntimeTheme::text_u8(theme.text_secondary, 220);
                             let label_font = 10.5 * scale;
                             let label_line = 14.0 * scale;
                             let pill_w = if entry.is_instrument { 72.0 } else { 44.0 };
@@ -1512,7 +1504,7 @@ impl CommandPalette {
                     let placeholder = if self.mode == PaletteMode::ShareSession {
                         "e.g. my-track"
                     } else {
-                        "e.g. db.layers.audio/my-track"
+                        "e.g. https://layers.audio/projects/..."
                     };
                     (placeholder.to_string(), crate::theme::RuntimeTheme::text_u8(theme.text_dim, 120))
                 } else {

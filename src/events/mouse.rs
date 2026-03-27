@@ -7,7 +7,7 @@ impl App {
         match button {
         MouseButton::Middle => match state {
             ElementState::Pressed => {
-                if self.context_menu.is_some() || self.settings_window.is_some() || self.export_window.is_some() {
+                if self.context_menu.is_some() || self.settings_window.is_some() || self.export_window.is_some() || self.share_window.is_some() {
                     return;
                 }
                 self.command_palette = None;
@@ -426,6 +426,48 @@ impl App {
                     }
                     self.request_redraw();
                     return;
+                }
+
+                // Share window click
+                if self.share_window.is_some() {
+                    let (scr_w, scr_h, scale) = self.screen_info();
+                    let inside = self.share_window.as_ref().map_or(false, |sw| {
+                        sw.contains(self.mouse_pos, scr_w, scr_h, scale)
+                    });
+                    if inside {
+                        let copy_clicked = self.share_window.as_ref().map_or(false, |sw| {
+                            sw.hit_copy_button(self.mouse_pos, scr_w, scr_h, scale)
+                        });
+                        if copy_clicked {
+                            let url = self.share_window.as_ref().map(|sw| sw.url.clone());
+                            if let Some(url) = url {
+                                self.copy_share_url_to_clipboard(&url);
+                            }
+                            if let Some(sw) = &mut self.share_window {
+                                sw.copied = true;
+                                sw.copied_timer = 2.0;
+                            }
+                        }
+                    } else {
+                        self.share_window = None;
+                    }
+                    self.request_redraw();
+                    return;
+                }
+
+                // Share button click
+                {
+                    let (scr_w, _scr_h, scale) = self.screen_info();
+                    let (sbp, sbs) = crate::share_button_rect(scr_w, scale);
+                    let on_btn = self.mouse_pos[0] >= sbp[0]
+                        && self.mouse_pos[0] <= sbp[0] + sbs[0]
+                        && self.mouse_pos[1] >= sbp[1]
+                        && self.mouse_pos[1] <= sbp[1] + sbs[1];
+                    if on_btn {
+                        self.open_share_window();
+                        self.request_redraw();
+                        return;
+                    }
                 }
 
                 // Settings window click

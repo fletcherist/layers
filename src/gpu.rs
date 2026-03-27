@@ -722,6 +722,8 @@ impl Gpu {
         waveforms: &indexmap::IndexMap<crate::entity_id::EntityId, waveform::WaveformView>,
         editing_waveform_name: Option<(crate::entity_id::EntityId, &str)>,
         export_window: Option<&crate::ui::export_window::ExportWindow>,
+        share_window: Option<&crate::ui::share_window::ShareWindow>,
+        share_button_hovered: bool,
         settings_window: Option<&SettingsWindow>,
         settings: &Settings,
         toast_manager: &toast::ToastManager,
@@ -854,6 +856,26 @@ impl Gpu {
 
         if let Some(ew) = export_window {
             overlay_instances.extend(ew.build_instances(settings, w, h, self.scale_factor));
+        }
+
+        // Share button (floating pill, top-right corner) — always rendered
+        {
+            let (sbp, sbs) = crate::share_button_rect(w, self.scale_factor);
+            let btn_color = if share_button_hovered {
+                settings.theme.bg_elevated
+            } else {
+                settings.theme.bg_surface
+            };
+            overlay_instances.push(InstanceRaw {
+                position: sbp,
+                size: sbs,
+                color: btn_color,
+                border_radius: sbs[1] * 0.5,
+            });
+        }
+
+        if let Some(sw) = share_window {
+            overlay_instances.extend(sw.build_instances(settings, w, h, self.scale_factor));
         }
 
         overlay_instances.extend(toast_manager.build_instances(w, h, self.scale_factor));
@@ -1086,6 +1108,45 @@ impl Gpu {
 
         // Context menu text is rendered in the top overlay layer — see top_text_buffers below
 
+        // Share button text
+        {
+            let (sbp, sbs) = crate::share_button_rect(w, scale);
+            let te = TextEntry {
+                text: "Share".to_string(),
+                x: sbp[0],
+                y: sbp[1] + (sbs[1] - 13.0 * scale) * 0.5,
+                font_size: 12.0 * scale,
+                line_height: 13.0 * scale,
+                color: crate::theme::RuntimeTheme::text_u8(settings.theme.text_primary, 220),
+                weight: 500,
+                max_width: sbs[0],
+                bounds: None,
+                center: true,
+            };
+            let buf = shape_text_entry(&mut self.font_system, &te);
+            text_buffers.push(buf);
+            text_meta.push((
+                te.x,
+                te.y,
+                TextColor::rgba(te.color[0], te.color[1], te.color[2], te.color[3]),
+                full_bounds,
+            ));
+        }
+
+        // Share window text
+        if let Some(sw) = share_window {
+            for te in sw.get_text_entries(settings, w, h, scale) {
+                let buf = shape_text_entry(&mut self.font_system, &te);
+                text_buffers.push(buf);
+                text_meta.push((
+                    te.x,
+                    te.y,
+                    TextColor::rgba(te.color[0], te.color[1], te.color[2], te.color[3]),
+                    full_bounds,
+                ));
+            }
+        }
+
         // Export window text
         if let Some(ew) = export_window {
             let popup_rect = ew.open_dropdown_popup_rect(w, h, scale);
@@ -1157,7 +1218,7 @@ impl Gpu {
 
         // Export region "Render" label with duration (world-space -> screen-space)
         for (_er_id, er) in export_regions {
-            if settings_window.is_none() && command_palette.is_none() && export_window.is_none() {
+            if settings_window.is_none() && command_palette.is_none() && export_window.is_none() && share_window.is_none() {
                 let pill_world_x = er.position[0] + 4.0 / camera.zoom;
                 let pill_world_y = er.position[1] + 4.0 / camera.zoom;
                 let pill_screen_x = (pill_world_x - camera.position[0]) * camera.zoom;
@@ -1214,7 +1275,7 @@ impl Gpu {
         }
 
         // Loop region labels (audio-sample style, world-space -> screen-space)
-        if settings_window.is_none() && command_palette.is_none() && export_window.is_none() {
+        if settings_window.is_none() && command_palette.is_none() && export_window.is_none() && share_window.is_none() {
             for (idx, (_lr_id, lr)) in loop_regions.iter().enumerate() {
                 if !lr.enabled {
                     continue;
@@ -1291,7 +1352,7 @@ impl Gpu {
         let mut old_wf_cache = std::mem::take(&mut self.cached_wf_label_bufs);
         let mut new_wf_cache: Vec<(TextLabelCacheKey, TextBuffer)> = Vec::new();
         let mut wf_label_meta: Vec<(f32, f32, TextColor, TextBounds)> = Vec::new();
-        if settings_window.is_none() && command_palette.is_none() && export_window.is_none()
+        if settings_window.is_none() && command_palette.is_none() && export_window.is_none() && share_window.is_none() && share_window.is_none()
         { for (wf_idx, wf) in waveforms.iter() {
             if hidden_take_children.contains(wf_idx) { continue; }
             let wf_right = wf.position[0] + wf.size[0];
@@ -1405,7 +1466,7 @@ impl Gpu {
         let mut old_inst_cache = std::mem::take(&mut self.cached_inst_label_bufs);
         let mut new_inst_cache: Vec<(TextLabelCacheKey, TextBuffer)> = Vec::new();
         let mut inst_label_meta: Vec<(f32, f32, TextColor, TextBounds)> = Vec::new();
-        if settings_window.is_none() && command_palette.is_none() && export_window.is_none()
+        if settings_window.is_none() && command_palette.is_none() && export_window.is_none() && share_window.is_none()
         { for (_mc_idx, mc) in midi_clips.iter() {
             if mc.disabled { continue; }
             let mc_right = mc.position[0] + mc.size[0];
@@ -1498,7 +1559,7 @@ impl Gpu {
         let mut old_tn_cache = std::mem::take(&mut self.cached_text_note_bufs);
         let mut new_tn_cache: Vec<(TextLabelCacheKey, TextBuffer)> = Vec::new();
         let mut tn_label_meta: Vec<(f32, f32, TextColor, TextBounds)> = Vec::new();
-        if settings_window.is_none() && command_palette.is_none() && export_window.is_none() {
+        if settings_window.is_none() && command_palette.is_none() && export_window.is_none() && share_window.is_none() {
             for (_tn_id, tn) in text_notes.iter() {
                 let tn_right = tn.position[0] + tn.size[0];
                 let tn_bottom = tn.position[1] + tn.size[1];
@@ -1677,7 +1738,7 @@ impl Gpu {
         let mut old_grp_cache = std::mem::take(&mut self.cached_group_label_bufs);
         let mut new_grp_cache: Vec<(TextLabelCacheKey, TextBuffer)> = Vec::new();
         let mut grp_label_meta: Vec<(f32, f32, TextColor, TextBounds)> = Vec::new();
-        if settings_window.is_none() && command_palette.is_none() && export_window.is_none() {
+        if settings_window.is_none() && command_palette.is_none() && export_window.is_none() && share_window.is_none() {
             for (_grp_id, grp) in groups.iter() {
                 let grp_right = grp.position[0] + grp.size[0];
                 let grp_bottom = grp.position[1] + grp.size[1];
@@ -1742,7 +1803,7 @@ impl Gpu {
         let mut old_auto_cache = std::mem::take(&mut self.cached_auto_dot_bufs);
         let mut new_auto_cache: Vec<(TextLabelCacheKey, TextBuffer)> = Vec::new();
         let mut auto_label_meta: Vec<(f32, f32, TextColor, TextBounds)> = Vec::new();
-        if automation_mode && settings_window.is_none() && command_palette.is_none() && export_window.is_none() {
+        if automation_mode && settings_window.is_none() && command_palette.is_none() && export_window.is_none() && share_window.is_none() {
             for (_wf_id, wf) in waveforms.iter() {
                 if hidden_take_children.contains(_wf_id) { continue; }
                 let wf_right = wf.position[0] + wf.size[0];
@@ -1826,7 +1887,7 @@ impl Gpu {
         let mut new_lane_cache: Vec<(TextLabelCacheKey, TextBuffer)> = Vec::new();
         let mut lane_label_meta: Vec<(f32, f32, TextColor, TextBounds)> = Vec::new();
         self.auto_lane_close_rects.clear();
-        if automation_mode && settings_window.is_none() && command_palette.is_none() && export_window.is_none() {
+        if automation_mode && settings_window.is_none() && command_palette.is_none() && export_window.is_none() && share_window.is_none() {
             for (wf_id, wf) in waveforms.iter() {
                 if hidden_take_children.contains(wf_id) { continue; }
                 let wf_right = wf.position[0] + wf.size[0];
@@ -1909,7 +1970,7 @@ impl Gpu {
         let mut old_midi_cache = std::mem::take(&mut self.cached_midi_note_label_bufs);
         let mut new_midi_cache: Vec<(TextLabelCacheKey, TextBuffer)> = Vec::new();
         let mut midi_label_meta: Vec<(f32, f32, TextColor, TextBounds)> = Vec::new();
-        if settings_window.is_none() && command_palette.is_none() && export_window.is_none() {
+        if settings_window.is_none() && command_palette.is_none() && export_window.is_none() && share_window.is_none() {
             let browser_right_px = sample_browser.map_or(0.0, |b| b.panel_width(scale));
 
             for (mc_idx, mc) in midi_clips.iter() {
@@ -2018,7 +2079,7 @@ impl Gpu {
         let mut old_pn_cache = std::mem::take(&mut self.cached_midi_per_note_bufs);
         let mut new_pn_cache: Vec<(TextLabelCacheKey, TextBuffer)> = Vec::new();
         let mut pn_label_meta: Vec<(f32, f32, TextColor, TextBounds)> = Vec::new();
-        if settings_window.is_none() && command_palette.is_none() && export_window.is_none() {
+        if settings_window.is_none() && command_palette.is_none() && export_window.is_none() && share_window.is_none() {
             for (mc_idx, mc) in midi_clips.iter() {
                 let mc_right = mc.position[0] + mc.size[0];
                 let mc_bottom = mc.position[1] + mc.size[1];

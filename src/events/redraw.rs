@@ -7,6 +7,9 @@ impl App {
         self.update_recording_waveform();
         self.poll_pending_audio_loads();
         self.poll_export_progress();
+        if let Some(sw) = &mut self.share_window {
+            sw.tick(1.0 / 60.0);
+        }
 
         // Keep redrawing while sample preview is playing (animates playhead)
         #[cfg(feature = "native")]
@@ -246,6 +249,8 @@ impl App {
                     .as_ref()
                     .map(|(idx, s)| (*idx, s.as_str())),
                 self.export_window.as_ref(),
+                self.share_window.as_ref(),
+                self.share_button_hovered,
                 {
                     #[cfg(feature = "native")]
                     { self.settings_window.as_ref() }

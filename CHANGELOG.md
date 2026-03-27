@@ -1,3 +1,6 @@
+- 2026-03-27: fix: audio recording now syncs to remote peers in realtime collaboration (51.4k loc)
+- 2026-03-27: feat: Share button (top-right) + Share window with copy link + Join Session accepts layers.audio/projects/... URLs + base62 project IDs (51.4k loc)
+- 2026-03-27: fix: instrument/effect pills in palette use same neutral color as sample folders (51.4k loc)
 - 2026-03-27: fix: preserve warp mode/settings when slicing audio clips with cmd+e (50.9k loc)
 - 2026-03-27: fix: remove colored dots from browser plugin list (50.9k loc)
 - 2026-03-27: fix: remove blue accent border from search bar on focus (50.9k loc)

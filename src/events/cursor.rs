@@ -43,6 +43,32 @@ impl App {
             }
         }
 
+        // Share window hover
+        if self.share_window.is_some() {
+            let (scr_w, scr_h, scale) = self.screen_info();
+            let pos = self.mouse_pos;
+            if let Some(sw) = &mut self.share_window {
+                sw.update_hover(pos, scr_w, scr_h, scale);
+            }
+            self.request_redraw();
+            return;
+        }
+
+        // Share button hover (always update)
+        {
+            let (scr_w, _scr_h, scale) = self.screen_info();
+            let (sbp, sbs) = crate::share_button_rect(scr_w, scale);
+            let pos = self.mouse_pos;
+            let was_hovered = self.share_button_hovered;
+            self.share_button_hovered = pos[0] >= sbp[0]
+                && pos[0] <= sbp[0] + sbs[0]
+                && pos[1] >= sbp[1]
+                && pos[1] <= sbp[1] + sbs[1];
+            if self.share_button_hovered != was_hovered {
+                self.request_redraw();
+            }
+        }
+
         if let Some((initial_bpm, initial_y)) = self.dragging_bpm {
             let dy = initial_y - self.mouse_pos[1];
             let new_bpm = (initial_bpm + dy * 0.5).clamp(20.0, 999.0);

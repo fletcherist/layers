@@ -33,6 +33,7 @@ mod surreal_client;
 mod plugins;
 mod regions;
 mod settings;
+mod share_id;
 mod takes;
 mod text_note;
 pub mod theme;
@@ -173,12 +174,21 @@ const SESSION_DB_HOST: &str = "db.layers.audio";
 pub(crate) fn parse_session_id(input: &str) -> String {
     let s = input.trim();
     for prefix in &[
+        "https://layers.audio/projects/",
+        "http://layers.audio/projects/",
+        "layers.audio/projects/",
         "wss://db.layers.audio:8000/",
         "https://db.layers.audio/",
         "http://db.layers.audio/",
         "db.layers.audio/",
     ] {
         if let Some(rest) = s.strip_prefix(prefix) {
+            // base62 IDs are case-sensitive; legacy IDs use lowercase
+            let rest = rest.trim_end_matches('/');
+            if rest.chars().all(|c| c.is_ascii_alphanumeric()) && rest.len() == 22 {
+                // Looks like a base62 share ID — preserve case
+                return rest.to_string();
+            }
             return rest.to_lowercase();
         }
     }
@@ -186,6 +196,14 @@ pub(crate) fn parse_session_id(input: &str) -> String {
 }
 
 pub(crate) const MIDI_AUTO_EDIT_ZOOM_THRESHOLD: f32 = 2.0;
+
+pub(crate) fn share_button_rect(screen_w: f32, scale: f32) -> ([f32; 2], [f32; 2]) {
+    let w = 72.0 * scale;
+    let h = 28.0 * scale;
+    let x = screen_w - w - 12.0 * scale;
+    let y = 10.0 * scale;
+    ([x, y], [w, h])
+}
 
 pub(crate) fn format_playback_time(secs: f64) -> String {
     let minutes = (secs / 60.0) as u32;
@@ -349,6 +367,10 @@ struct App {
     settings: Settings,
     settings_window: Option<NativeSettingsWindow>,
     export_window: Option<ui::export_window::ExportWindow>,
+    share_window: Option<ui::share_window::ShareWindow>,
+    share_button_hovered: bool,
+    /// Base62 share ID for this project — generated on first Share click.
+    share_id: Option<String>,
     menu_state: Option<NativeMenuState>,
     toast_manager: ui::toast::ToastManager,
     tooltip: ui::tooltip::TooltipState,
@@ -529,6 +551,9 @@ impl App {
             settings: Settings::default(),
             settings_window: None,
             export_window: None,
+            share_window: None,
+            share_button_hovered: false,
+            share_id: None,
             menu_state: None,
             toast_manager: ui::toast::ToastManager::new(),
             tooltip: ui::tooltip::TooltipState::new(),
@@ -1280,6 +1305,9 @@ impl App {
             settings,
             settings_window: None,
             export_window: None,
+            share_window: None,
+            share_button_hovered: false,
+            share_id: None,
             menu_state: None,
             toast_manager: ui::toast::ToastManager::new(),
             tooltip: ui::tooltip::TooltipState::new(),
@@ -1570,6 +1598,43 @@ impl App {
 
     #[cfg(not(feature = "native"))]
     fn submit_session(&mut self, _is_share: bool, _input: &str) {}
+
+    fn open_share_window(&mut self) {
+        // Generate share_id if this project hasn't been shared yet
+        if self.share_id.is_none() {
+            self.share_id = Some(share_id::generate());
+        }
+        let id = self.share_id.as_ref().unwrap().clone();
+
+        // Auto-connect to the session if not already connected to it
+        #[cfg(feature = "native")]
+        if self.connect_project_id.as_deref() != Some(id.as_str()) {
+            self.connect_remote_session(&id);
+        }
+
+        let url = format!("https://layers.audio/projects/{id}");
+        self.share_window = Some(ui::share_window::ShareWindow::new(url));
+    }
+
+    #[cfg(feature = "native")]
+    fn copy_share_url_to_clipboard(&self, url: &str) {
+        #[cfg(target_os = "macos")]
+        {
+            use std::io::Write;
+            if let Ok(mut child) = std::process::Command::new("pbcopy")
+                .stdin(std::process::Stdio::piped())
+                .spawn()
+            {
+                if let Some(stdin) = child.stdin.as_mut() {
+                    let _ = stdin.write_all(url.as_bytes());
+                }
+                let _ = child.wait();
+            }
+        }
+    }
+
+    #[cfg(not(feature = "native"))]
+    fn copy_share_url_to_clipboard(&self, _url: &str) {}
 
     fn disconnect_session(&mut self) {
         if self.network.mode() == network::NetworkMode::Offline {
@@ -3081,6 +3146,8 @@ impl App {
             let loaded = self.recorder.as_mut().unwrap().stop();
             if let Some(loaded) = loaded {
                 if let Some(wf_id) = self.recording_waveform_id.take() {
+                    // Capture before-state for UpdateWaveform op sent after upload
+                    let wf_before = self.waveforms.get(&wf_id).cloned();
                     if let Some(wf) = self.waveforms.get_mut(&wf_id) {
                         let filename = wf.audio.filename.clone();
                         wf.size[0] = loaded.width;
@@ -3111,6 +3178,16 @@ impl App {
                         rs.save_audio(&wf_id_str, &wav_bytes, "wav");
                     }
                     self.source_audio_files.insert(wf_id, (wav_bytes, "wav".to_string()));
+                    // Notify remote peers that recording is finalized and audio is available
+                    if let Some(before) = wf_before {
+                        if let Some(after) = self.waveforms.get(&wf_id) {
+                            self.push_op(operations::Operation::UpdateWaveform {
+                                id: wf_id,
+                                before,
+                                after: after.clone(),
+                            });
+                        }
+                    }
                     // Finalize take group if recording into a selected waveform
                     if let Some(parent_id) = self.recording_take_parent_id.take() {
                         if let Some(parent) = self.waveforms.get(&parent_id) {

@@ -80,6 +80,14 @@ impl App {
                 }
             }
 
+            if self.share_window.is_some() {
+                if matches!(event.logical_key, Key::Named(NamedKey::Escape)) {
+                    self.share_window = None;
+                    self.request_redraw();
+                    return;
+                }
+            }
+
             if self.context_menu.is_some() {
                 if matches!(event.logical_key, Key::Named(NamedKey::Escape)) {
                     self.context_menu = None;

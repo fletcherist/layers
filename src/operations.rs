@@ -884,7 +884,7 @@ impl App {
         // After applying, load audio from remote storage for any new waveforms
         #[cfg(feature = "native")]
         if self.remote_storage.is_some() {
-            let wf_ids = collect_create_waveform_ids(&committed.op);
+            let wf_ids = collect_waveform_ids_needing_audio(&committed.op);
             for wf_id in wf_ids {
                 self.load_waveform_audio_from_remote(wf_id);
             }
@@ -955,13 +955,14 @@ impl App {
 }
 
 #[cfg(feature = "native")]
-fn collect_create_waveform_ids(op: &Operation) -> Vec<EntityId> {
+fn collect_waveform_ids_needing_audio(op: &Operation) -> Vec<EntityId> {
     let mut ids = Vec::new();
     match op {
         Operation::CreateWaveform { id, .. } => ids.push(*id),
+        Operation::UpdateWaveform { id, .. } => ids.push(*id),
         Operation::Batch(ops) => {
             for o in ops {
-                ids.extend(collect_create_waveform_ids(o));
+                ids.extend(collect_waveform_ids_needing_audio(o));
             }
         }
         _ => {}
