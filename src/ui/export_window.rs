@@ -267,7 +267,7 @@ impl ExportWindow {
         out.push(InstanceRaw {
             position: wp,
             size: ws,
-            color: t.bg_window,
+            color: t.bg_base,
             border_radius: br,
         });
 

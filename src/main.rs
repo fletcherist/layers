@@ -26,6 +26,8 @@ mod overlap;
 #[cfg(feature = "native")]
 mod paulstretch;
 #[cfg(feature = "native")]
+mod warp;
+#[cfg(feature = "native")]
 mod surreal_client;
 #[cfg(feature = "native")]
 mod plugins;
@@ -347,7 +349,6 @@ struct App {
     settings: Settings,
     settings_window: Option<NativeSettingsWindow>,
     export_window: Option<ui::export_window::ExportWindow>,
-    plugin_editor: Option<ui::plugin_editor::PluginEditorWindow>,
     menu_state: Option<NativeMenuState>,
     toast_manager: ui::toast::ToastManager,
     tooltip: ui::tooltip::TooltipState,
@@ -528,7 +529,6 @@ impl App {
             settings: Settings::default(),
             settings_window: None,
             export_window: None,
-            plugin_editor: None,
             menu_state: None,
             toast_manager: ui::toast::ToastManager::new(),
             tooltip: ui::tooltip::TooltipState::new(),
@@ -784,6 +784,12 @@ impl App {
                         wf.size[0] = original_duration_px / 2.0_f32.powf(wf.pitch_semitones / 12.0);
                     }
                 }
+                ui::waveform::WarpMode::Complex => {
+                    if let Some(clip) = self.audio_clips.get(&wf_id) {
+                        let original_duration_px = clip.duration_secs * PIXELS_PER_SECOND;
+                        wf.size[0] = original_duration_px * (wf.sample_bpm / self.bpm);
+                    }
+                }
                 ui::waveform::WarpMode::Off => {}
                 ui::waveform::WarpMode::PaulStretch => {}
             }
@@ -922,6 +928,7 @@ impl App {
                             1 => ui::waveform::WarpMode::RePitch,
                             2 => ui::waveform::WarpMode::Semitone,
                             3 => ui::waveform::WarpMode::PaulStretch,
+                            4 => ui::waveform::WarpMode::Complex,
                             _ => ui::waveform::WarpMode::Off,
                         },
                         sample_bpm: if sw.sample_bpm > 0.0 { sw.sample_bpm } else if state.bpm > 0.0 { state.bpm } else { DEFAULT_BPM },
@@ -1273,7 +1280,6 @@ impl App {
             settings,
             settings_window: None,
             export_window: None,
-            plugin_editor: None,
             menu_state: None,
             toast_manager: ui::toast::ToastManager::new(),
             tooltip: ui::tooltip::TooltipState::new(),
@@ -1718,6 +1724,10 @@ impl App {
                     sample_bpm_focused,
                     add_effect_hovered: false,
                     export_button_hovered: false,
+                    reverse_button_hovered: false,
+                    warp_button_hovered: false,
+                    warp_selector_hovered: false,
+                    paulstretch_render_button_hovered: false,
                     group_name: String::new(),
                     group_member_count: 0,
                     multi_target_ids: wf_ids,
@@ -1779,6 +1789,10 @@ impl App {
                     sample_bpm_focused: false,
                     add_effect_hovered: false,
                     export_button_hovered: false,
+                    reverse_button_hovered: false,
+                    warp_button_hovered: false,
+                    warp_selector_hovered: false,
+                    paulstretch_render_button_hovered: false,
                     group_name: name,
                     group_member_count: member_count,
                     multi_target_ids: Vec::new(),
@@ -1825,6 +1839,10 @@ impl App {
                 sample_bpm_focused: false,
                 add_effect_hovered: false,
                 export_button_hovered: false,
+                reverse_button_hovered: false,
+                    warp_button_hovered: false,
+                    warp_selector_hovered: false,
+                    paulstretch_render_button_hovered: false,
                 group_name: String::new(),
                 group_member_count: 0,
                 multi_target_ids: vec![wf_id],
@@ -1875,6 +1893,10 @@ impl App {
                 sample_bpm_focused: false,
                 add_effect_hovered: false,
                 export_button_hovered: false,
+                reverse_button_hovered: false,
+                    warp_button_hovered: false,
+                    warp_selector_hovered: false,
+                    paulstretch_render_button_hovered: false,
                 group_name: String::new(),
                 group_member_count: 0,
                 multi_target_ids: Vec::new(),
@@ -1924,6 +1946,10 @@ impl App {
             sample_bpm_focused: false,
             add_effect_hovered: false,
             export_button_hovered: false,
+            reverse_button_hovered: false,
+                    warp_button_hovered: false,
+                    warp_selector_hovered: false,
+                    paulstretch_render_button_hovered: false,
             group_name: "Main".to_string(),
             group_member_count: member_count,
             multi_target_ids: Vec::new(),
@@ -2356,6 +2382,8 @@ impl App {
             let mut warp_modes: Vec<u8> = Vec::new();
             let mut sample_bpms: Vec<f32> = Vec::new();
             let mut pitch_semitones_vec: Vec<f32> = Vec::new();
+            let mut left_buffers: Vec<Option<std::sync::Arc<Vec<f32>>>> = Vec::new();
+            let mut right_buffers: Vec<Option<std::sync::Arc<Vec<f32>>>> = Vec::new();
             let mut chain_plugins_per_clip: Vec<Vec<std::sync::Arc<std::sync::Mutex<Option<effects::PluginGuiHandle>>>>> = Vec::new();
             let mut chain_latencies: Vec<u32> = Vec::new();
             let mut group_bus_indices: Vec<Option<usize>> = Vec::new();
@@ -2420,9 +2448,18 @@ impl App {
                 sample_offsets.push(wf.sample_offset_px);
                 vol_autos.push(wf.automation.volume_lane().points.iter().map(|p| (p.t, p.value)).collect());
                 pan_autos.push(wf.automation.pan_lane().points.iter().map(|p| (p.t, p.value)).collect());
-                warp_modes.push(match wf.warp_mode { ui::waveform::WarpMode::RePitch => 1, ui::waveform::WarpMode::Semitone => 2, ui::waveform::WarpMode::PaulStretch => 3, _ => 0 });
+                warp_modes.push(match wf.warp_mode { ui::waveform::WarpMode::RePitch => 1, ui::waveform::WarpMode::Semitone => 2, ui::waveform::WarpMode::PaulStretch => 3, ui::waveform::WarpMode::Complex => 4, _ => 0 });
                 sample_bpms.push(wf.sample_bpm);
                 pitch_semitones_vec.push(wf.pitch_semitones);
+
+                // Stereo buffers for Complex warp mode
+                if wf.warp_mode == ui::waveform::WarpMode::Complex {
+                    left_buffers.push(Some(wf.audio.left_samples.clone()));
+                    right_buffers.push(Some(wf.audio.right_samples.clone()));
+                } else {
+                    left_buffers.push(None);
+                    right_buffers.push(None);
+                }
 
                 let is_shared = wf.effect_chain_id
                     .map(|cid| chain_id_to_bus_idx.contains_key(&cid))
@@ -2476,8 +2513,16 @@ impl App {
                                 sample_offsets.push(wf.sample_offset_px);
                                 vol_autos.push(wf.automation.volume_lane().points.iter().map(|p| (p.t, p.value)).collect());
                                 pan_autos.push(wf.automation.pan_lane().points.iter().map(|p| (p.t, p.value)).collect());
-                                warp_modes.push(match wf.warp_mode { ui::waveform::WarpMode::RePitch => 1, ui::waveform::WarpMode::Semitone => 2, ui::waveform::WarpMode::PaulStretch => 3, _ => 0 });
+                                warp_modes.push(match wf.warp_mode { ui::waveform::WarpMode::RePitch => 1, ui::waveform::WarpMode::Semitone => 2, ui::waveform::WarpMode::PaulStretch => 3, ui::waveform::WarpMode::Complex => 4, _ => 0 });
                                 sample_bpms.push(wf.sample_bpm);
+
+                                if wf.warp_mode == ui::waveform::WarpMode::Complex {
+                                    left_buffers.push(Some(wf.audio.left_samples.clone()));
+                                    right_buffers.push(Some(wf.audio.right_samples.clone()));
+                                } else {
+                                    left_buffers.push(None);
+                                    right_buffers.push(None);
+                                }
 
                                 let is_shared = wf.effect_chain_id
                                     .map(|cid| chain_id_to_bus_idx.contains_key(&cid))
@@ -2513,7 +2558,7 @@ impl App {
             }
 
             let owned_clips: Vec<AudioClipData> = clips.iter().map(|c| (*c).clone()).collect();
-            engine.update_clips(&positions, &sizes, &owned_clips, &fade_ins, &fade_outs, &fade_in_curves, &fade_out_curves, &volumes, &pans, &sample_offsets, &vol_autos, &pan_autos, &warp_modes, &sample_bpms, self.bpm, &pitch_semitones_vec, &chain_plugins_per_clip, &chain_latencies, &group_bus_indices, &chain_bus_indices, &entity_ids);
+            engine.update_clips(&positions, &sizes, &owned_clips, &fade_ins, &fade_outs, &fade_in_curves, &fade_out_curves, &volumes, &pans, &sample_offsets, &vol_autos, &pan_autos, &warp_modes, &sample_bpms, self.bpm, &pitch_semitones_vec, &chain_plugins_per_clip, &chain_latencies, &group_bus_indices, &chain_bus_indices, &entity_ids, &left_buffers, &right_buffers);
             self.sync_instrument_regions(&group_id_to_bus_idx, &group_buses);
             engine.update_group_buses(group_buses);
             engine.update_chain_buses(chain_buses);
@@ -3367,7 +3412,7 @@ impl App {
                 fade_out_curve: wf.fade_out_curve,
                 volume: wf.volume,
                 buffer_offset_secs: wf.sample_offset_px as f64 / audio::PIXELS_PER_SECOND as f64,
-                warp_mode: match wf.warp_mode { ui::waveform::WarpMode::RePitch => 1, ui::waveform::WarpMode::Semitone => 2, ui::waveform::WarpMode::PaulStretch => 3, _ => 0 },
+                warp_mode: match wf.warp_mode { ui::waveform::WarpMode::RePitch => 1, ui::waveform::WarpMode::Semitone => 2, ui::waveform::WarpMode::PaulStretch => 3, ui::waveform::WarpMode::Complex => 4, _ => 0 },
                 sample_bpm: wf.sample_bpm,
                 project_bpm: self.bpm,
                 pitch_semitones: wf.pitch_semitones,

@@ -152,7 +152,7 @@ fn default_triplet_grid() -> bool { false }
 fn default_auto_clip_fades() -> bool { true }
 fn default_metronome_enabled() -> bool { false }
 fn default_primary_hue() -> f32 { 216.0 }
-fn default_theme_preset() -> String { "Default".to_string() }
+fn default_theme_preset() -> String { "Dark".to_string() }
 fn default_buffer_size() -> u32 { 512 }
 fn default_use_vst3_system_folders() -> bool { true }
 fn default_use_vst3_custom_folder() -> bool { false }
@@ -272,7 +272,7 @@ impl Default for Settings {
             auto_clip_fades: true,
             sample_library_folders: Vec::new(),
             primary_hue: 216.0,
-            theme_preset: "Default".to_string(),
+            theme_preset: "Dark".to_string(),
             metronome_enabled: false,
             buffer_size: 512,
             use_vst3_system_folders: true,
@@ -303,7 +303,6 @@ impl Settings {
                 Ok(json) => {
                     let mut s: Settings = serde_json::from_str(&json).unwrap_or_default();
                     s.theme = match s.theme_preset.as_str() {
-                        "Ableton" => crate::theme::RuntimeTheme::from_preset_ableton(),
                         "Light"   => crate::theme::RuntimeTheme::from_preset_light(s.primary_hue),
                         _         => crate::theme::RuntimeTheme::from_hue_with_settings(s.primary_hue, s.color_intensity, s.brightness),
                     };
@@ -319,7 +318,7 @@ impl Settings {
     }
 
     pub fn reset_theme_to_defaults(&mut self) {
-        self.theme_preset = "Default".to_string();
+        self.theme_preset = "Dark".to_string();
         self.primary_hue = 216.0;
         self.brightness = 1.0;
         self.color_intensity = 1.0;

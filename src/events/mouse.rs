@@ -104,6 +104,36 @@ impl App {
                             self.request_redraw();
                             return;
                         }
+
+                        // Right-click on empty space in browser — do nothing
+                        return;
+                    }
+                }
+
+                // Right-click on UI panels — do nothing
+                {
+                    let (sw, sh, scale) = self.screen_info();
+                    if self.right_window.is_some() {
+                        let (pp, ps) = ui::right_window::RightWindow::panel_rect(sw, sh, scale);
+                        let in_rw = self.mouse_pos[0] >= pp[0]
+                            && self.mouse_pos[0] <= pp[0] + ps[0]
+                            && self.mouse_pos[1] >= pp[1]
+                            && self.mouse_pos[1] <= pp[1] + ps[1];
+                        if in_rw {
+                            return;
+                        }
+                    }
+                    if self.settings_window.as_ref().map_or(false, |sw_win| sw_win.contains(self.mouse_pos, sw, sh, scale)) {
+                        return;
+                    }
+                    if self.export_window.as_ref().map_or(false, |ew| ew.contains(self.mouse_pos, sw, sh, scale)) {
+                        return;
+                    }
+                    if ui::transport::TransportPanel::contains(self.mouse_pos, sw, sh, scale) {
+                        return;
+                    }
+                    if self.command_palette.as_ref().map_or(false, |cp| cp.contains(self.mouse_pos, sw, sh, scale)) {
+                        return;
                     }
                 }
 
@@ -171,6 +201,13 @@ impl App {
                             .selected
                             .iter()
                             .any(|t| matches!(t, HitTarget::MidiClip(_)));
+                        let instrument_id = self.selected.iter().find_map(|t| match t {
+                            HitTarget::MidiClip(id) => self.midi_clips.get(id).and_then(|mc| mc.instrument_id),
+                            _ => None,
+                        });
+                        if let Some(inst_id) = instrument_id {
+                            self.keyboard_instrument_id = Some(inst_id);
+                        }
                         let current_waveform_color = self
                             .selected
                             .iter()
@@ -188,6 +225,7 @@ impl App {
                         MenuContext::Selection {
                             has_waveforms,
                             has_midi_clips,
+                            has_instrument: instrument_id.is_some(),
                             current_waveform_color,
                             current_midi_color,
                         }
@@ -341,36 +379,6 @@ impl App {
                     }
                 }
 
-                // Plugin editor click
-                if self.plugin_editor.is_some() {
-                    let (scr_w, scr_h, scale) = self.screen_info();
-                    let inside = self.plugin_editor.as_ref().map_or(false, |pe| {
-                        pe.contains(self.mouse_pos, scr_w, scr_h, scale)
-                    });
-                    if inside {
-                        let slider_hit = self.plugin_editor.as_ref().and_then(|pe| {
-                            pe.slider_hit_test(self.mouse_pos, scr_w, scr_h, scale)
-                        });
-                        if let Some(idx) = slider_hit {
-                            if let Some(pe) = &mut self.plugin_editor {
-                                pe.dragging_slider = Some(idx);
-                                let _new_val = pe.slider_drag(
-                                    idx,
-                                    self.mouse_pos[0],
-                                    scr_w,
-                                    scr_h,
-                                    scale,
-                                );
-                                // plugin parameter update via effect chain handled elsewhere
-                            }
-                        }
-                    } else {
-                        self.plugin_editor = None;
-                    }
-                    self.request_redraw();
-                    return;
-                }
-
                 // Export window click
                 if self.export_window.is_some() {
                     let (scr_w, scr_h, scale) = self.screen_info();
@@ -383,6 +391,11 @@ impl App {
                             if ew.handle_format_click(self.mouse_pos, scr_w, scr_h, scale) {
                                 self.request_redraw();
                                 return;
+                            }
+                            // Click inside window but outside dropdown — close it
+                            if ew.format_dropdown_open {
+                                ew.format_dropdown_open = false;
+                                self.request_redraw();
                             }
                         }
 
@@ -680,6 +693,7 @@ impl App {
                         let hit_sbpm_text = rw.hit_test_sample_bpm_text(self.mouse_pos, sw, sh, scale);
                         let hit_pitch_text = rw.hit_test_pitch_text(self.mouse_pos, sw, sh, scale);
                         let hit_paulstretch_text = rw.hit_test_paulstretch_factor_text(self.mouse_pos, sw, sh, scale);
+                        let hit_paulstretch_render_btn = rw.hit_test_paulstretch_render_button(self.mouse_pos, sw, sh, scale);
                         if hit_sm != ui::solo_mute::SoloMuteHit::None {
                             let target_id = rw.target_id();
                             match hit_sm {
@@ -815,6 +829,15 @@ impl App {
                                 rw.pan_knob_focused = false;
                                 rw.sample_bpm_focused = false;
                                 rw.pitch_focused = false;
+                            }
+                            self.request_redraw();
+                            return;
+                        } else if hit_paulstretch_render_btn {
+                            let wf_id = rw.target_id();
+                            #[cfg(feature = "native")]
+                            {
+                                self.apply_paulstretch(wf_id);
+                                self.sync_audio_clips();
                             }
                             self.request_redraw();
                             return;
@@ -1102,11 +1125,12 @@ impl App {
                                 return;
                             }
 
-                            // "Add Effect" button — switch browser to Effects tab
+                            // "Add Effect" button — switch browser to Effects tab and focus search
                             if rw.hit_test_add_effect_button(self.mouse_pos, slot_count, sw, sh, scale) {
                                 self.sample_browser.active_category = ui::browser::BrowserCategory::Effects;
                                 self.sample_browser.rebuild_entries();
                                 self.sample_browser.visible = true;
+                                self.sample_browser.search_focused = true;
                                 self.request_redraw();
                                 return;
                             }
@@ -2436,12 +2460,6 @@ impl App {
                                             after,
                                         });
                                     }
-                                    // Re-process paulstretch when factor changes
-                                    #[cfg(feature = "native")]
-                                    if is_paulstretch_drag {
-                                        self.apply_paulstretch(_wf_id);
-                                        self.sync_audio_clips();
-                                    }
                                 }
                                 ui::right_window::RightWindowTarget::Instrument(inst_id) => {
                                     if let Some(inst) = self.instruments.get(&inst_id) {
@@ -2486,28 +2504,6 @@ impl App {
                                     // MainLayer vol/pan — no undo for now
                                 }
                             }
-                        }
-                        self.request_redraw();
-                        return;
-                    }
-                }
-
-                // Finish plugin editor slider drag — commit parameter values
-                if let Some(pe) = &mut self.plugin_editor {
-                    if pe.dragging_slider.is_some() {
-                        pe.dragging_slider = None;
-                        let chain_id = pe.region_id;
-                        let slot_idx = pe.slot_idx;
-                        // Collect all current parameter values
-                        let params = self.effect_chains.get(&chain_id)
-                            .and_then(|chain| chain.slots.get(slot_idx))
-                            .and_then(|slot| slot.gui.lock().ok())
-                            .and_then(|g| g.as_ref().map(|gui| gui.get_all_parameters()))
-                            .unwrap_or_default();
-                        if !params.is_empty() {
-                            self.push_op(crate::operations::Operation::UpdatePluginParams {
-                                chain_id, slot_idx, params,
-                            });
                         }
                         self.request_redraw();
                         return;

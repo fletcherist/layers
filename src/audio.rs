@@ -105,7 +105,20 @@ struct PlaybackClip {
     chain_latency_samples: u32,
     group_bus_index: Option<usize>,
     chain_bus_index: Option<usize>,
+    // Complex warp mode: stereo source + phase vocoder stretcher
+    warp_code: u8,
+    left_buffer: Option<Arc<Vec<f32>>>,
+    right_buffer: Option<Arc<Vec<f32>>>,
+    // UnsafeCell allows mutation in the audio callback through &self.
+    // Safe because: the audio callback is single-threaded, and the Mutex
+    // prevents concurrent access from update_clips.
+    stretcher: std::cell::UnsafeCell<Option<crate::warp::StereoTimeStretcher>>,
 }
+
+// Safety: PlaybackClip is only accessed from one thread at a time
+// (either the audio callback thread or the main thread via Mutex).
+unsafe impl Send for PlaybackClip {}
+unsafe impl Sync for PlaybackClip {}
 
 pub struct ChainBus {
     pub plugins: Vec<Arc<Mutex<Option<crate::effects::PluginGuiHandle>>>>,
@@ -264,6 +277,103 @@ fn render_clip_dry(clip: &PlaybackClip, frames: usize, current_time: f64, sr: f6
                 buf[i] = [sample * pan_angle.cos(), sample * pan_angle.sin()];
             }
         }
+    }
+}
+
+/// Render a Complex-warp clip using the phase vocoder time stretcher.
+/// # Safety
+/// Must only be called from the audio callback thread (single-threaded access).
+fn render_clip_stretched(clip: &PlaybackClip, frames: usize, current_time: f64, sr: f64, buf: &mut [[f32; 2]]) {
+    let latency_offset_secs = clip.chain_latency_samples as f64 / sr;
+    buf[..frames].fill([0.0, 0.0]);
+
+    // Safety: audio callback is single-threaded
+    let stretcher = unsafe { &mut *clip.stretcher.get() };
+    let stretcher = match stretcher.as_mut() {
+        Some(s) => s,
+        None => return,
+    };
+
+    // Determine the active window of this clip in the callback
+    let clip_start = clip.start_time_secs - latency_offset_secs;
+    let clip_end = clip_start + clip.duration_secs + latency_offset_secs;
+
+    // Find the first and last sample indices that fall within this clip
+    let first_frame = if current_time >= clip_start {
+        0
+    } else {
+        ((clip_start - current_time) * sr) as usize
+    };
+    let last_frame = {
+        let end_frame = ((clip_end - current_time) * sr) as usize;
+        end_frame.min(frames)
+    };
+    if first_frame >= last_frame {
+        return;
+    }
+
+    let active_frames = last_frame - first_frame;
+
+    // Pull stretched audio from the stretcher
+    let mut stretched_l = vec![0.0f32; active_frames];
+    let mut stretched_r = vec![0.0f32; active_frames];
+    let produced = stretcher.process(&mut stretched_l, &mut stretched_r, active_frames);
+
+    // Debug: log stretcher diagnostics
+    static DEBUG_COUNTER: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+    let cnt = DEBUG_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    if cnt < 5 || cnt % 100 == 0 {
+        let out_energy: f32 = stretched_l[..produced].iter().map(|s| s * s).sum();
+        // Check source audio amplitude
+        let src_l_len = clip.left_buffer.as_ref().map_or(0, |b| b.len());
+        let src_r_len = clip.right_buffer.as_ref().map_or(0, |b| b.len());
+        let src_energy: f32 = clip.left_buffer.as_ref()
+            .map_or(0.0, |b| b.iter().take(1000).map(|s| s * s).sum());
+        let src_max: f32 = clip.left_buffer.as_ref()
+            .map_or(0.0, |b| b.iter().take(10000).map(|s| s.abs()).fold(0.0f32, f32::max));
+        eprintln!("[complex-warp] cb={} produced={}/{} out_energy={:.6} src_l={} src_r={} src_energy={:.4} src_max={:.4} ratio={:.3} src_pos={} vol={:.2} gain_fg={:.4}",
+            cnt, produced, active_frames, out_energy,
+            src_l_len, src_r_len, src_energy, src_max,
+            stretcher.ratio(), stretcher.source_position(),
+            clip.volume,
+            clip_fade_gain(0.5, clip.duration_secs, clip.fade_in_secs, clip.fade_out_secs, clip.fade_in_curve, clip.fade_out_curve));
+    }
+
+    // Apply fades, volume, pan automation — same logic as render_clip_dry
+    for i in 0..produced {
+        let buf_idx = first_frame + i;
+        if buf_idx >= frames {
+            break;
+        }
+        let t = current_time + buf_idx as f64 / sr;
+        let clip_t = t - clip.start_time_secs + latency_offset_secs;
+
+        let fg = clip_fade_gain(
+            clip_t,
+            clip.duration_secs,
+            clip.fade_in_secs,
+            clip.fade_out_secs,
+            clip.fade_in_curve,
+            clip.fade_out_curve,
+        );
+
+        let norm_t = if clip.duration_secs > 0.0 {
+            (clip_t / clip.duration_secs) as f32
+        } else {
+            0.0
+        };
+        let auto_vol = crate::automation::volume_value_to_gain(
+            crate::automation::interp_automation(norm_t, &clip.volume_automation, 0.5),
+        );
+        let auto_pan =
+            crate::automation::interp_automation(norm_t, &clip.pan_automation, clip.pan);
+
+        let gain = fg * clip.volume * auto_vol;
+        let pan_angle = auto_pan * std::f32::consts::FRAC_PI_2;
+        buf[buf_idx] = [
+            stretched_l[i] * gain * pan_angle.cos(),
+            stretched_r[i] * gain * pan_angle.sin(),
+        ];
     }
 }
 
@@ -433,6 +543,7 @@ impl AudioEngine {
         let mut met_click_total: u32 = 0;
         let mut met_freq: f64 = 1000.0;
         let mut met_last_beat: i64 = -1;
+        let mut last_stretcher_time: f64 = -1.0;
 
         let stream = device
             .build_output_stream(
@@ -443,6 +554,7 @@ impl AudioEngine {
                     // Send all-notes-off to every instrument on play→stop transition
                     if was_playing && !is_playing {
                         met_last_beat = -1;
+                        last_stretcher_time = -1.0; // force stretcher reset on next play
                         if let Ok(mut g) = kb_preview.try_lock() {
                             g.pending.clear();
                         }
@@ -659,6 +771,27 @@ impl AudioEngine {
                     }
 
                     if is_playing {
+                    // Reset Complex stretchers on play-start or seek
+                    {
+                        let expected_time = last_stretcher_time + frames as f64 / sr;
+                        let is_discontinuous = last_stretcher_time < 0.0
+                            || (current_time - expected_time).abs() > 0.05;
+                        if is_discontinuous {
+                            for clip in clips_ref.iter() {
+                                if clip.warp_code != 4 { continue; }
+                                let stretcher_cell = unsafe { &mut *clip.stretcher.get() };
+                                if let Some(ref mut s) = stretcher_cell {
+                                    let clip_t = current_time - clip.start_time_secs;
+                                    let source_t = if clip_t > 0.0 { clip_t / s.ratio() } else { 0.0 };
+                                    let source_pos = (source_t * clip.source_sample_rate as f64) as usize
+                                        + (clip.buffer_offset_secs * clip.source_sample_rate as f64) as usize;
+                                    s.reset(source_pos);
+                                }
+                            }
+                        }
+                        last_stretcher_time = current_time;
+                    }
+
                     // Pass 1: clips without FX and without group → dry_mix
                     for i in 0..frames {
                         let t = current_time + i as f64 / sr;
@@ -668,6 +801,7 @@ impl AudioEngine {
                             if !clip.chain_plugins.is_empty() || clip.group_bus_index.is_some() || clip.chain_bus_index.is_some() {
                                 continue;
                             }
+                            if clip.warp_code == 4 { continue; } // Complex handled separately
                             let clip_t = t - clip.start_time_secs;
                             if clip_t >= 0.0 && clip_t < clip.duration_secs {
                                 let source_idx = ((clip_t + clip.buffer_offset_secs) * clip.effective_sample_rate) as usize;
@@ -708,12 +842,33 @@ impl AudioEngine {
                         dry_mix[i] = [mix_l, mix_r];
                     }
 
+                    // Pass 1b: Complex warp clips without FX/group → stretched → dry_mix
+                    for (ci, clip) in clips_ref.iter().enumerate() {
+                        if clip.warp_code != 4 { continue; }
+                        if !clip.chain_plugins.is_empty() || clip.group_bus_index.is_some() || clip.chain_bus_index.is_some() {
+                            continue;
+                        }
+                        render_clip_stretched(clip, frames, current_time, sr, &mut clip_dry);
+                        let mut csq = 0.0f64;
+                        for j in 0..frames {
+                            dry_mix[j][0] += clip_dry[j][0];
+                            dry_mix[j][1] += clip_dry[j][1];
+                            let mono = ((clip_dry[j][0] + clip_dry[j][1]) * 0.5) as f64;
+                            csq += mono * mono;
+                        }
+                        clip_sum_sq[ci] += csq;
+                    }
+
                     // Pass 2: clips with clip-level FX but no group and no chain bus → clip FX → dry_mix
                     for (ci, clip) in clips_ref.iter().enumerate() {
                         if clip.chain_plugins.is_empty() || clip.group_bus_index.is_some() || clip.chain_bus_index.is_some() {
                             continue;
                         }
-                        render_clip_dry(clip, frames, current_time, sr, &mut clip_dry);
+                        if clip.warp_code == 4 {
+                            render_clip_stretched(clip, frames, current_time, sr, &mut clip_dry);
+                        } else {
+                            render_clip_dry(clip, frames, current_time, sr, &mut clip_dry);
+                        }
                         process_clip_chain(clip, frames, effect_block_size, &mut clip_dry,
                             &mut fx_buf_l, &mut fx_buf_r, &mut fx_out_l, &mut fx_out_r);
                         let mut csq = 0.0f64;
@@ -737,7 +892,11 @@ impl AudioEngine {
                                 for (ci, clip) in clips_ref.iter().enumerate() {
                                     if clip.chain_bus_index != Some(bus_idx) { continue; }
                                     if clip.group_bus_index.is_some() { continue; }
-                                    render_clip_dry(clip, frames, current_time, sr, &mut clip_dry);
+                                    if clip.warp_code == 4 {
+                                        render_clip_stretched(clip, frames, current_time, sr, &mut clip_dry);
+                                    } else {
+                                        render_clip_dry(clip, frames, current_time, sr, &mut clip_dry);
+                                    }
                                     let mut csq = 0.0f64;
                                     for j in 0..frames {
                                         chain_bus_l[j] += clip_dry[j][0];
@@ -801,6 +960,18 @@ impl AudioEngine {
                                         continue;
                                     }
                                     if clip.chain_plugins.is_empty() {
+                                        if clip.warp_code == 4 {
+                                            // Complex: render stretched into group bus
+                                            render_clip_stretched(clip, frames, current_time, sr, &mut clip_dry);
+                                            let mut csq = 0.0f64;
+                                            for j in 0..frames {
+                                                group_bus_l[j] += clip_dry[j][0];
+                                                group_bus_r[j] += clip_dry[j][1];
+                                                let mono = ((clip_dry[j][0] + clip_dry[j][1]) * 0.5) as f64;
+                                                csq += mono * mono;
+                                            }
+                                            clip_sum_sq[ci] += csq;
+                                        } else {
                                         // No clip-level FX: render dry directly into group bus
                                         let latency_offset_secs = clip.chain_latency_samples as f64 / sr;
                                         for i in 0..frames {
@@ -824,9 +995,14 @@ impl AudioEngine {
                                                 }
                                             }
                                         }
+                                        }
                                     } else {
-                                        // Clip-level FX: render dry → clip FX → group bus
-                                        render_clip_dry(clip, frames, current_time, sr, &mut clip_dry);
+                                        // Clip-level FX: render dry/stretched → clip FX → group bus
+                                        if clip.warp_code == 4 {
+                                            render_clip_stretched(clip, frames, current_time, sr, &mut clip_dry);
+                                        } else {
+                                            render_clip_dry(clip, frames, current_time, sr, &mut clip_dry);
+                                        }
                                         process_clip_chain(clip, frames, effect_block_size, &mut clip_dry,
                                             &mut fx_buf_l, &mut fx_buf_r, &mut fx_out_l, &mut fx_out_r);
                                         let mut csq = 0.0f64;
@@ -1402,9 +1578,18 @@ impl AudioEngine {
         group_bus_indices: &[Option<usize>],
         chain_bus_indices: &[Option<usize>],
         entity_ids: &[EntityId],
+        left_buffers: &[Option<Arc<Vec<f32>>>],
+        right_buffers: &[Option<Arc<Vec<f32>>>],
     ) {
         let mut clips = self.clips.lock().unwrap();
-        clips.clear();
+        // Salvage stretchers from existing clips to preserve phase vocoder state
+        let mut salvaged: std::collections::HashMap<EntityId, crate::warp::StereoTimeStretcher> =
+            std::collections::HashMap::new();
+        for clip in clips.drain(..) {
+            if let Some(stretcher) = clip.stretcher.into_inner() {
+                salvaged.insert(clip.entity_id, stretcher);
+            }
+        }
         for (i, ((pos, size), clip_data)) in waveform_positions
             .iter()
             .zip(waveform_sizes.iter())
@@ -1430,10 +1615,36 @@ impl AudioEngine {
                 1 => clip_data.sample_rate as f64 * (sample_bpm as f64 / project_bpm as f64),
                 2 => clip_data.sample_rate as f64 * 2.0_f64.powf(pitch as f64 / 12.0),
                 3 => clip_data.sample_rate as f64, // PaulStretch: pre-processed, play at native rate
+                4 => clip_data.sample_rate as f64, // Complex: stretcher handles ratio
                 _ => clip_data.sample_rate as f64,
             };
+            let eid = entity_ids.get(i).copied().unwrap_or(EntityId::nil());
+
+            // For Complex warp mode (4): set up or reuse stereo time stretcher
+            let stretcher = if warp == 4 {
+                let lb = left_buffers.get(i).and_then(|o| o.clone());
+                let rb = right_buffers.get(i).and_then(|o| o.clone());
+                if let (Some(l), Some(r)) = (lb, rb) {
+                    let ratio = sample_bpm as f64 / project_bpm as f64;
+                    if let Some(mut existing) = salvaged.remove(&eid) {
+                        existing.set_ratio(ratio);
+                        Some(existing)
+                    } else {
+                        let mut s = crate::warp::StereoTimeStretcher::new(l, r, ratio);
+                        // Start from the clip's buffer offset
+                        let offset_samples = (offset_secs * clip_data.sample_rate as f64) as usize;
+                        s.reset(offset_samples);
+                        Some(s)
+                    }
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+
             clips.push(PlaybackClip {
-                entity_id: entity_ids.get(i).copied().unwrap_or(EntityId::nil()),
+                entity_id: eid,
                 buffer: clip_data.samples.clone(),
                 source_sample_rate: clip_data.sample_rate,
                 effective_sample_rate: effective_rate,
@@ -1454,6 +1665,10 @@ impl AudioEngine {
                 chain_latency_samples: chain_latencies.get(i).copied().unwrap_or(0),
                 group_bus_index: group_bus_indices.get(i).copied().flatten(),
                 chain_bus_index: chain_bus_indices.get(i).copied().flatten(),
+                warp_code: warp,
+                left_buffer: left_buffers.get(i).and_then(|o| o.clone()),
+                right_buffer: right_buffers.get(i).and_then(|o| o.clone()),
+                stretcher: std::cell::UnsafeCell::new(stretcher),
             });
         }
     }

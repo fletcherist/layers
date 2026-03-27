@@ -5,45 +5,6 @@ impl App {
         // Broadcast cursor position to network
         self.broadcast_cursor_if_connected();
 
-        // Plugin editor: slider drag
-        {
-            let is_dragging_pe = self
-                .plugin_editor
-                .as_ref()
-                .map_or(false, |pe| pe.dragging_slider.is_some());
-            if is_dragging_pe {
-                let (scr_w, scr_h, scale) = self.screen_info();
-                let mx = self.mouse_pos[0];
-                if let Some(pe) = &mut self.plugin_editor {
-                    let idx = pe.dragging_slider.unwrap();
-                    let new_val = pe.slider_drag(idx, mx, scr_w, scr_h, scale);
-                    let chain_id = pe.region_id;
-                    let slot_idx = pe.slot_idx;
-
-                    // Apply parameter to actual VST3 plugin
-                    if let Some(chain) = self.effect_chains.get(&chain_id) {
-                        if let Some(slot) = chain.slots.get(slot_idx) {
-                            if let Ok(g) = slot.gui.lock() {
-                                if let Some(gui) = g.as_ref() {
-                                    gui.set_parameter(idx, new_val as f64);
-                                }
-                            }
-                        }
-                    }
-                    // Send ephemeral parameter change for real-time sync
-                    self.network.send_ephemeral(crate::user::EphemeralMessage::PluginParamChange {
-                        user_id: self.local_user.id,
-                        chain_id,
-                        slot_idx,
-                        param_idx: idx,
-                        value: new_val as f64,
-                    });
-                }
-                self.request_redraw();
-                return;
-            }
-        }
-
         // Settings window: slider drag + hover
         #[cfg(feature = "native")]
         {
@@ -267,10 +228,10 @@ impl App {
             }
         }
 
-        // Right window "Add Effect" / "Export" button hover
+        // Right window "Add Effect" / "Export" / "Reverse" button hover
         if let Some(rw) = &self.right_window {
             let (sw, sh, scale) = self.screen_info();
-            let (add_hovered, export_hovered) = {
+            let (add_hovered, export_hovered, reverse_hovered, warp_hovered, warp_sel_hovered, render_btn_hovered) = {
                 let chain_id = match rw.target {
                     ui::right_window::RightWindowTarget::Waveform(wf_id) => self.waveforms.get(&wf_id).and_then(|w| w.effect_chain_id),
                     ui::right_window::RightWindowTarget::Instrument(inst_id) => self.instruments.get(&inst_id).and_then(|i| i.effect_chain_id),
@@ -286,14 +247,42 @@ impl App {
                 } else {
                     false
                 };
-                (add_h, export_h)
+                let rev_h = if rw.is_waveform() && !rw.is_multi() {
+                    rw.hit_test_reverse_button(self.mouse_pos, sw, sh, scale)
+                } else {
+                    false
+                };
+                let warp_h = if rw.is_waveform() && !rw.is_multi() {
+                    rw.hit_test_warp_mode_button(self.mouse_pos, sw, sh, scale)
+                } else {
+                    false
+                };
+                let warp_sel_h = if rw.is_waveform() && !rw.is_multi() {
+                    rw.hit_test_warp_mode_selector(self.mouse_pos, sw, sh, scale)
+                } else {
+                    false
+                };
+                let render_btn_h = if rw.is_waveform() && !rw.is_multi() {
+                    rw.hit_test_paulstretch_render_button(self.mouse_pos, sw, sh, scale)
+                } else {
+                    false
+                };
+                (add_h, export_h, rev_h, warp_h, warp_sel_h, render_btn_h)
             };
             let add_changed = add_hovered != rw.add_effect_hovered;
             let export_changed = export_hovered != rw.export_button_hovered;
-            if add_changed || export_changed {
+            let reverse_changed = reverse_hovered != rw.reverse_button_hovered;
+            let warp_changed = warp_hovered != rw.warp_button_hovered;
+            let warp_sel_changed = warp_sel_hovered != rw.warp_selector_hovered;
+            let render_btn_changed = render_btn_hovered != rw.paulstretch_render_button_hovered;
+            if add_changed || export_changed || reverse_changed || warp_changed || warp_sel_changed || render_btn_changed {
                 if let Some(rw) = &mut self.right_window {
                     if add_changed { rw.add_effect_hovered = add_hovered; }
                     if export_changed { rw.export_button_hovered = export_hovered; }
+                    if reverse_changed { rw.reverse_button_hovered = reverse_hovered; }
+                    if warp_changed { rw.warp_button_hovered = warp_hovered; }
+                    if warp_sel_changed { rw.warp_selector_hovered = warp_sel_hovered; }
+                    if render_btn_changed { rw.paulstretch_render_button_hovered = render_btn_hovered; }
                 }
                 self.request_redraw();
             }

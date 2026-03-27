@@ -124,6 +124,10 @@ pub struct RightWindow {
     pub sample_bpm_focused: bool,
     pub add_effect_hovered: bool,
     pub export_button_hovered: bool,
+    pub reverse_button_hovered: bool,
+    pub warp_button_hovered: bool,
+    pub warp_selector_hovered: bool,
+    pub paulstretch_render_button_hovered: bool,
     /// Group name (populated when target is Group)
     pub group_name: String,
     /// Group member count (populated when target is Group)
@@ -287,6 +291,24 @@ impl RightWindow {
         Self::warp_param_text_rect(screen_w, screen_h, scale)
     }
 
+    fn paulstretch_render_button_rect(screen_w: f32, screen_h: f32, scale: f32) -> ([f32; 2], [f32; 2]) {
+        let (pp, ps) = Self::panel_rect(screen_w, screen_h, scale);
+        let (param_pos, _) = Self::warp_param_text_rect(screen_w, screen_h, scale);
+        // align button vertically with the value text row (label_line below top of param area)
+        let label_line = 11.0 * scale;
+        let val_line = 14.0 * scale;
+        let btn_h = 18.0 * scale;
+        let btn_w = 50.0 * scale;
+        let right_margin = 8.0 * scale;
+        let btn_x = pp[0] + ps[0] - btn_w - right_margin;
+        let btn_y = param_pos[1] + label_line + (val_line - btn_h) * 0.5;
+        ([btn_x, btn_y], [btn_w, btn_h])
+    }
+
+    pub fn paulstretch_render_button_rect_pub(screen_w: f32, screen_h: f32, scale: f32) -> ([f32; 2], [f32; 2]) {
+        Self::paulstretch_render_button_rect(screen_w, screen_h, scale)
+    }
+
     pub fn hit_test_vol_knob(&self, pos: [f32; 2], screen_w: f32, screen_h: f32, scale: f32) -> bool {
         let (track_pos, track_size) = Self::vol_fader_rects_with_offset(screen_w, screen_h, scale, self.y_extra());
         let fader_pos_val = gain_to_vol_fader_pos(self.volume);
@@ -349,7 +371,7 @@ impl RightWindow {
 
     pub fn hit_test_sample_bpm_text(&self, pos: [f32; 2], screen_w: f32, screen_h: f32, scale: f32) -> bool {
         if self.is_instrument() || self.is_multi() || self.is_group() || self.is_master() { return false; }
-        if self.warp_mode != WarpMode::RePitch { return false; }
+        if self.warp_mode != WarpMode::RePitch && self.warp_mode != WarpMode::Complex { return false; }
         let (rp, rs) = Self::warp_param_text_rect(screen_w, screen_h, scale);
         pos[0] >= rp[0] && pos[0] <= rp[0] + rs[0]
             && pos[1] >= rp[1] && pos[1] <= rp[1] + rs[1]
@@ -367,6 +389,14 @@ impl RightWindow {
         if self.is_instrument() || self.is_multi() || self.is_group() || self.is_master() { return false; }
         if self.warp_mode != WarpMode::PaulStretch { return false; }
         let (rp, rs) = Self::warp_param_text_rect(screen_w, screen_h, scale);
+        pos[0] >= rp[0] && pos[0] <= rp[0] + rs[0]
+            && pos[1] >= rp[1] && pos[1] <= rp[1] + rs[1]
+    }
+
+    pub fn hit_test_paulstretch_render_button(&self, pos: [f32; 2], screen_w: f32, screen_h: f32, scale: f32) -> bool {
+        if self.is_instrument() || self.is_multi() || self.is_group() || self.is_master() { return false; }
+        if self.warp_mode != WarpMode::PaulStretch { return false; }
+        let (rp, rs) = Self::paulstretch_render_button_rect(screen_w, screen_h, scale);
         pos[0] >= rp[0] && pos[0] <= rp[0] + rs[0]
             && pos[1] >= rp[1] && pos[1] <= rp[1] + rs[1]
     }
@@ -760,7 +790,13 @@ impl RightWindow {
 
         // Reverse button
         let (rev_pos, rev_size) = Self::reverse_button_rect(screen_w, screen_h, scale);
-        let rev_color = if self.is_reversed { settings.theme.accent } else { settings.theme.bg_elevated };
+        let rev_color = if self.is_reversed {
+            settings.theme.accent
+        } else if self.reverse_button_hovered {
+            settings.theme.bg_elevated
+        } else {
+            crate::theme::with_alpha(settings.theme.bg_elevated, 0.85)
+        };
         out.push(InstanceRaw {
             position: rev_pos,
             size: rev_size,
@@ -771,7 +807,13 @@ impl RightWindow {
         // Warp toggle button
         let (btn_pos, btn_size) = Self::warp_mode_button_rect(screen_w, screen_h, scale);
         let warp_on = self.warp_mode != WarpMode::Off;
-        let btn_color = if warp_on { settings.theme.accent } else { settings.theme.bg_elevated };
+        let btn_color = if warp_on {
+            settings.theme.accent
+        } else if self.warp_button_hovered {
+            settings.theme.bg_elevated
+        } else {
+            crate::theme::with_alpha(settings.theme.bg_elevated, 0.85)
+        };
         out.push(InstanceRaw {
             position: btn_pos,
             size: btn_size,
@@ -782,16 +824,37 @@ impl RightWindow {
         // Warp mode selector (only when warp is on)
         if warp_on {
             let (sel_pos, sel_size) = Self::warp_mode_selector_rect(screen_w, screen_h, scale);
+            let sel_color = if self.warp_selector_hovered {
+                settings.theme.bg_elevated
+            } else {
+                crate::theme::with_alpha(settings.theme.bg_elevated, 0.85)
+            };
             out.push(InstanceRaw {
                 position: sel_pos,
                 size: sel_size,
-                color: settings.theme.bg_dropdown,
+                color: sel_color,
+                border_radius: 4.0 * scale,
+            });
+        }
+
+        // PaulStretch render button
+        if self.warp_mode == WarpMode::PaulStretch {
+            let (rbtn_pos, rbtn_size) = Self::paulstretch_render_button_rect(screen_w, screen_h, scale);
+            let rbtn_color = if self.paulstretch_render_button_hovered {
+                settings.theme.bg_elevated
+            } else {
+                crate::theme::with_alpha(settings.theme.bg_elevated, 0.85)
+            };
+            out.push(InstanceRaw {
+                position: rbtn_pos,
+                size: rbtn_size,
+                color: rbtn_color,
                 border_radius: 4.0 * scale,
             });
         }
 
         // Sample BPM text focus brackets
-        if self.sample_bpm_focused && self.warp_mode == WarpMode::RePitch {
+        if self.sample_bpm_focused && (self.warp_mode == WarpMode::RePitch || self.warp_mode == WarpMode::Complex) {
             let sl = Self::sample_bpm_text_layout(screen_w, screen_h, scale);
             let bracket_len = 10.0 * scale;
             let thick = 1.0 * scale;
@@ -873,15 +936,16 @@ impl RightWindow {
 
     /// Format warp toggle button text
     pub fn warp_button_text(&self) -> &'static str {
-        if self.warp_mode == WarpMode::Off { "OFF" } else { "ON" }
+        "Warp"
     }
 
     /// Format warp mode selector text
     pub fn warp_mode_selector_text(&self) -> &'static str {
         match self.warp_mode {
-            WarpMode::RePitch => "REPITCH",
-            WarpMode::PaulStretch => "PAULSTRETCH",
-            WarpMode::Semitone | WarpMode::Off => "SEMITONE",
+            WarpMode::RePitch => "Re-Pitch",
+            WarpMode::PaulStretch => "Paul Stretch",
+            WarpMode::Complex => "Complex",
+            WarpMode::Semitone | WarpMode::Off => "Semitone",
         }
     }
 
@@ -1151,28 +1215,18 @@ impl RightWindow {
             font_size: val_font,
             line_height: val_line,
             max_width: rev_size[0],
-            color: crate::theme::RuntimeTheme::text_u8(theme.text_primary, 240),
+            color: if self.reverse_button_hovered || self.is_reversed {
+                crate::theme::RuntimeTheme::text_u8(theme.text_primary, 255)
+            } else {
+                crate::theme::RuntimeTheme::text_u8(theme.text_secondary, 225)
+            },
             weight: 400,
             bounds: None,
-            center: false,
-        });
-
-        // WARP label
-        let (btn_pos, btn_size) = Self::warp_mode_button_rect_pub(screen_w, screen_h, scale);
-        out.push(TextEntry {
-            text: "WARP".to_string(),
-            x: btn_pos[0] + btn_size[0] * 0.5 - rw_w * 0.5,
-            y: btn_pos[1] - 18.0 * scale,
-            font_size: label_font,
-            line_height: label_line,
-            max_width: rw_w,
-            color: crate::theme::RuntimeTheme::text_u8(theme.text_secondary, 235),
-            weight: 400,
-            bounds: None,
-            center: false,
+            center: true,
         });
 
         // WARP toggle text (centered on button)
+        let (btn_pos, btn_size) = Self::warp_mode_button_rect_pub(screen_w, screen_h, scale);
         let warp_text = self.warp_button_text();
         out.push(TextEntry {
             text: warp_text.to_string(),
@@ -1181,10 +1235,14 @@ impl RightWindow {
             font_size: val_font,
             line_height: val_line,
             max_width: btn_size[0],
-            color: crate::theme::RuntimeTheme::text_u8(theme.text_primary, 240),
+            color: if self.warp_button_hovered || self.warp_mode != WarpMode::Off {
+                crate::theme::RuntimeTheme::text_u8(theme.text_primary, 255)
+            } else {
+                crate::theme::RuntimeTheme::text_u8(theme.text_secondary, 225)
+            },
             weight: 400,
             bounds: None,
-            center: false,
+            center: true,
         });
 
         let warp_on = self.warp_mode != WarpMode::Off;
@@ -1199,15 +1257,19 @@ impl RightWindow {
                 font_size: val_font,
                 line_height: val_line,
                 max_width: sel_size[0],
-                color: crate::theme::RuntimeTheme::text_u8(theme.text_secondary, 220),
+                color: if self.warp_selector_hovered {
+                    crate::theme::RuntimeTheme::text_u8(theme.text_primary, 255)
+                } else {
+                    crate::theme::RuntimeTheme::text_u8(theme.text_secondary, 225)
+                },
                 weight: 400,
                 bounds: None,
-            center: false,
+                center: true,
             });
 
             // Mode-specific param label + value
             let (param_pos, _param_size) = Self::warp_param_text_rect_pub(screen_w, screen_h, scale);
-            if self.warp_mode == WarpMode::RePitch {
+            if self.warp_mode == WarpMode::RePitch || self.warp_mode == WarpMode::Complex {
                 out.push(TextEntry {
                     text: "SAMPLE BPM".to_string(),
                     x: param_pos[0],
@@ -1294,6 +1356,19 @@ impl RightWindow {
                     bounds: None,
                     center: true,
                 });
+                let (rbtn_pos, rbtn_size) = Self::paulstretch_render_button_rect(screen_w, screen_h, scale);
+                let rbtn_font = 10.0 * scale;
+                let rbtn_line = 12.0 * scale;
+                crate::ui::button::push_text(
+                    &mut out,
+                    rbtn_pos,
+                    rbtn_size,
+                    "render",
+                    rbtn_font,
+                    rbtn_line,
+                    crate::theme::RuntimeTheme::text_u8(theme.text_secondary, 220),
+                    400,
+                );
             }
         }
         } // end waveform-only text

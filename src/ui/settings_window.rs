@@ -23,7 +23,7 @@ const DROPDOWN_WIDTH: f32 = 220.0;
 const DROPDOWN_HEIGHT: f32 = 28.0;
 const DROPDOWN_RIGHT_PAD: f32 = 24.0;
 const AUDIO_DROPDOWN_COUNT: usize = 3;
-const THEME_PRESETS: &[&str] = &["Default", "Ableton", "Light"];
+const THEME_PRESETS: &[&str] = &["Dark", "Light"];
 
 #[derive(Clone, Copy, PartialEq)]
 pub enum SettingsCategory {
@@ -53,6 +53,7 @@ pub const CATEGORIES: &[SettingsCategory] = &[
 
 const TOGGLE_BTN_WIDTH: f32 = 56.0;
 const BUTTON_WIDTH: f32 = 80.0;
+const BUTTON_HEIGHT: f32 = 24.0;
 
 
 struct SliderDef {
@@ -94,10 +95,19 @@ const SLIDERS: &[SliderDef] = &[
     },
 ];
 
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum HoveredButton {
+    Rescan,
+    Toggle(usize), // row index: 1, 2, 4, 5, 6
+    Browse,
+    ResetTheme,
+}
+
 pub struct SettingsWindow {
     pub active_category: SettingsCategory,
     pub hovered_category: Option<usize>,
     pub hovered_dropdown_item: Option<usize>,
+    pub hovered_button: Option<HoveredButton>,
     pub dragging_slider: Option<usize>,
     pub open_dropdown: Option<usize>,
     pub cached_driver_types: Vec<String>,
@@ -114,6 +124,7 @@ impl SettingsWindow {
             active_category: SettingsCategory::ThemeAndColors,
             hovered_category: None,
             hovered_dropdown_item: None,
+            hovered_button: None,
             dragging_slider: None,
             open_dropdown: None,
             #[cfg(feature = "native")]
@@ -330,6 +341,7 @@ impl SettingsWindow {
     pub fn update_hover(&mut self, pos: [f32; 2], screen_w: f32, screen_h: f32, scale: f32) {
         self.hovered_category = self.category_at(pos, screen_w, screen_h, scale);
         self.hovered_dropdown_item = self.dropdown_item_hit_test(pos, screen_w, screen_h, scale);
+        self.hovered_button = self.button_at(pos, screen_w, screen_h, scale);
     }
 
     pub fn category_at(
@@ -419,7 +431,7 @@ impl SettingsWindow {
         screen_h: f32,
         scale: f32,
     ) -> Option<usize> {
-        if settings.theme_preset != "Default" {
+        if settings.theme_preset != "Dark" {
             return None;
         }
         for i in 0..SLIDERS.len() {
@@ -472,7 +484,7 @@ impl SettingsWindow {
         let content_x = wp[0] + SIDEBAR_WIDTH * scale;
         let content_w = ws[0] - SIDEBAR_WIDTH * scale;
         let btn_w = 120.0 * scale;
-        let btn_h = DROPDOWN_HEIGHT * scale;
+        let btn_h = BUTTON_HEIGHT * scale;
         let btn_x = content_x + content_w - DROPDOWN_RIGHT_PAD * scale - btn_w;
         let row_y = wp[1] + SECTION_HEADER_HEIGHT * scale + 2.0 * ROW_HEIGHT * scale;
         let btn_y = row_y + (ROW_HEIGHT * scale - btn_h) * 0.5;
@@ -494,7 +506,7 @@ impl SettingsWindow {
         let content_x = wp[0] + SIDEBAR_WIDTH * scale;
         let content_w = ws[0] - SIDEBAR_WIDTH * scale;
         let btn_w = BUTTON_WIDTH * scale;
-        let btn_h = DROPDOWN_HEIGHT * scale;
+        let btn_h = BUTTON_HEIGHT * scale;
         let btn_x = content_x + content_w - DROPDOWN_RIGHT_PAD * scale - btn_w;
         let row_y = wp[1] + SECTION_HEADER_HEIGHT * scale;
         let btn_y = row_y + (ROW_HEIGHT * scale - btn_h) * 0.5;
@@ -513,7 +525,7 @@ impl SettingsWindow {
         let content_x = wp[0] + SIDEBAR_WIDTH * scale;
         let content_w = ws[0] - SIDEBAR_WIDTH * scale;
         let btn_w = TOGGLE_BTN_WIDTH * scale;
-        let btn_h = DROPDOWN_HEIGHT * scale;
+        let btn_h = BUTTON_HEIGHT * scale;
         let btn_x = content_x + content_w - DROPDOWN_RIGHT_PAD * scale - btn_w;
         let row_y = wp[1] + SECTION_HEADER_HEIGHT * scale + row_idx as f32 * ROW_HEIGHT * scale;
         let btn_y = row_y + (ROW_HEIGHT * scale - btn_h) * 0.5;
@@ -537,6 +549,31 @@ impl SettingsWindow {
             && mouse[1] <= pos[1] + size[1]
     }
 
+    fn button_at(&self, pos: [f32; 2], screen_w: f32, screen_h: f32, scale: f32) -> Option<HoveredButton> {
+        let hit = |p: [f32; 2], s: [f32; 2]| {
+            pos[0] >= p[0] && pos[0] <= p[0] + s[0] && pos[1] >= p[1] && pos[1] <= p[1] + s[1]
+        };
+        match self.active_category {
+            SettingsCategory::PlugIns => {
+                let (p, s) = self.plugins_rescan_button_rect(screen_w, screen_h, scale);
+                if hit(p, s) { return Some(HoveredButton::Rescan); }
+                for row in [1usize, 2, 4, 5, 6] {
+                    let (p, s) = self.plugins_toggle_rect(row, screen_w, screen_h, scale);
+                    if hit(p, s) { return Some(HoveredButton::Toggle(row)); }
+                }
+                let (p, s) = self.plugins_browse_button_rect(screen_w, screen_h, scale);
+                if hit(p, s) { return Some(HoveredButton::Browse); }
+                None
+            }
+            SettingsCategory::Developer => {
+                let (p, s) = self.reset_theme_button_rect(screen_w, screen_h, scale);
+                if hit(p, s) { return Some(HoveredButton::ResetTheme); }
+                None
+            }
+            _ => None,
+        }
+    }
+
     // -----------------------------------------------------------------------
     // Click handlers (per category)
     // -----------------------------------------------------------------------
@@ -558,7 +595,6 @@ impl SettingsWindow {
                 let chosen = THEME_PRESETS[idx];
                 settings.theme_preset = chosen.to_string();
                 settings.theme = match chosen {
-                    "Ableton" => crate::theme::RuntimeTheme::from_preset_ableton(),
                     "Light"   => crate::theme::RuntimeTheme::from_preset_light(settings.primary_hue),
                     _         => crate::theme::RuntimeTheme::from_hue_with_settings(
                         settings.primary_hue,
@@ -570,8 +606,7 @@ impl SettingsWindow {
             return true;
         }
 
-        // If button was toggled, handle_dropdown_click already set state
-        if self.open_dropdown == Some(0) || self.dropdown_button_hit_test(mouse, 0, screen_w, screen_h, scale) {
+        if self.dropdown_button_hit_test(mouse, 0, screen_w, screen_h, scale) {
             return true;
         }
 
@@ -792,7 +827,7 @@ impl SettingsWindow {
         out.push(InstanceRaw {
             position: wp,
             size: ws,
-            color: t.bg_window,
+            color: t.bg_base,
             border_radius: br,
         });
 
@@ -859,7 +894,7 @@ impl SettingsWindow {
         match self.active_category {
             SettingsCategory::ThemeAndColors => {
                 // Sliders first so dropdown popup renders on top
-                if settings.theme_preset == "Default" {
+                if settings.theme_preset == "Dark" {
                     self.build_slider_instances(
                         &mut out, settings, screen_w, screen_h, scale, content_x, content_w, wp, t,
                     );
@@ -1073,12 +1108,9 @@ impl SettingsWindow {
 
         // Reset Theme button (row 2)
         let (btn_pos, btn_size) = self.reset_theme_button_rect(screen_w, screen_h, scale);
-        out.push(InstanceRaw {
-            position: btn_pos,
-            size: btn_size,
-            color: t.accent,
-            border_radius: 6.0 * scale,
-        });
+        let hov = self.hovered_button == Some(HoveredButton::ResetTheme);
+        let reset_color = if hov { t.bg_elevated } else { t.accent };
+        super::button::push_instance(out, btn_pos, btn_size, reset_color, 4.0 * scale);
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1094,24 +1126,29 @@ impl SettingsWindow {
         wp: [f32; 2],
         t: &crate::theme::RuntimeTheme,
     ) {
-        let br = 6.0 * scale;
+        let br = 4.0 * scale;
+        // Color helpers matching the reverse-button pattern.
+        let toggle_color = |active: bool, hovered: bool| -> [f32; 4] {
+            if active { t.accent }
+            else if hovered { t.bg_elevated }
+            else { crate::theme::with_alpha(t.bg_elevated, 0.85) }
+        };
+        let action_color = |hovered: bool| -> [f32; 4] {
+            if hovered { t.bg_elevated } else { t.accent }
+        };
 
-        // Row 0: Rescan button (accent)
+        // Row 0: Rescan button
         let (rp, rs) = self.plugins_rescan_button_rect(screen_w, screen_h, scale);
-        out.push(InstanceRaw {
-            position: rp,
-            size: rs,
-            color: t.accent,
-            border_radius: br,
-        });
+        let hov = self.hovered_button == Some(HoveredButton::Rescan);
+        super::button::push_instance(out, rp, rs, action_color(hov), br);
 
         // Row 1: Use VST3 System Folders toggle
         {
             let row_bottom = wp[1] + SECTION_HEADER_HEIGHT * scale + 1.0 * ROW_HEIGHT * scale;
             Self::render_row_separator(out, content_x, content_w, row_bottom, scale, t);
             let (tp, ts) = self.plugins_toggle_rect(1, screen_w, screen_h, scale);
-            let color = if settings.use_vst3_system_folders { t.accent } else { t.knob_inactive };
-            out.push(InstanceRaw { position: tp, size: ts, color, border_radius: br });
+            let hov = self.hovered_button == Some(HoveredButton::Toggle(1));
+            super::button::push_instance(out, tp, ts, toggle_color(settings.use_vst3_system_folders, hov), br);
         }
 
         // Row 2: Use VST3 Custom Folder toggle
@@ -1119,17 +1156,18 @@ impl SettingsWindow {
             let row_bottom = wp[1] + SECTION_HEADER_HEIGHT * scale + 2.0 * ROW_HEIGHT * scale;
             Self::render_row_separator(out, content_x, content_w, row_bottom, scale, t);
             let (tp, ts) = self.plugins_toggle_rect(2, screen_w, screen_h, scale);
-            let color = if settings.use_vst3_custom_folder { t.accent } else { t.knob_inactive };
-            out.push(InstanceRaw { position: tp, size: ts, color, border_radius: br });
+            let hov = self.hovered_button == Some(HoveredButton::Toggle(2));
+            super::button::push_instance(out, tp, ts, toggle_color(settings.use_vst3_custom_folder, hov), br);
         }
 
-        // Row 3: Browse button (only active when custom folder enabled)
+        // Row 3: Browse button (only when custom folder enabled)
         {
             let row_bottom = wp[1] + SECTION_HEADER_HEIGHT * scale + 3.0 * ROW_HEIGHT * scale;
             Self::render_row_separator(out, content_x, content_w, row_bottom, scale, t);
             if settings.use_vst3_custom_folder {
                 let (bp, bs) = self.plugins_browse_button_rect(screen_w, screen_h, scale);
-                out.push(InstanceRaw { position: bp, size: bs, color: t.accent, border_radius: br });
+                let hov = self.hovered_button == Some(HoveredButton::Browse);
+                super::button::push_instance(out, bp, bs, action_color(hov), br);
             }
         }
 
@@ -1142,8 +1180,8 @@ impl SettingsWindow {
         // Row 4: Multiple Plug-In Windows toggle
         {
             let (tp, ts) = self.plugins_toggle_rect(4, screen_w, screen_h, scale);
-            let color = if settings.multiple_plugin_windows { t.accent } else { t.knob_inactive };
-            out.push(InstanceRaw { position: tp, size: ts, color, border_radius: br });
+            let hov = self.hovered_button == Some(HoveredButton::Toggle(4));
+            super::button::push_instance(out, tp, ts, toggle_color(settings.multiple_plugin_windows, hov), br);
         }
 
         // Row 5: Auto-Hide Plug-In Windows toggle
@@ -1151,8 +1189,8 @@ impl SettingsWindow {
             let row_bottom = wp[1] + SECTION_HEADER_HEIGHT * scale + 5.0 * ROW_HEIGHT * scale;
             Self::render_row_separator(out, content_x, content_w, row_bottom, scale, t);
             let (tp, ts) = self.plugins_toggle_rect(5, screen_w, screen_h, scale);
-            let color = if settings.auto_hide_plugin_windows { t.accent } else { t.knob_inactive };
-            out.push(InstanceRaw { position: tp, size: ts, color, border_radius: br });
+            let hov = self.hovered_button == Some(HoveredButton::Toggle(5));
+            super::button::push_instance(out, tp, ts, toggle_color(settings.auto_hide_plugin_windows, hov), br);
         }
 
         // Row 6: Auto-Open Plug-In Windows toggle
@@ -1160,8 +1198,8 @@ impl SettingsWindow {
             let row_bottom = wp[1] + SECTION_HEADER_HEIGHT * scale + 6.0 * ROW_HEIGHT * scale;
             Self::render_row_separator(out, content_x, content_w, row_bottom, scale, t);
             let (tp, ts) = self.plugins_toggle_rect(6, screen_w, screen_h, scale);
-            let color = if settings.auto_open_plugin_windows { t.accent } else { t.knob_inactive };
-            out.push(InstanceRaw { position: tp, size: ts, color, border_radius: br });
+            let hov = self.hovered_button == Some(HoveredButton::Toggle(6));
+            super::button::push_instance(out, tp, ts, toggle_color(settings.auto_open_plugin_windows, hov), br);
         }
     }
 }
@@ -1287,7 +1325,7 @@ impl SettingsWindow {
                 }
 
                 // Slider rows (only when Default preset)
-                if settings.theme_preset == "Default" {
+                if settings.theme_preset == "Dark" {
                     let value_font = 12.0 * scale;
                     let value_line = 16.0 * scale;
                     for (i, def) in SLIDERS.iter().enumerate() {
@@ -1404,23 +1442,19 @@ impl SettingsWindow {
                     center: false,
                 });
 
+                // Text color helpers matching the reverse-button pattern.
+                let tc = &settings.theme;
+                let btn_text_active = crate::theme::RuntimeTheme::text_u8(tc.text_primary, 255);
+                let btn_text_idle   = crate::theme::RuntimeTheme::text_u8(tc.text_secondary, 225);
+                let toggle_text = |active: bool, hovered: bool| if active || hovered { btn_text_active } else { btn_text_idle };
+
                 // Row 0: Rescan button label + button text
                 {
                     let row_y = wp[1] + SECTION_HEADER_HEIGHT * scale;
                     Self::push_row_label(&mut out, "Rescan Plug-Ins", content_x, row_y, scale, settings);
                     let (rp, rs) = self.plugins_rescan_button_rect(screen_w, screen_h, scale);
-                    out.push(TextEntry {
-                        text: "Rescan".to_string(),
-                        x: rp[0] + rs[0] * 0.5,
-                        y: rp[1] + (rs[1] - btn_line) * 0.5,
-                        font_size: btn_font,
-                        line_height: btn_line,
-                        color: [255, 255, 255, 255],
-                        weight: 600,
-                        max_width: rs[0],
-                        bounds: None,
-                        center: true,
-                    });
+                    let hov = self.hovered_button == Some(HoveredButton::Rescan);
+                    super::button::push_text(&mut out, rp, rs, "Rescan", btn_font, btn_line, toggle_text(true, hov), 600);
                 }
 
                 // Row 1: Use VST3 System Folders
@@ -1429,18 +1463,8 @@ impl SettingsWindow {
                     Self::push_row_label(&mut out, "Use VST3 System Folders", content_x, row_y, scale, settings);
                     let (tp, ts) = self.plugins_toggle_rect(1, screen_w, screen_h, scale);
                     let val_text = if settings.use_vst3_system_folders { "On" } else { "Off" };
-                    out.push(TextEntry {
-                        text: val_text.to_string(),
-                        x: tp[0] + ts[0] * 0.5,
-                        y: tp[1] + (ts[1] - btn_line) * 0.5,
-                        font_size: btn_font,
-                        line_height: btn_line,
-                        color: [255, 255, 255, 255],
-                        weight: 600,
-                        max_width: ts[0],
-                        bounds: None,
-                        center: true,
-                    });
+                    let hov = self.hovered_button == Some(HoveredButton::Toggle(1));
+                    super::button::push_text(&mut out, tp, ts, val_text, btn_font, btn_line, toggle_text(settings.use_vst3_system_folders, hov), 600);
                 }
 
                 // Row 2: Use VST3 Custom Folder
@@ -1449,18 +1473,8 @@ impl SettingsWindow {
                     Self::push_row_label(&mut out, "Use VST3 Custom Folder", content_x, row_y, scale, settings);
                     let (tp, ts) = self.plugins_toggle_rect(2, screen_w, screen_h, scale);
                     let val_text = if settings.use_vst3_custom_folder { "On" } else { "Off" };
-                    out.push(TextEntry {
-                        text: val_text.to_string(),
-                        x: tp[0] + ts[0] * 0.5,
-                        y: tp[1] + (ts[1] - btn_line) * 0.5,
-                        font_size: btn_font,
-                        line_height: btn_line,
-                        color: [255, 255, 255, 255],
-                        weight: 600,
-                        max_width: ts[0],
-                        bounds: None,
-                        center: true,
-                    });
+                    let hov = self.hovered_button == Some(HoveredButton::Toggle(2));
+                    super::button::push_text(&mut out, tp, ts, val_text, btn_font, btn_line, toggle_text(settings.use_vst3_custom_folder, hov), 600);
                 }
 
                 // Row 3: Custom folder path / Browse
@@ -1474,18 +1488,8 @@ impl SettingsWindow {
                     Self::push_row_label(&mut out, &path_label, content_x, row_y, scale, settings);
                     if settings.use_vst3_custom_folder {
                         let (bp, bs) = self.plugins_browse_button_rect(screen_w, screen_h, scale);
-                        out.push(TextEntry {
-                            text: "Browse".to_string(),
-                            x: bp[0] + bs[0] * 0.5,
-                            y: bp[1] + (bs[1] - btn_line) * 0.5,
-                            font_size: btn_font,
-                            line_height: btn_line,
-                            color: [255, 255, 255, 255],
-                            weight: 600,
-                            max_width: bs[0],
-                            bounds: None,
-                            center: true,
-                        });
+                        let hov = self.hovered_button == Some(HoveredButton::Browse);
+                        super::button::push_text(&mut out, bp, bs, "Browse", btn_font, btn_line, toggle_text(true, hov), 600);
                     }
                 }
 
@@ -1516,18 +1520,8 @@ impl SettingsWindow {
                     Self::push_row_label(&mut out, "Multiple Plug-In Windows", content_x, row_y, scale, settings);
                     let (tp, ts) = self.plugins_toggle_rect(4, screen_w, screen_h, scale);
                     let val_text = if settings.multiple_plugin_windows { "On" } else { "Off" };
-                    out.push(TextEntry {
-                        text: val_text.to_string(),
-                        x: tp[0] + ts[0] * 0.5,
-                        y: tp[1] + (ts[1] - btn_line) * 0.5,
-                        font_size: btn_font,
-                        line_height: btn_line,
-                        color: [255, 255, 255, 255],
-                        weight: 600,
-                        max_width: ts[0],
-                        bounds: None,
-                        center: true,
-                    });
+                    let hov = self.hovered_button == Some(HoveredButton::Toggle(4));
+                    super::button::push_text(&mut out, tp, ts, val_text, btn_font, btn_line, toggle_text(settings.multiple_plugin_windows, hov), 600);
                 }
 
                 // Row 5: Auto-Hide
@@ -1536,18 +1530,8 @@ impl SettingsWindow {
                     Self::push_row_label(&mut out, "Auto-Hide Plug-In Windows", content_x, row_y, scale, settings);
                     let (tp, ts) = self.plugins_toggle_rect(5, screen_w, screen_h, scale);
                     let val_text = if settings.auto_hide_plugin_windows { "On" } else { "Off" };
-                    out.push(TextEntry {
-                        text: val_text.to_string(),
-                        x: tp[0] + ts[0] * 0.5,
-                        y: tp[1] + (ts[1] - btn_line) * 0.5,
-                        font_size: btn_font,
-                        line_height: btn_line,
-                        color: [255, 255, 255, 255],
-                        weight: 600,
-                        max_width: ts[0],
-                        bounds: None,
-                        center: true,
-                    });
+                    let hov = self.hovered_button == Some(HoveredButton::Toggle(5));
+                    super::button::push_text(&mut out, tp, ts, val_text, btn_font, btn_line, toggle_text(settings.auto_hide_plugin_windows, hov), 600);
                 }
 
                 // Row 6: Auto-Open
@@ -1556,18 +1540,8 @@ impl SettingsWindow {
                     Self::push_row_label(&mut out, "Auto-Open Plug-In Windows", content_x, row_y, scale, settings);
                     let (tp, ts) = self.plugins_toggle_rect(6, screen_w, screen_h, scale);
                     let val_text = if settings.auto_open_plugin_windows { "On" } else { "Off" };
-                    out.push(TextEntry {
-                        text: val_text.to_string(),
-                        x: tp[0] + ts[0] * 0.5,
-                        y: tp[1] + (ts[1] - btn_line) * 0.5,
-                        font_size: btn_font,
-                        line_height: btn_line,
-                        color: [255, 255, 255, 255],
-                        weight: 600,
-                        max_width: ts[0],
-                        bounds: None,
-                        center: true,
-                    });
+                    let hov = self.hovered_button == Some(HoveredButton::Toggle(6));
+                    super::button::push_text(&mut out, tp, ts, val_text, btn_font, btn_line, toggle_text(settings.auto_open_plugin_windows, hov), 600);
                 }
             }
             SettingsCategory::Developer => {
@@ -1619,18 +1593,14 @@ impl SettingsWindow {
                 Self::push_row_label(&mut out, "Theme", content_x, reset_row_y, scale, settings);
 
                 let (btn_pos, btn_size) = self.reset_theme_button_rect(screen_w, screen_h, scale);
-                out.push(TextEntry {
-                    text: "Reset to Defaults".to_string(),
-                    x: btn_pos[0] + btn_size[0] * 0.5,
-                    y: btn_pos[1] + (btn_size[1] - dd_line) * 0.5,
-                    font_size: dd_font,
-                    line_height: dd_line,
-                    color: [255, 255, 255, 255],
-                    weight: 600,
-                    max_width: btn_size[0],
-                    bounds: None,
-                    center: true,
-                });
+                let hov = self.hovered_button == Some(HoveredButton::ResetTheme);
+                let reset_tc = &settings.theme;
+                let reset_text_color = if hov {
+                    crate::theme::RuntimeTheme::text_u8(reset_tc.text_primary, 255)
+                } else {
+                    [255, 255, 255, 255]
+                };
+                super::button::push_text(&mut out, btn_pos, btn_size, "Reset to Defaults", dd_font, dd_line, reset_text_color, 600);
 
                 // Popup item text
                 if let Some(0) = self.open_dropdown {

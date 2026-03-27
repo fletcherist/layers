@@ -12,6 +12,7 @@ pub enum WarpMode {
     RePitch,
     Semitone,
     PaulStretch,
+    Complex,
 }
 
 impl Default for WarpMode {
@@ -780,6 +781,7 @@ pub fn build_waveform_triangles(
 
     let stretch_ratio = match wf.warp_mode {
         WarpMode::RePitch => if wf.sample_bpm > 0.0 { bpm / wf.sample_bpm } else { 1.0 },
+        WarpMode::Complex => if wf.sample_bpm > 0.0 { wf.sample_bpm / bpm } else { 1.0 },
         WarpMode::Semitone => 1.0 / 2.0_f32.powf(wf.pitch_semitones / 12.0),
         WarpMode::PaulStretch => 1.0, // Pre-stretched buffer is already the correct length
         WarpMode::Off => 1.0,

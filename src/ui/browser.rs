@@ -18,7 +18,7 @@ const MAX_BROWSER_WIDTH: f32 = 700.0;
 const RESIZE_HANDLE_PX: f32 = 5.0;
 pub const ITEM_HEIGHT: f32 = 24.0;
 pub const HEADER_HEIGHT: f32 = 36.0;
-const SEARCH_BAR_HEIGHT: f32 = 32.0;
+const SEARCH_BAR_HEIGHT: f32 = 36.0;
 const SIDEBAR_WIDTH: f32 = 110.0;
 const SIDEBAR_ITEM_HEIGHT: f32 = 26.0;
 const SIDEBAR_SECTION_GAP: f32 = 18.0;
@@ -982,7 +982,7 @@ impl SampleBrowser {
         out.push(InstanceRaw {
             position: [0.0, 0.0],
             size: [w, header_h],
-            color: settings.theme.bg_surface,
+            color: settings.theme.bg_base,
             border_radius: 0.0,
         });
         // Separator under header
@@ -1000,7 +1000,7 @@ impl SampleBrowser {
             out.push(InstanceRaw {
                 position: [0.0, row_y],
                 size: [w, search_bar_h],
-                color: settings.theme.bg_surface,
+                color: settings.theme.bg_base,
                 border_radius: 0.0,
             });
             // Separator under search bar row
@@ -1027,50 +1027,14 @@ impl SampleBrowser {
             let sb_y = row_y + margin;
             let sb_w_inner = w - sb_x - margin;
             let sb_h = search_bar_h - 2.0 * margin;
-            let bar_color = if self.search_focused {
-                [
-                    settings.theme.accent[0] * 0.15 + 0.05,
-                    settings.theme.accent[1] * 0.15 + 0.05,
-                    settings.theme.accent[2] * 0.15 + 0.05,
-                    1.0,
-                ]
-            } else {
-                crate::theme::with_alpha(settings.theme.shadow, settings.theme.shadow[3] * 0.6)
-            };
+            let bar_color = crate::theme::with_alpha(settings.theme.shadow, settings.theme.shadow[3] * 0.6);
             out.push(InstanceRaw {
                 position: [sb_x, sb_y],
                 size: [sb_w_inner, sb_h],
                 color: bar_color,
-                border_radius: 4.0 * scale,
+                border_radius: 6.0 * scale,
             });
-            // Focused border
-            if self.search_focused {
-                let border = 1.0 * scale;
-                out.push(InstanceRaw {
-                    position: [sb_x, sb_y],
-                    size: [sb_w_inner, border],
-                    color: [settings.theme.accent[0], settings.theme.accent[1], settings.theme.accent[2], 0.5],
-                    border_radius: 0.0,
-                });
-                out.push(InstanceRaw {
-                    position: [sb_x, sb_y + sb_h - border],
-                    size: [sb_w_inner, border],
-                    color: [settings.theme.accent[0], settings.theme.accent[1], settings.theme.accent[2], 0.5],
-                    border_radius: 0.0,
-                });
-                out.push(InstanceRaw {
-                    position: [sb_x, sb_y],
-                    size: [border, sb_h],
-                    color: [settings.theme.accent[0], settings.theme.accent[1], settings.theme.accent[2], 0.5],
-                    border_radius: 0.0,
-                });
-                out.push(InstanceRaw {
-                    position: [sb_x + sb_w_inner - border, sb_y],
-                    size: [border, sb_h],
-                    color: [settings.theme.accent[0], settings.theme.accent[1], settings.theme.accent[2], 0.5],
-                    border_radius: 0.0,
-                });
-            }
+
 
             // Search clear (X) button hover highlight
             if !self.search_query.is_empty() && self.search_clear_hovered {
@@ -1086,16 +1050,10 @@ impl SampleBrowser {
 
         // --- Sidebar background (slightly darker) ---
         let ct = self.content_top(scale);
-        let sidebar_bg = [
-            settings.theme.bg_base[0] * 0.9,
-            settings.theme.bg_base[1] * 0.9,
-            settings.theme.bg_base[2] * 0.9,
-            1.0,
-        ];
         out.push(InstanceRaw {
             position: [0.0, ct],
             size: [sb_w, screen_h - ct],
-            color: sidebar_bg,
+            color: settings.theme.bg_base,
             border_radius: 0.0,
         });
 
@@ -1238,7 +1196,7 @@ impl SampleBrowser {
                     out.push(InstanceRaw {
                         position: [cx, clip_y],
                         size: [content_w, clip_h],
-                        color: settings.theme.bg_plugin_header,
+                        color: settings.theme.bg_base,
                         border_radius: 0.0,
                     });
                     // Badge
@@ -1269,7 +1227,7 @@ impl SampleBrowser {
                     out.push(InstanceRaw {
                         position: [cx, clip_y],
                         size: [content_w, clip_h],
-                        color: settings.theme.bg_plugin,
+                        color: settings.theme.bg_base,
                         border_radius: 0.0,
                     });
                     // Hover
@@ -1281,23 +1239,6 @@ impl SampleBrowser {
                             border_radius: 0.0,
                         });
                     }
-                    // Category dot
-                    let dot_sz = 5.0 * scale;
-                    let dot_x = cx + 12.0 * scale;
-                    let dot_y = y + (item_h - dot_sz) * 0.5;
-                    if dot_y >= ct {
-                        let dot_color = if *is_instrument {
-                            settings.theme.pill_instrument
-                        } else {
-                            settings.theme.pill_effect
-                        };
-                        out.push(InstanceRaw {
-                            position: [dot_x, dot_y],
-                            size: [dot_sz, dot_sz],
-                            color: dot_color,
-                            border_radius: dot_sz * 0.5,
-                        });
-                    }
                 }
                 EntryKind::EmptyState => {}
                 EntryKind::ProjectInstrument { .. } | EntryKind::LayerNode { .. } | EntryKind::Master => {
@@ -1305,7 +1246,7 @@ impl SampleBrowser {
                     out.push(InstanceRaw {
                         position: [cx, clip_y],
                         size: [content_w, clip_h],
-                        color: settings.theme.bg_plugin,
+                        color: settings.theme.bg_base,
                         border_radius: 0.0,
                     });
                     let entry_entity_id = match &entry.kind {
@@ -1372,30 +1313,6 @@ impl SampleBrowser {
                         }
                         }
                     }
-                    }
-                    // Category dot (not for Master)
-                    if !matches!(entry.kind, EntryKind::Master) {
-                        let dot_sz = 5.0 * scale;
-                        let dot_offset = indent + 20.0 * scale;
-                        let dot_x = cx + dot_offset;
-                        let dot_y = y + (item_h - dot_sz) * 0.5;
-                        if dot_y >= ct {
-                            let dot_color = match &entry.kind {
-                                EntryKind::LayerNode { kind, color, .. } => match kind {
-                                    LayerNodeKind::Instrument => settings.theme.pill_instrument,
-                                    LayerNodeKind::TextNote => settings.theme.category_dot,
-                                    LayerNodeKind::Group => settings.theme.component_border_color,
-                                    _ => *color,
-                                },
-                                _ => settings.theme.pill_instrument,
-                            };
-                            out.push(InstanceRaw {
-                                position: [dot_x, dot_y],
-                                size: [dot_sz, dot_sz],
-                                color: dot_color,
-                                border_radius: dot_sz * 0.5,
-                            });
-                        }
                     }
                     // Solo/Mute buttons (right-aligned) — only for Waveform, Instrument, Group
                     if let EntryKind::LayerNode { kind, is_soloed, is_muted, .. } = &entry.kind {
@@ -1551,7 +1468,7 @@ impl SampleBrowser {
             out.push(InstanceRaw {
                 position: [strip_x, strip_y],
                 size: [strip_w, strip_h],
-                color: settings.theme.bg_surface,
+                color: settings.theme.bg_base,
                 border_radius: 0.0,
             });
 
@@ -1882,7 +1799,7 @@ impl SampleBrowser {
                         max_width: w - text_x - 12.0 * scale,
                         color: display_color,
                         weight: 400,
-                        bounds: None,
+                        bounds: Some([cx, base_y, w, base_y + item_h]),
                         center: false,
                     });
                     // Solo/Mute button labels

@@ -211,6 +211,11 @@ impl App {
         let orig_fade_out_curve = wf.fade_out_curve;
         let orig_volume = wf.volume;
         let orig_pan = wf.pan;
+        let orig_warp_mode = wf.warp_mode;
+        let orig_sample_bpm = wf.sample_bpm;
+        let orig_pitch_semitones = wf.pitch_semitones;
+        let orig_paulstretch_factor = wf.paulstretch_factor;
+        let orig_is_reversed = wf.is_reversed;
 
         let before_wf = self.waveforms[&wf_id].clone();
 
@@ -237,11 +242,11 @@ impl App {
             fade_out_curve: 0.0,
             volume: orig_volume,
             pan: orig_pan,
-            warp_mode: ui::waveform::WarpMode::Off,
-            sample_bpm: self.bpm,
-            pitch_semitones: 0.0,
-            paulstretch_factor: 8.0,
-            is_reversed: false,
+            warp_mode: orig_warp_mode,
+            sample_bpm: orig_sample_bpm,
+            pitch_semitones: orig_pitch_semitones,
+            paulstretch_factor: orig_paulstretch_factor,
+            is_reversed: orig_is_reversed,
             disabled: false,
             sample_offset_px: offset_px,
             automation: AutomationData::new(),
@@ -267,11 +272,11 @@ impl App {
             fade_out_curve: orig_fade_out_curve,
             volume: orig_volume,
             pan: orig_pan,
-            warp_mode: ui::waveform::WarpMode::Off,
-            sample_bpm: self.bpm,
-            pitch_semitones: 0.0,
-            paulstretch_factor: 8.0,
-            is_reversed: false,
+            warp_mode: orig_warp_mode,
+            sample_bpm: orig_sample_bpm,
+            pitch_semitones: orig_pitch_semitones,
+            paulstretch_factor: orig_paulstretch_factor,
+            is_reversed: orig_is_reversed,
             disabled: false,
             sample_offset_px: right_offset_px,
             automation: AutomationData::new(),

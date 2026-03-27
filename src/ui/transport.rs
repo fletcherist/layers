@@ -62,7 +62,7 @@ impl TransportPanel {
         out.push(InstanceRaw {
             position: pos,
             size,
-            color: settings.theme.bg_panel,
+            color: settings.theme.bg_base,
             border_radius: size[1] * 0.5,
         });
 

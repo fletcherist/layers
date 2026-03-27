@@ -169,6 +169,14 @@ impl ApplicationHandler for App {
             self.request_redraw(); // keep loop alive for blink timer
         }
 
+        // Blink cursor in palette search bar while open.
+        if let Some(ref mut palette) = self.command_palette {
+            if palette.tick_cursor_blink() {
+                self.request_redraw();
+            }
+            self.request_redraw(); // keep loop alive for blink timer
+        }
+
         // Flush debounced search rebuild when deadline has passed.
         if self.sample_browser.tick_search_debounce() {
             self.request_redraw();

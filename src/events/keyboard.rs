@@ -60,15 +60,6 @@ impl App {
         }
         if event.state == ElementState::Pressed {
             println!("[KEY] pressed: {:?} super={} shift={}", event.logical_key, self.cmd_held(), self.modifiers.shift_key());
-            if self.plugin_editor.is_some() {
-                if matches!(event.logical_key, Key::Named(NamedKey::Escape)) {
-                    self.plugin_editor = None;
-                    self.request_redraw();
-                    return;
-                }
-                return;
-            }
-
             if self.settings_window.is_some() {
                 if matches!(event.logical_key, Key::Named(NamedKey::Escape)) {
                     self.settings_window = None;
@@ -1290,6 +1281,7 @@ impl App {
                             if let Some(p) = &mut self.command_palette {
                                 p.search_text.pop();
                                 p.update_filter(self.settings.dev_mode);
+                                p.reset_cursor_blink();
                             }
                             self.request_redraw();
                             return;
@@ -1298,6 +1290,7 @@ impl App {
                             if let Some(p) = &mut self.command_palette {
                                 p.search_text.push(' ');
                                 p.update_filter(self.settings.dev_mode);
+                                p.reset_cursor_blink();
                             }
                             self.request_redraw();
                             return;
@@ -1306,6 +1299,7 @@ impl App {
                             if let Some(p) = &mut self.command_palette {
                                 p.search_text.push_str(ch.as_ref());
                                 p.update_filter(self.settings.dev_mode);
+                                p.reset_cursor_blink();
                             }
                             self.request_redraw();
                             return;
@@ -1379,6 +1373,7 @@ impl App {
                         if let Some(p) = &mut self.command_palette {
                             p.search_text.pop();
                             p.update_filter(self.settings.dev_mode);
+                            p.reset_cursor_blink();
                         }
                         self.request_redraw();
                         return;
@@ -1387,6 +1382,7 @@ impl App {
                         if let Some(p) = &mut self.command_palette {
                             p.search_text.push(' ');
                             p.update_filter(self.settings.dev_mode);
+                            p.reset_cursor_blink();
                         }
                         self.request_redraw();
                         return;
@@ -1395,6 +1391,7 @@ impl App {
                         if let Some(p) = &mut self.command_palette {
                             p.search_text.push_str(ch.as_ref());
                             p.update_filter(self.settings.dev_mode);
+                            p.reset_cursor_blink();
                         }
                         self.request_redraw();
                         return;
@@ -1839,7 +1836,10 @@ impl App {
                             "l" => {
                                 self.execute_command(CommandAction::AddLoopArea);
                             }
-                            "s" => self.save_project(),
+                            "s" => {
+                                self.save_project();
+                                self.request_redraw();
+                            }
                             "z" => {
                                 println!("[KEY] Cmd+Z pressed, shift={}", self.modifiers.shift_key());
                                 if self.modifiers.shift_key() {
@@ -1973,7 +1973,6 @@ impl App {
         self.command_palette.is_none()
             && self.settings_window.is_none()
             && self.export_window.is_none()
-            && self.plugin_editor.is_none()
             && self.context_menu.is_none()
             && self.editing_component.is_none()
             && self.editing_midi_clip.is_none()

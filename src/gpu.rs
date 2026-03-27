@@ -18,7 +18,6 @@ use crate::settings::Settings;
 use crate::ui::settings_window::SettingsWindow;
 use crate::ui::context_menu::ContextMenu;
 use crate::ui::palette::CommandPalette;
-use crate::ui::plugin_editor;
 use crate::ui::toast;
 use crate::ui::tooltip;
 use crate::ui::waveform;
@@ -722,7 +721,6 @@ impl Gpu {
         _editing_effect_name: Option<(crate::entity_id::EntityId, &str)>,
         waveforms: &indexmap::IndexMap<crate::entity_id::EntityId, waveform::WaveformView>,
         editing_waveform_name: Option<(crate::entity_id::EntityId, &str)>,
-        plugin_editor: Option<&plugin_editor::PluginEditorWindow>,
         export_window: Option<&crate::ui::export_window::ExportWindow>,
         settings_window: Option<&SettingsWindow>,
         settings: &Settings,
@@ -852,10 +850,6 @@ impl Gpu {
 
         if let Some(sw) = settings_window {
             overlay_instances.extend(sw.build_instances(settings, w, h, self.scale_factor));
-        }
-
-        if let Some(pe) = plugin_editor {
-            overlay_instances.extend(pe.build_instances(settings, w, h, self.scale_factor));
         }
 
         if let Some(ew) = export_window {
@@ -1091,20 +1085,6 @@ impl Gpu {
         }
 
         // Context menu text is rendered in the top overlay layer — see top_text_buffers below
-
-        // Plugin editor text
-        if let Some(pe) = plugin_editor {
-            for te in pe.get_text_entries(settings, w, h, scale) {
-                let buf = shape_text_entry(&mut self.font_system, &te);
-                text_buffers.push(buf);
-                text_meta.push((
-                    te.x,
-                    te.y,
-                    TextColor::rgba(te.color[0], te.color[1], te.color[2], te.color[3]),
-                    full_bounds,
-                ));
-            }
-        }
 
         // Export window text
         if let Some(ew) = export_window {

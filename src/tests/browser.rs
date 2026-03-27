@@ -189,7 +189,7 @@ fn test_hit_place_row_and_places_add() {
     browser.add_folder(tmp.clone());
 
     let scale = 1.0;
-    let ct = (crate::ui::browser::HEADER_HEIGHT + 32.0) as f32;
+    let ct = (crate::ui::browser::HEADER_HEIGHT + 36.0) as f32;
     // places_section_y = ct + 18 + 4*26 + 8 = ct + 130
     let places_y = ct + 18.0 + 4.0 * 26.0 + 8.0;
     let ph = 20.0_f32; // PLACES_HEADER_HEIGHT

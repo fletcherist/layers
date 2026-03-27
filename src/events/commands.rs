@@ -412,11 +412,12 @@ impl App {
                     }
                 }
             }
-            CommandAction::SetWarpOff | CommandAction::SetWarpRePitch | CommandAction::SetWarpSemitone | CommandAction::SetWarpPaulStretch => {
+            CommandAction::SetWarpOff | CommandAction::SetWarpRePitch | CommandAction::SetWarpSemitone | CommandAction::SetWarpPaulStretch | CommandAction::SetWarpComplex => {
                 let new_mode = match action {
                     CommandAction::SetWarpRePitch => ui::waveform::WarpMode::RePitch,
                     CommandAction::SetWarpSemitone => ui::waveform::WarpMode::Semitone,
                     CommandAction::SetWarpPaulStretch => ui::waveform::WarpMode::PaulStretch,
+                    CommandAction::SetWarpComplex => ui::waveform::WarpMode::Complex,
                     _ => ui::waveform::WarpMode::Off,
                 };
                 if let Some(rw) = &self.right_window {
@@ -431,16 +432,17 @@ impl App {
                                     wf.size[0] = original_duration_px * (self.bpm / wf.sample_bpm);
                                 }
                             }
+                            if new_mode == ui::waveform::WarpMode::Complex {
+                                if let Some(clip) = self.audio_clips.get(&wf_id) {
+                                    let original_duration_px = clip.duration_secs * PIXELS_PER_SECOND;
+                                    wf.size[0] = original_duration_px * (wf.sample_bpm / self.bpm);
+                                }
+                            }
                         }
                         // Restore original audio when switching away from PaulStretch
                         #[cfg(feature = "native")]
                         if old_mode == Some(ui::waveform::WarpMode::PaulStretch) && new_mode != ui::waveform::WarpMode::PaulStretch {
                             self.restore_paulstretch(wf_id);
-                        }
-                        // Apply PaulStretch when switching to it
-                        #[cfg(feature = "native")]
-                        if new_mode == ui::waveform::WarpMode::PaulStretch {
-                            self.apply_paulstretch(wf_id);
                         }
                         if let Some(after) = self.waveforms.get(&wf_id).cloned() {
                             self.push_op(crate::operations::Operation::UpdateWaveform {

@@ -245,7 +245,6 @@ impl App {
                 self.editing_waveform_name
                     .as_ref()
                     .map(|(idx, s)| (*idx, s.as_str())),
-                self.plugin_editor.as_ref(),
                 self.export_window.as_ref(),
                 {
                     #[cfg(feature = "native")]

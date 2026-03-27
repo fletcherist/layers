@@ -92,6 +92,7 @@ impl App {
                         ui::waveform::WarpMode::RePitch => 1,
                         ui::waveform::WarpMode::Semitone => 2,
                         ui::waveform::WarpMode::PaulStretch => 3,
+                        ui::waveform::WarpMode::Complex => 4,
                     },
                     sample_bpm: wf.sample_bpm,
                     pitch_semitones: wf.pitch_semitones,
@@ -199,10 +200,11 @@ impl App {
 
     pub(crate) fn save_project(&mut self) {
         self.save_project_state();
-        if let Some(storage) = &self.storage {
-            if storage.is_temp_project() {
-                self.save_project_as();
-            }
+        let is_temp = self.storage.as_ref().map_or(false, |s| s.is_temp_project());
+        if is_temp {
+            self.save_project_as();
+        } else {
+            self.toast_manager.push("Project saved", ui::toast::ToastKind::Success);
         }
     }
 
@@ -218,6 +220,7 @@ impl App {
                         self.current_project_name = folder_name.to_string_lossy().to_string();
                     }
                     self.save_project_state();
+                    self.toast_manager.push("Project saved", ui::toast::ToastKind::Success);
                     println!("Project saved to {:?}", dest);
                 } else {
                     println!("Failed to save project to {:?}", dest);
@@ -239,6 +242,7 @@ impl App {
         } else if id == menu.save_project {
             self.save_project();
             self.refresh_open_project_menu();
+            self.request_redraw();
         } else if id == menu.open_project {
             if let Some(folder) = rfd::FileDialog::new()
                 .set_title("Open Project")
@@ -410,6 +414,7 @@ impl App {
                     1 => ui::waveform::WarpMode::RePitch,
                     2 => ui::waveform::WarpMode::Semitone,
                     3 => ui::waveform::WarpMode::PaulStretch,
+                    4 => ui::waveform::WarpMode::Complex,
                     _ => ui::waveform::WarpMode::Off,
                 },
                 sample_bpm: if sw.sample_bpm > 0.0 { sw.sample_bpm } else { self.bpm },

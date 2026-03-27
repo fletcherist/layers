@@ -27,6 +27,7 @@ pub enum MenuContext {
     Selection {
         has_waveforms: bool,
         has_midi_clips: bool,
+        has_instrument: bool,
         current_waveform_color: Option<[f32; 4]>,
         current_midi_color: Option<[f32; 4]>,
     },
@@ -91,13 +92,13 @@ fn grid_entries(settings: &Settings) -> Vec<ContextMenuEntry> {
         label: "Snap to Grid",
         shortcut: "⌘4",
         action: CommandAction::ToggleSnapToGrid,
-        checked: settings.snap_to_grid,
+        checked: false,
     }));
     entries.push(ContextMenuEntry::Item(ContextMenuItem {
         label: "Snap to Vertical Grid",
         shortcut: "",
         action: CommandAction::ToggleVerticalSnap,
-        checked: settings.snap_to_vertical_grid,
+        checked: false,
     }));
     entries.push(ContextMenuEntry::Separator);
 
@@ -347,10 +348,20 @@ impl ContextMenu {
             MenuContext::Selection {
                 has_waveforms,
                 has_midi_clips,
+                has_instrument,
                 current_waveform_color,
                 current_midi_color,
             } => {
                 let mut entries = vec![];
+                if has_instrument {
+                    entries.push(ContextMenuEntry::Item(ContextMenuItem {
+                        label: "Open",
+                        shortcut: "",
+                        action: CommandAction::OpenInstrumentGui,
+                        checked: false,
+                    }));
+                    entries.push(ContextMenuEntry::Separator);
+                }
                 if has_waveforms {
                     entries.push(ContextMenuEntry::Item(ContextMenuItem {
                         label: "Rename",
@@ -554,19 +565,25 @@ impl ContextMenu {
                         label: "Semitone",
                         shortcut: "",
                         action: CommandAction::SetWarpSemitone,
-                        checked: current == WarpMode::Semitone,
+                        checked: false,
                     }),
                     ContextMenuEntry::Item(ContextMenuItem {
                         label: "Re-Pitch",
                         shortcut: "",
                         action: CommandAction::SetWarpRePitch,
-                        checked: current == WarpMode::RePitch,
+                        checked: false,
                     }),
                     ContextMenuEntry::Item(ContextMenuItem {
                         label: "Paul Stretch",
                         shortcut: "",
                         action: CommandAction::SetWarpPaulStretch,
-                        checked: current == WarpMode::PaulStretch,
+                        checked: false,
+                    }),
+                    ContextMenuEntry::Item(ContextMenuItem {
+                        label: "Complex",
+                        shortcut: "",
+                        action: CommandAction::SetWarpComplex,
+                        checked: false,
                     }),
                 ]
             }
@@ -717,7 +734,7 @@ impl ContextMenu {
         out.push(InstanceRaw {
             position: pos,
             size,
-            color: settings.theme.bg_menu,
+            color: settings.theme.bg_base,
             border_radius: CTX_MENU_BORDER_RADIUS * scale,
         });
 

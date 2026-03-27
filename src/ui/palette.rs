@@ -2,6 +2,11 @@ use crate::gpu::TextEntry;
 use crate::InstanceRaw;
 use crate::theme::{SCROLLBAR_BG, SCROLLBAR_THUMB, RMS_LOW, RMS_MID, RMS_HIGH};
 
+#[cfg(target_arch = "wasm32")]
+use web_time::Instant as TimeInstant;
+#[cfg(not(target_arch = "wasm32"))]
+use std::time::Instant as TimeInstant;
+
 pub const PALETTE_WIDTH: f32 = 520.0;
 pub const PALETTE_INPUT_HEIGHT: f32 = 52.0;
 pub const PALETTE_ITEM_HEIGHT: f32 = 38.0;
@@ -67,6 +72,7 @@ pub enum CommandAction {
     SetWarpRePitch,
     SetWarpSemitone,
     SetWarpPaulStretch,
+    SetWarpComplex,
     OpenInstrumentGui,
     SetMidiClipColor(usize),
     CreateGroup,
@@ -442,6 +448,9 @@ pub struct CommandPalette {
     pub plugin_scroll_offset: f32,
     // Session share/join text input
     pub session_input: String,
+    // Cursor blink state for search input
+    pub cursor_blink_start: TimeInstant,
+    pub cursor_blink_visible: bool,
 }
 
 impl CommandPalette {
@@ -462,9 +471,26 @@ impl CommandPalette {
             plugin_selected_index: 0,
             plugin_scroll_offset: 0.0,
             session_input: String::new(),
+            cursor_blink_start: TimeInstant::now(),
+            cursor_blink_visible: true,
         };
         p.rebuild_rows(dev_mode);
         p
+    }
+
+    pub fn reset_cursor_blink(&mut self) {
+        self.cursor_blink_start = TimeInstant::now();
+        self.cursor_blink_visible = true;
+    }
+
+    pub fn tick_cursor_blink(&mut self) -> bool {
+        let visible = self.cursor_blink_start.elapsed().as_millis() % 1000 < 500;
+        if visible != self.cursor_blink_visible {
+            self.cursor_blink_visible = visible;
+            true
+        } else {
+            false
+        }
     }
 
     fn rebuild_rows(&mut self, dev_mode: bool) {
@@ -952,7 +978,7 @@ impl CommandPalette {
         out.push(InstanceRaw {
             position: pos,
             size,
-            color: settings.theme.bg_overlay,
+            color: settings.theme.bg_base,
             border_radius: PALETTE_BORDER_RADIUS * scale,
         });
 
@@ -1219,22 +1245,31 @@ impl CommandPalette {
         let list_top = ppos[1] + PALETTE_INPUT_HEIGHT * scale + 1.0 * scale;
 
         // Search input text (or placeholder)
-        let (display_text, search_color) = match self.mode {
-            PaletteMode::VolumeFader => ("Master Volume", crate::theme::RuntimeTheme::text_u8(theme.text_primary, 255)),
-            PaletteMode::ShareSession => ("Share Session", crate::theme::RuntimeTheme::text_u8(theme.text_primary, 255)),
-            PaletteMode::JoinSession => ("Join Session", crate::theme::RuntimeTheme::text_u8(theme.text_primary, 255)),
+        let (display_text, search_color): (String, _) = match self.mode {
+            PaletteMode::VolumeFader => ("Master Volume".to_string(), crate::theme::RuntimeTheme::text_u8(theme.text_primary, 255)),
+            PaletteMode::ShareSession => ("Share Session".to_string(), crate::theme::RuntimeTheme::text_u8(theme.text_primary, 255)),
+            PaletteMode::JoinSession => ("Join Session".to_string(), crate::theme::RuntimeTheme::text_u8(theme.text_primary, 255)),
             PaletteMode::PluginPicker | PaletteMode::InstrumentPicker if self.search_text.is_empty() => {
-                ("Search plugins...", crate::theme::RuntimeTheme::text_u8(theme.text_dim, 160))
+                let placeholder = if self.cursor_blink_visible { "Search plugins...|" } else { "Search plugins..." };
+                (placeholder.to_string(), crate::theme::RuntimeTheme::text_u8(theme.text_dim, 160))
             }
             _ if self.search_text.is_empty() => {
-                ("Search", crate::theme::RuntimeTheme::text_u8(theme.text_dim, 160))
+                let placeholder = if self.cursor_blink_visible { "Search|" } else { "Search" };
+                (placeholder.to_string(), crate::theme::RuntimeTheme::text_u8(theme.text_dim, 160))
             }
-            _ => (self.search_text.as_str(), crate::theme::RuntimeTheme::text_u8(theme.text_primary, 255)),
+            _ => {
+                let text = if self.cursor_blink_visible {
+                    format!("{}|", self.search_text)
+                } else {
+                    self.search_text.clone()
+                };
+                (text, crate::theme::RuntimeTheme::text_u8(theme.text_primary, 255))
+            }
         };
         let sfont = 15.0 * scale;
         let sline = 22.0 * scale;
         out.push(TextEntry {
-            text: display_text.to_string(),
+            text: display_text,
             x: ppos[0] + 36.0 * scale,
             y: ppos[1] + (PALETTE_INPUT_HEIGHT * scale - sline) * 0.5,
             font_size: sfont,

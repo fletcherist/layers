@@ -1,7 +1,7 @@
 //! Reusable dropdown component: rendering, hit-testing, and text helpers.
 
 use crate::gpu::TextEntry;
-use crate::theme::{self, RuntimeTheme};
+use crate::theme::RuntimeTheme;
 use crate::InstanceRaw;
 
 pub(crate) const ITEM_HEIGHT: f32 = 26.0;
@@ -40,15 +40,6 @@ pub(crate) fn render_button(
         size: ds,
         color: t.bg_input,
         border_radius: dd_br,
-    });
-    let arrow_size = 10.0 * scale;
-    let arrow_x = dp[0] + ds[0] - 18.0 * scale;
-    let arrow_y = dp[1] + (ds[1] - arrow_size) * 0.5;
-    out.push(InstanceRaw {
-        position: [arrow_x, arrow_y],
-        size: [arrow_size, arrow_size],
-        color: theme::with_alpha(t.text_primary, 0.3),
-        border_radius: arrow_size * 0.5,
     });
 }
 
