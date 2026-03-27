@@ -10,7 +10,6 @@ use crate::instruments;
 use crate::midi;
 use crate::regions::{
     ExportRegion, LoopRegion, SelectArea, EXPORT_RENDER_PILL_H, EXPORT_RENDER_PILL_W,
-    LOOP_BADGE_H, LOOP_BADGE_W,
 };
 use crate::settings::Settings;
 use crate::ui;
@@ -161,21 +160,6 @@ pub(crate) fn build_instances(out: &mut Vec<InstanceRaw>, ctx: &RenderContext) {
         out.extend(midi::build_midi_note_instances(
             mc, camera, sel_notes, editing,
         ));
-        // Plugin name label badge at top-left of MIDI clip
-        if let Some(inst_id) = mc.instrument_id {
-            if let Some(inst) = ctx.instruments.get(&inst_id) {
-                if !inst.plugin_name.is_empty() {
-                    let badge_h = 14.0 / camera.zoom;
-                    let badge_w = (inst.plugin_name.len() as f32 * 6.0 + 8.0) / camera.zoom;
-                    out.push(InstanceRaw {
-                        position: [mc.position[0] + 2.0 / camera.zoom, mc.position[1] + 2.0 / camera.zoom],
-                        size: [badge_w, badge_h],
-                        color: crate::theme::with_alpha(ctx.settings.theme.instrument_border_color, 0.65),
-                        border_radius: 2.0 / camera.zoom,
-                    });
-                }
-            }
-        }
         // TODO: refactor velocity lane rendering before re-enabling
         // if editing {
         //     out.extend(midi::build_velocity_lane_instances(mc, camera, sel_notes));
@@ -279,13 +263,6 @@ pub(crate) fn build_instances(out: &mut Vec<InstanceRaw>, ctx: &RenderContext) {
             ctx.settings.theme.loop_border_color[2],
             ctx.settings.theme.loop_border_color[3] * alpha_mul,
         ];
-        let badge = [
-            ctx.settings.theme.loop_badge_color[0],
-            ctx.settings.theme.loop_badge_color[1],
-            ctx.settings.theme.loop_badge_color[2],
-            ctx.settings.theme.loop_badge_color[3] * alpha_mul,
-        ];
-
         out.push(InstanceRaw {
             position: p,
             size: s,
@@ -303,33 +280,6 @@ pub(crate) fn build_instances(out: &mut Vec<InstanceRaw>, ctx: &RenderContext) {
         // Left and right borders only (full viewport height)
         out.push(InstanceRaw { position: p, size: [bw, s[1]], color: border, border_radius: 0.0 });
         out.push(InstanceRaw { position: [p[0] + s[0] - bw, p[1]], size: [bw, s[1]], color: border, border_radius: 0.0 });
-
-        let dash_h = 3.0 / camera.zoom;
-        let dash_w = 20.0 / camera.zoom;
-        let gap = 10.0 / camera.zoom;
-        let dy = world_top + 2.0 / camera.zoom;
-        let mut dx = p[0];
-        while dx < lr_right {
-            let w = dash_w.min(lr_right - dx);
-            out.push(InstanceRaw {
-                position: [dx, dy],
-                size: [w, dash_h],
-                color: border,
-                border_radius: 1.0 / camera.zoom,
-            });
-            dx += dash_w + gap;
-        }
-
-        let pill_w = LOOP_BADGE_W / camera.zoom;
-        let pill_h = LOOP_BADGE_H / camera.zoom;
-        let pill_x = p[0] + 4.0 / camera.zoom;
-        let pill_y = world_top + 8.0 / camera.zoom;
-        out.push(InstanceRaw {
-            position: [pill_x, pill_y],
-            size: [pill_w, pill_h],
-            color: badge,
-            border_radius: pill_h * 0.5,
-        });
 
         if is_sel {
             let handle_sz = 8.0 / camera.zoom;

@@ -62,6 +62,10 @@ surreal_derive! {
         pub automation_volume: Vec<[f32; 2]>,
         pub automation_pan: Vec<[f32; 2]>,
         pub take_group_json: String,
+        pub warp_mode: u8,
+        pub sample_bpm: f32,
+        pub pitch_semitones: f32,
+        pub paulstretch_factor: f32,
     }
 }
 

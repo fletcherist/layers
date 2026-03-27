@@ -160,6 +160,15 @@ impl ApplicationHandler for App {
             self.request_redraw();
         }
 
+        // Blink cursor in search bar while focused.
+        if self.sample_browser.visible && self.sample_browser.search_focused {
+            if self.sample_browser.tick_cursor_blink() {
+                self.sample_browser.text_dirty = true;
+                self.request_redraw();
+            }
+            self.request_redraw(); // keep loop alive for blink timer
+        }
+
         // Flush debounced search rebuild when deadline has passed.
         if self.sample_browser.tick_search_debounce() {
             self.request_redraw();
@@ -203,6 +212,32 @@ impl ApplicationHandler for App {
                     self.reconnect_attempt = 0;
                     self.last_reconnect_time = None;
                     self.pending_welcome = None;
+
+                    // Dismiss persistent reconnecting toast and show connected
+                    self.toast_manager.dismiss_by_id("reconnecting");
+                    self.toast_manager.push("Connected", crate::ui::toast::ToastKind::Success);
+
+                    // Clean-slate: clear all entities before ops replay
+                    self.clear_entity_state();
+                }
+            }
+
+            // --- Check for pending sync-complete signal (non-blocking) ---
+            if let Some(rx) = &mut self.pending_sync_complete {
+                match rx.try_recv() {
+                    Ok(()) => {
+                        self.pending_sync_complete = None;
+                        self.toast_manager.push("State synced", crate::ui::toast::ToastKind::Success);
+                        log::info!("[SYNC] Initial sync complete — all ops replayed, live queries active");
+                    }
+                    Err(tokio::sync::oneshot::error::TryRecvError::Closed) => {
+                        // Sender dropped — connection died during sync
+                        self.pending_sync_complete = None;
+                        log::warn!("[SYNC] Sync-complete channel closed — connection lost during initial sync");
+                    }
+                    Err(tokio::sync::oneshot::error::TryRecvError::Empty) => {
+                        // Not ready yet, keep polling
+                    }
                 }
             }
 
@@ -218,8 +253,10 @@ impl ApplicationHandler for App {
                     };
                     if should_retry {
                         let attempt = self.reconnect_attempt + 1;
-                        self.toast_manager.push(
-                            format!("Connection lost. Reconnecting {attempt}/{MAX_RECONNECT_ATTEMPTS}…"),
+                        // Persistent toast — stays until connected or max retries exhausted
+                        self.toast_manager.push_persistent(
+                            "reconnecting",
+                            format!("Reconnecting {attempt}/{MAX_RECONNECT_ATTEMPTS}…"),
                             crate::ui::toast::ToastKind::Error,
                         );
                         log::info!("Reconnecting (attempt {attempt})...");
@@ -228,6 +265,12 @@ impl ApplicationHandler for App {
                         if self.reconnect_attempt <= MAX_RECONNECT_ATTEMPTS {
                             let pass = self.connect_password.clone();
                             self.connect_to_server(&url, &pid, pass.as_deref());
+                        } else {
+                            self.toast_manager.dismiss_by_id("reconnecting");
+                            self.toast_manager.push(
+                                "Connection failed after maximum retries",
+                                crate::ui::toast::ToastKind::Error,
+                            );
                         }
                     }
                 }

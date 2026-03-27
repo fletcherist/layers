@@ -562,6 +562,12 @@ impl ContextMenu {
                         action: CommandAction::SetWarpRePitch,
                         checked: current == WarpMode::RePitch,
                     }),
+                    ContextMenuEntry::Item(ContextMenuItem {
+                        label: "Paul Stretch",
+                        shortcut: "",
+                        action: CommandAction::SetWarpPaulStretch,
+                        checked: current == WarpMode::PaulStretch,
+                    }),
                 ]
             }
         };

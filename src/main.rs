@@ -24,6 +24,8 @@ mod network;
 mod operations;
 mod overlap;
 #[cfg(feature = "native")]
+mod paulstretch;
+#[cfg(feature = "native")]
 mod surreal_client;
 #[cfg(feature = "native")]
 mod plugins;
@@ -147,6 +149,11 @@ type NativeWelcomeReceiver = tokio::sync::oneshot::Receiver<user::User>;
 #[cfg(not(feature = "native"))]
 type NativeWelcomeReceiver = ();
 
+#[cfg(feature = "native")]
+type NativeSyncCompleteReceiver = tokio::sync::oneshot::Receiver<()>;
+#[cfg(not(feature = "native"))]
+type NativeSyncCompleteReceiver = ();
+
 use automation::{AutomationData, AutomationParam};
 
 // ---------------------------------------------------------------------------
@@ -236,6 +243,14 @@ enum PendingAudioLoad {
         right_samples: std::sync::Arc<Vec<f32>>,
         sample_rate: u32,
     },
+}
+
+#[cfg(feature = "native")]
+struct PaulStretchCache {
+    original_audio: Arc<ui::waveform::AudioData>,
+    original_clip: ui::waveform::AudioClipData,
+    original_width: f32,
+    factor: f32,
 }
 
 struct App {
@@ -356,6 +371,7 @@ struct App {
     connect_project_id: Option<String>,
     connect_password: Option<String>,
     pending_welcome: Option<NativeWelcomeReceiver>,
+    pending_sync_complete: Option<NativeSyncCompleteReceiver>,
     reconnect_attempt: u32,
     last_reconnect_time: Option<TimeInstant>,
     cached_instances: Vec<InstanceRaw>,
@@ -381,6 +397,9 @@ struct App {
     open_plugin_guis: std::collections::HashSet<(entity_id::EntityId, usize)>,
     /// Track which instrument GUIs were open last frame for close detection.
     open_instrument_guis: std::collections::HashSet<entity_id::EntityId>,
+    /// Cache for PaulStretch: stores original audio data so we can restore when switching modes.
+    #[cfg(feature = "native")]
+    paulstretch_cache: IndexMap<EntityId, PaulStretchCache>,
 }
 
 /// Whether an entity should be audible, considering solo/mute and group membership.
@@ -535,6 +554,7 @@ impl App {
             connect_project_id: None,
             connect_password: None,
             pending_welcome: None,
+            pending_sync_complete: None,
             reconnect_attempt: 0,
             last_reconnect_time: None,
             cached_instances: Vec::new(),
@@ -555,6 +575,8 @@ impl App {
             following_user: None,
             open_plugin_guis: std::collections::HashSet::new(),
             open_instrument_guis: std::collections::HashSet::new(),
+            #[cfg(feature = "native")]
+            paulstretch_cache: IndexMap::new(),
         }
     }
 
@@ -732,6 +754,12 @@ impl App {
             er.position[1] *= scale;
             er.size[0] *= scale;
         }
+        for group in self.groups.values_mut() {
+            group.position[0] *= scale;
+            group.position[1] *= scale;
+            group.size[0] *= scale;
+            group.size[1] *= scale;
+        }
         // Keep overlap snapshots in sync so live restore uses the correct scale.
         for snap in self.bpm_drag_overlap_snapshots.values_mut() {
             snap.position[0] *= scale;
@@ -757,6 +785,7 @@ impl App {
                     }
                 }
                 ui::waveform::WarpMode::Off => {}
+                ui::waveform::WarpMode::PaulStretch => {}
             }
         }
     }
@@ -889,9 +918,15 @@ impl App {
                         fade_out_curve: sw.fade_out_curve,
                         volume: if sw.volume > 0.0 { sw.volume } else { 1.0 },
                         pan: sw.pan,
-                        warp_mode: ui::waveform::WarpMode::Off,
-                        sample_bpm: if state.bpm > 0.0 { state.bpm } else { DEFAULT_BPM },
-                        pitch_semitones: 0.0,
+                        warp_mode: match sw.warp_mode {
+                            1 => ui::waveform::WarpMode::RePitch,
+                            2 => ui::waveform::WarpMode::Semitone,
+                            3 => ui::waveform::WarpMode::PaulStretch,
+                            _ => ui::waveform::WarpMode::Off,
+                        },
+                        sample_bpm: if sw.sample_bpm > 0.0 { sw.sample_bpm } else if state.bpm > 0.0 { state.bpm } else { DEFAULT_BPM },
+                        pitch_semitones: sw.pitch_semitones,
+                        paulstretch_factor: if sw.paulstretch_factor > 0.0 { sw.paulstretch_factor } else { 8.0 },
                         is_reversed: false,
                         disabled: sw.disabled,
                         sample_offset_px: sw.sample_offset_px,
@@ -1264,6 +1299,7 @@ impl App {
             connect_project_id: None,
             connect_password: None,
             pending_welcome: None,
+            pending_sync_complete: None,
             reconnect_attempt: 0,
             last_reconnect_time: None,
             cached_instances: Vec::with_capacity(2048),
@@ -1284,6 +1320,7 @@ impl App {
             following_user: None,
             open_plugin_guis: std::collections::HashSet::new(),
             open_instrument_guis: std::collections::HashSet::new(),
+            paulstretch_cache: IndexMap::new(),
         }
     }
 
@@ -1385,6 +1422,7 @@ impl App {
             network::NetworkManager::new_connected();
 
         let (welcome_tx, welcome_rx) = tokio::sync::oneshot::channel();
+        let (sync_complete_tx, sync_complete_rx) = tokio::sync::oneshot::channel();
         let conn_state = mgr.connection_state.clone();
 
         let _handle = surreal_client::spawn_surreal_client(
@@ -1396,6 +1434,7 @@ impl App {
             remote_eph_tx,
             remote_eph_rx,
             welcome_tx,
+            sync_complete_tx,
             conn_state,
             rt,
         );
@@ -1409,7 +1448,59 @@ impl App {
         self.connect_project_id = Some(project_id.to_string());
         self.connect_password = password.map(|s| s.to_string());
         self.pending_welcome = Some(welcome_rx);
+        self.pending_sync_complete = Some(sync_complete_rx);
         log::info!("Connecting to SurrealDB at {}", url);
+    }
+
+    /// Reset all entity state to empty for a clean-slate full sync.
+    /// Called on reconnect before replaying all ops from the server.
+    fn clear_entity_state(&mut self) {
+        log::info!("[SYNC] Clearing entity state for full sync");
+
+        // Abort any active recording
+        self.recording_waveform_id = None;
+        self.recording_take_parent_id = None;
+
+        // Clear all entity maps
+        self.objects.clear();
+        self.waveforms.clear();
+        self.audio_clips.clear();
+        self.source_audio_files.clear();
+        self.midi_clips.clear();
+        self.instruments.clear();
+        self.effect_chains.clear();
+        self.components.clear();
+        self.component_instances.clear();
+        self.export_regions.clear();
+        self.loop_regions.clear();
+        self.groups.clear();
+        self.text_notes.clear();
+
+        // Clear undo/redo — stale ops reference entities that no longer exist
+        self.op_undo_stack.clear();
+        self.op_redo_stack.clear();
+
+        // Clear selection and editing state referencing old entity IDs
+        self.selected.clear();
+        self.hovered = None;
+        self.editing_midi_clip = None;
+        self.selected_midi_notes.clear();
+        self.editing_component = None;
+        self.editing_group = None;
+        self.editing_text_note = None;
+        self.editing_waveform_name = None;
+        self.solo_ids.clear();
+        self.following_user = None;
+
+        // Clear deduplication — we will replay all ops fresh
+        self.applied_remote_seqs.clear();
+
+        // Reset misc
+        self.pending_audio_loads_count = 0;
+        self.bpm = 120.0;
+
+        self.sync_audio_clips();
+        self.mark_dirty();
     }
 
     #[cfg(feature = "native")]
@@ -1473,6 +1564,42 @@ impl App {
 
     #[cfg(not(feature = "native"))]
     fn submit_session(&mut self, _is_share: bool, _input: &str) {}
+
+    fn disconnect_session(&mut self) {
+        if self.network.mode() == network::NetworkMode::Offline {
+            return;
+        }
+
+        // Replace network manager with offline — drops channels, surreal_client task exits
+        self.network = network::NetworkManager::new_offline();
+
+        // Clear connection params — prevents auto-reconnect
+        self.connect_url = None;
+        self.connect_project_id = None;
+        self.connect_password = None;
+        self.pending_welcome = None;
+        self.pending_sync_complete = None;
+        self.reconnect_attempt = 0;
+        self.last_reconnect_time = None;
+
+        // Clear remote collaboration state
+        self.remote_users.clear();
+        self.applied_remote_seqs.clear();
+        self.following_user = None;
+        self.remote_storage = None;
+
+        // Drop tokio runtime — cleans up all spawned async tasks
+        self.ws_runtime = None;
+
+        // Dismiss any lingering reconnect toast
+        self.toast_manager.dismiss_by_id("reconnecting");
+
+        self.toast_manager.push(
+            "Disconnected from session",
+            ui::toast::ToastKind::Info,
+        );
+        log::info!("[SYNC] Manually disconnected from session");
+    }
 
     fn update_component_bounds(&mut self, comp_id: EntityId) {
         let indices = if let Some(comp) = self.components.get(&comp_id) {
@@ -1558,11 +1685,11 @@ impl App {
                 // Preserve vol_entry when updating the same waveform so that
                 // click-to-edit isn't reset by the unconditional update_right_window
                 // call at the end of the mouse-released handler.
-                let (vol_entry, sample_bpm_entry, pitch_entry, vol_fader_focused, pan_knob_focused, pitch_focused, sample_bpm_focused) = if self.right_window.as_ref().map_or(false, |rw| rw.target_id() == first_id) {
+                let (vol_entry, sample_bpm_entry, pitch_entry, paulstretch_factor_entry, vol_fader_focused, pan_knob_focused, pitch_focused, sample_bpm_focused) = if self.right_window.as_ref().map_or(false, |rw| rw.target_id() == first_id) {
                     let rw = self.right_window.take().unwrap();
-                    (rw.vol_entry, rw.sample_bpm_entry, rw.pitch_entry, rw.vol_fader_focused, rw.pan_knob_focused, rw.pitch_focused, rw.sample_bpm_focused)
+                    (rw.vol_entry, rw.sample_bpm_entry, rw.pitch_entry, rw.paulstretch_factor_entry, rw.vol_fader_focused, rw.pan_knob_focused, rw.pitch_focused, rw.sample_bpm_focused)
                 } else {
-                    (ui::value_entry::ValueEntry::new(), ui::value_entry::ValueEntry::new(), ui::value_entry::ValueEntry::new(), false, false, false, false)
+                    (ui::value_entry::ValueEntry::new(), ui::value_entry::ValueEntry::new(), ui::value_entry::ValueEntry::new(), ui::value_entry::ValueEntry::new(), false, false, false, false)
                 };
                 self.right_window = Some(ui::right_window::RightWindow {
                     target: ui::right_window::RightWindowTarget::Waveform(first_id),
@@ -1576,6 +1703,10 @@ impl App {
                     pan_dragging: false,
                     sample_bpm_dragging: false,
                     pitch_dragging: false,
+                    paulstretch_factor: wf.paulstretch_factor,
+                    paulstretch_factor_dragging: false,
+                    paulstretch_factor_entry: paulstretch_factor_entry,
+                    paulstretch_factor_focused: false,
                     drag_start_y: 0.0,
                     drag_start_value: 0.0,
                     vol_entry,
@@ -1633,6 +1764,10 @@ impl App {
                     pan_dragging: false,
                     sample_bpm_dragging: false,
                     pitch_dragging: false,
+                    paulstretch_factor: 8.0,
+                    paulstretch_factor_dragging: false,
+                    paulstretch_factor_entry: ui::value_entry::ValueEntry::new(),
+                    paulstretch_factor_focused: false,
                     drag_start_y: 0.0,
                     drag_start_value: 0.0,
                     vol_entry,
@@ -1675,6 +1810,10 @@ impl App {
                 pan_dragging: false,
                 sample_bpm_dragging: false,
                 pitch_dragging: false,
+                paulstretch_factor: wf.paulstretch_factor,
+                paulstretch_factor_dragging: false,
+                paulstretch_factor_entry: ui::value_entry::ValueEntry::new(),
+                paulstretch_factor_focused: false,
                 drag_start_y: 0.0,
                 drag_start_value: 0.0,
                 vol_entry: ui::value_entry::ValueEntry::new(),
@@ -1721,6 +1860,10 @@ impl App {
                 pan_dragging: false,
                 sample_bpm_dragging: false,
                 pitch_dragging: false,
+                paulstretch_factor: 8.0,
+                paulstretch_factor_dragging: false,
+                paulstretch_factor_entry: ui::value_entry::ValueEntry::new(),
+                paulstretch_factor_focused: false,
                 drag_start_y: 0.0,
                 drag_start_value: 0.0,
                 vol_entry,
@@ -1766,6 +1909,10 @@ impl App {
             pan_dragging: false,
             sample_bpm_dragging: false,
             pitch_dragging: false,
+            paulstretch_factor: 8.0,
+            paulstretch_factor_dragging: false,
+            paulstretch_factor_entry: ui::value_entry::ValueEntry::new(),
+            paulstretch_factor_focused: false,
             drag_start_y: 0.0,
             drag_start_value: 0.0,
             vol_entry,
@@ -2073,6 +2220,97 @@ impl App {
     }
 
     #[cfg(feature = "native")]
+    fn apply_paulstretch(&mut self, wf_id: EntityId) {
+        let factor = match self.waveforms.get(&wf_id) {
+            Some(wf) => wf.paulstretch_factor,
+            None => return,
+        };
+
+        // If already cached with same factor, skip reprocessing
+        if let Some(cache) = self.paulstretch_cache.get(&wf_id) {
+            if cache.factor == factor { return; }
+        }
+
+        // Get originals from cache (if re-processing) or from current state
+        let (original_audio, original_clip, original_width) = if let Some(cache) = self.paulstretch_cache.get(&wf_id) {
+            (cache.original_audio.clone(), cache.original_clip.clone(), cache.original_width)
+        } else {
+            let wf = self.waveforms.get(&wf_id).unwrap();
+            let clip = match self.audio_clips.get(&wf_id) {
+                Some(c) => c.clone(),
+                None => return,
+            };
+            (wf.audio.clone(), clip, wf.size[0])
+        };
+
+        if original_audio.left_samples.is_empty() {
+            return;
+        }
+
+        let sr = original_audio.sample_rate;
+        let (stretched_left, stretched_right) = paulstretch::paulstretch_stereo(
+            &original_audio.left_samples,
+            &original_audio.right_samples,
+            sr,
+            factor,
+            0.25,
+        );
+
+        // Build mono downmix for the audio engine
+        let mono: Vec<f32> = stretched_left.iter()
+            .zip(stretched_right.iter())
+            .map(|(l, r)| (l + r) * 0.5)
+            .collect();
+
+        let stretched_duration = mono.len() as f32 / sr as f32;
+        let stretched_width = stretched_duration * grid::PIXELS_PER_SECOND;
+
+        let left_peaks = Arc::new(ui::waveform::WaveformPeaks::build(&stretched_left));
+        let right_peaks = Arc::new(ui::waveform::WaveformPeaks::build(&stretched_right));
+
+        let new_audio = Arc::new(ui::waveform::AudioData {
+            left_samples: Arc::new(stretched_left),
+            right_samples: Arc::new(stretched_right),
+            left_peaks,
+            right_peaks,
+            sample_rate: sr,
+            filename: original_audio.filename.clone(),
+        });
+
+        let new_clip = ui::waveform::AudioClipData {
+            samples: Arc::new(mono),
+            sample_rate: sr,
+            duration_secs: stretched_duration,
+        };
+
+        // Store cache with originals
+        self.paulstretch_cache.insert(wf_id, PaulStretchCache {
+            original_audio,
+            original_clip,
+            original_width,
+            factor,
+        });
+
+        // Replace the active audio data
+        if let Some(wf) = self.waveforms.get_mut(&wf_id) {
+            wf.audio = new_audio;
+            wf.size[0] = stretched_width;
+        }
+        self.audio_clips.insert(wf_id, new_clip);
+    }
+
+    #[cfg(feature = "native")]
+    fn restore_paulstretch(&mut self, wf_id: EntityId) {
+        if let Some(cache) = self.paulstretch_cache.remove(&wf_id) {
+            if let Some(wf) = self.waveforms.get_mut(&wf_id) {
+                wf.audio = cache.original_audio;
+                wf.size[0] = cache.original_width;
+            }
+            self.audio_clips.insert(wf_id, cache.original_clip);
+        }
+    }
+
+    #[cfg(feature = "native")]
     fn sync_audio_clips(&self) {
         if let Some(engine) = &self.audio_engine {
             let group_of = self.build_group_membership();
@@ -2182,7 +2420,7 @@ impl App {
                 sample_offsets.push(wf.sample_offset_px);
                 vol_autos.push(wf.automation.volume_lane().points.iter().map(|p| (p.t, p.value)).collect());
                 pan_autos.push(wf.automation.pan_lane().points.iter().map(|p| (p.t, p.value)).collect());
-                warp_modes.push(match wf.warp_mode { ui::waveform::WarpMode::RePitch => 1, ui::waveform::WarpMode::Semitone => 2, _ => 0 });
+                warp_modes.push(match wf.warp_mode { ui::waveform::WarpMode::RePitch => 1, ui::waveform::WarpMode::Semitone => 2, ui::waveform::WarpMode::PaulStretch => 3, _ => 0 });
                 sample_bpms.push(wf.sample_bpm);
                 pitch_semitones_vec.push(wf.pitch_semitones);
 
@@ -2238,7 +2476,7 @@ impl App {
                                 sample_offsets.push(wf.sample_offset_px);
                                 vol_autos.push(wf.automation.volume_lane().points.iter().map(|p| (p.t, p.value)).collect());
                                 pan_autos.push(wf.automation.pan_lane().points.iter().map(|p| (p.t, p.value)).collect());
-                                warp_modes.push(match wf.warp_mode { ui::waveform::WarpMode::RePitch => 1, _ => 0 });
+                                warp_modes.push(match wf.warp_mode { ui::waveform::WarpMode::RePitch => 1, ui::waveform::WarpMode::Semitone => 2, ui::waveform::WarpMode::PaulStretch => 3, _ => 0 });
                                 sample_bpms.push(wf.sample_bpm);
 
                                 let is_shared = wf.effect_chain_id
@@ -2443,6 +2681,8 @@ impl App {
         let pos = [center[0] - width * 0.5, center[1] - height * 0.5];
         let mut clip = midi::MidiClip::new(pos, &self.settings);
         clip.size = [width, height];
+        let color_idx = self.midi_clips.len() % crate::theme::WAVEFORM_COLORS.len();
+        clip.color = crate::theme::WAVEFORM_COLORS[color_idx];
         // Standalone MIDI clip — no instrument assigned
         let id = new_id();
         self.midi_clips.insert(id, clip.clone());
@@ -2957,6 +3197,7 @@ impl App {
                 warp_mode: ui::waveform::WarpMode::Off,
                 sample_bpm: self.bpm,
                 pitch_semitones: 0.0,
+                paulstretch_factor: 8.0,
                 is_reversed: false,
                 disabled: false,
                 sample_offset_px: 0.0,
@@ -3126,7 +3367,7 @@ impl App {
                 fade_out_curve: wf.fade_out_curve,
                 volume: wf.volume,
                 buffer_offset_secs: wf.sample_offset_px as f64 / audio::PIXELS_PER_SECOND as f64,
-                warp_mode: match wf.warp_mode { ui::waveform::WarpMode::RePitch => 1, ui::waveform::WarpMode::Semitone => 2, _ => 0 },
+                warp_mode: match wf.warp_mode { ui::waveform::WarpMode::RePitch => 1, ui::waveform::WarpMode::Semitone => 2, ui::waveform::WarpMode::PaulStretch => 3, _ => 0 },
                 sample_bpm: wf.sample_bpm,
                 project_bpm: self.bpm,
                 pitch_semitones: wf.pitch_semitones,
@@ -3797,6 +4038,7 @@ impl App {
             warp_mode: ui::waveform::WarpMode::Off,
             sample_bpm: self.bpm,
             pitch_semitones: 0.0,
+            paulstretch_factor: 8.0,
             is_reversed: false,
             disabled: true, // disabled until loaded
             sample_offset_px: 0.0,
@@ -3852,6 +4094,7 @@ impl App {
                 warp_mode: ui::waveform::WarpMode::Off,
                 sample_bpm: project_bpm,
                 pitch_semitones: 0.0,
+                paulstretch_factor: 8.0,
                 is_reversed: false,
                 disabled: false,
                 sample_offset_px: 0.0,

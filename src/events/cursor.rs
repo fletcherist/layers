@@ -123,7 +123,8 @@ impl App {
             let is_pan_drag = self.right_window.as_ref().map_or(false, |rw| rw.pan_dragging);
             let is_sbpm_drag = self.right_window.as_ref().map_or(false, |rw| rw.sample_bpm_dragging);
             let is_pitch_drag = self.right_window.as_ref().map_or(false, |rw| rw.pitch_dragging);
-            if is_vol_drag || is_pan_drag || is_sbpm_drag || is_pitch_drag {
+            let is_paulstretch_drag = self.right_window.as_ref().map_or(false, |rw| rw.paulstretch_factor_dragging);
+            if is_vol_drag || is_pan_drag || is_sbpm_drag || is_pitch_drag || is_paulstretch_drag {
                 let target = self.right_window.as_ref().map(|rw| rw.target);
                 if let Some(rw) = self.right_window.as_mut() {
                     if is_vol_drag {
@@ -231,6 +232,15 @@ impl App {
                                         wf.size[0] = original_duration_px * (self.bpm / wf.sample_bpm);
                                     }
                                 }
+                            }
+                        }
+                    } else if is_paulstretch_drag {
+                        let delta = (rw.drag_start_y - self.mouse_pos[1]) / (4.0 * scale);
+                        let new_factor = (rw.drag_start_value + delta).clamp(1.1, 100.0);
+                        rw.paulstretch_factor = new_factor;
+                        if let Some(ui::right_window::RightWindowTarget::Waveform(wf_id)) = target {
+                            if let Some(wf) = self.waveforms.get_mut(&wf_id) {
+                                wf.paulstretch_factor = new_factor;
                             }
                         }
                     } else {

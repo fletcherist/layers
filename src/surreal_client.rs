@@ -120,6 +120,7 @@ pub fn spawn_surreal_client(
     eph_tx: mpsc::UnboundedSender<EphemeralMessage>,
     mut eph_rx: mpsc::UnboundedReceiver<EphemeralMessage>,
     welcome_tx: tokio::sync::oneshot::Sender<User>,
+    sync_complete_tx: tokio::sync::oneshot::Sender<()>,
     connection_state: SharedConnectionState,
     rt: &tokio::runtime::Runtime,
 ) -> JoinHandle<()> {
@@ -284,6 +285,10 @@ pub fn spawn_surreal_client(
                 return;
             }
         };
+
+        // Signal that initial sync is complete (ops replayed, live queries active)
+        let _ = sync_complete_tx.send(());
+        log::info!("[SurrealClient] Initial sync complete — live queries active");
 
         // 8. Main select! loop
         let mut heartbeat = tokio::time::interval(std::time::Duration::from_secs(5));

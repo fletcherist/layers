@@ -240,6 +240,7 @@ impl App {
             warp_mode: ui::waveform::WarpMode::Off,
             sample_bpm: self.bpm,
             pitch_semitones: 0.0,
+            paulstretch_factor: 8.0,
             is_reversed: false,
             disabled: false,
             sample_offset_px: offset_px,
@@ -269,6 +270,7 @@ impl App {
             warp_mode: ui::waveform::WarpMode::Off,
             sample_bpm: self.bpm,
             pitch_semitones: 0.0,
+            paulstretch_factor: 8.0,
             is_reversed: false,
             disabled: false,
             sample_offset_px: right_offset_px,
@@ -298,8 +300,8 @@ impl App {
             comp.waveform_ids = new_ids;
         }
 
-        // Add right half to selection
-        self.selected.push(HitTarget::Waveform(right_id));
+        // Reset selection after split
+        self.selected.clear();
 
         let after_wf = self.waveforms[&wf_id].clone();
         let right_wf_data = self.waveforms[&right_id].clone();

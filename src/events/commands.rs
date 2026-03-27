@@ -412,14 +412,16 @@ impl App {
                     }
                 }
             }
-            CommandAction::SetWarpOff | CommandAction::SetWarpRePitch | CommandAction::SetWarpSemitone => {
+            CommandAction::SetWarpOff | CommandAction::SetWarpRePitch | CommandAction::SetWarpSemitone | CommandAction::SetWarpPaulStretch => {
                 let new_mode = match action {
                     CommandAction::SetWarpRePitch => ui::waveform::WarpMode::RePitch,
                     CommandAction::SetWarpSemitone => ui::waveform::WarpMode::Semitone,
+                    CommandAction::SetWarpPaulStretch => ui::waveform::WarpMode::PaulStretch,
                     _ => ui::waveform::WarpMode::Off,
                 };
                 if let Some(rw) = &self.right_window {
                     let wf_id = rw.target_id();
+                    let old_mode = self.waveforms.get(&wf_id).map(|w| w.warp_mode);
                     if let Some(before) = self.waveforms.get(&wf_id).cloned() {
                         if let Some(wf) = self.waveforms.get_mut(&wf_id) {
                             wf.warp_mode = new_mode;
@@ -429,6 +431,16 @@ impl App {
                                     wf.size[0] = original_duration_px * (self.bpm / wf.sample_bpm);
                                 }
                             }
+                        }
+                        // Restore original audio when switching away from PaulStretch
+                        #[cfg(feature = "native")]
+                        if old_mode == Some(ui::waveform::WarpMode::PaulStretch) && new_mode != ui::waveform::WarpMode::PaulStretch {
+                            self.restore_paulstretch(wf_id);
+                        }
+                        // Apply PaulStretch when switching to it
+                        #[cfg(feature = "native")]
+                        if new_mode == ui::waveform::WarpMode::PaulStretch {
+                            self.apply_paulstretch(wf_id);
                         }
                         if let Some(after) = self.waveforms.get(&wf_id).cloned() {
                             self.push_op(crate::operations::Operation::UpdateWaveform {
@@ -557,6 +569,9 @@ impl App {
                 }
                 self.request_redraw();
                 return;
+            }
+            CommandAction::DisconnectSession => {
+                self.disconnect_session();
             }
         }
         self.request_redraw();

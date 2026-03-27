@@ -29,3 +29,4 @@ mod solo_mute;
 mod master;
 mod follow_mode;
 mod plugin_sync;
+mod reconnect;

@@ -3,6 +3,7 @@ use std::sync::Arc;
 use crate::audio::AudioClipData;
 use crate::automation::AutomationData;
 use crate::entity_id::new_id;
+use crate::group::Group;
 use crate::midi::{MidiClip, MidiNote, MIDI_CLIP_DEFAULT_PITCH_RANGE};
 use crate::operations::{commit_op, commit_op_as, Operation};
 use crate::regions::LoopRegion;
@@ -159,6 +160,7 @@ fn make_waveform(x: f32, y: f32) -> WaveformView {
         warp_mode: WarpMode::Off,
         sample_bpm: 120.0,
         pitch_semitones: 0.0,
+            paulstretch_factor: 8.0,
         is_reversed: false,
         disabled: false,
         sample_offset_px: 0.0,
@@ -1055,6 +1057,36 @@ fn test_set_bpm_rescales_midi_clip_and_notes() {
     assert_eq!(mc.notes[0].duration_px, 30.0);
 }
 
+#[test]
+fn test_set_bpm_rescales_group_positions() {
+    let mut app = App::new_headless();
+    assert_eq!(app.bpm, 120.0);
+
+    // Place a group at bar 2 (240px at 120 BPM), size 240x100.
+    let id = new_id();
+    let group = Group::new(id, "G1".into(), [240.0, 50.0], [240.0, 100.0], vec![]);
+    app.groups.insert(id, group);
+
+    // Halve the BPM → scale = 120/60 = 2
+    let op = Operation::SetBpm { before: 120.0, after: 60.0 };
+    op.apply(&mut app);
+
+    assert_eq!(app.bpm, 60.0);
+    let g = &app.groups[&id];
+    assert_eq!(g.position[0], 480.0); // 240 * 2
+    assert_eq!(g.position[1], 100.0); // 50 * 2
+    assert_eq!(g.size[0], 480.0);     // 240 * 2
+    assert_eq!(g.size[1], 200.0);     // 100 * 2
+
+    // Undo
+    op.invert().apply(&mut app);
+    let g = &app.groups[&id];
+    assert_eq!(app.bpm, 120.0);
+    assert_eq!(g.position[0], 240.0);
+    assert_eq!(g.position[1], 50.0);
+    assert_eq!(g.size[0], 240.0);
+    assert_eq!(g.size[1], 100.0);
+}
 
 #[test]
 fn test_surreal_json_roundtrip_create_midi_clip() {

@@ -275,6 +275,10 @@ impl App {
                         let hit = self.sample_browser.hit_search_bar(self.mouse_pos, scale);
                         if hit != self.sample_browser.search_focused {
                             self.sample_browser.search_focused = hit;
+                            if hit {
+                                self.sample_browser.cursor_blink_start = crate::TimeInstant::now();
+                                self.sample_browser.cursor_blink_visible = true;
+                            }
                             self.sample_browser.text_dirty = true;
                             self.request_redraw();
                         }
@@ -675,6 +679,7 @@ impl App {
                         let hit_warp_sel = rw.hit_test_warp_mode_selector(self.mouse_pos, sw, sh, scale);
                         let hit_sbpm_text = rw.hit_test_sample_bpm_text(self.mouse_pos, sw, sh, scale);
                         let hit_pitch_text = rw.hit_test_pitch_text(self.mouse_pos, sw, sh, scale);
+                        let hit_paulstretch_text = rw.hit_test_paulstretch_factor_text(self.mouse_pos, sw, sh, scale);
                         if hit_sm != ui::solo_mute::SoloMuteHit::None {
                             let target_id = rw.target_id();
                             match hit_sm {
@@ -716,6 +721,11 @@ impl App {
                                             wf.size[0] = original_duration_px * (self.bpm / wf.sample_bpm);
                                         }
                                     }
+                                }
+                                // Restore original audio when switching away from PaulStretch
+                                #[cfg(feature = "native")]
+                                if current == ui::waveform::WarpMode::PaulStretch && new_mode != ui::waveform::WarpMode::PaulStretch {
+                                    self.restore_paulstretch(wf_id);
                                 }
                                 if let Some(after) = self.waveforms.get(&wf_id).cloned() {
                                     self.push_op(crate::operations::Operation::UpdateWaveform {
@@ -791,6 +801,20 @@ impl App {
                                     rw.pan_knob_focused = false;
                                     rw.sample_bpm_focused = false;
                                 }
+                            }
+                            self.request_redraw();
+                            return;
+                        } else if hit_paulstretch_text {
+                            let start_value = rw.paulstretch_factor;
+                            if let Some(rw) = &mut self.right_window {
+                                rw.paulstretch_factor_dragging = true;
+                                rw.drag_start_y = self.mouse_pos[1];
+                                rw.drag_start_value = start_value;
+                                rw.paulstretch_factor_focused = true;
+                                rw.vol_fader_focused = false;
+                                rw.pan_knob_focused = false;
+                                rw.sample_bpm_focused = false;
+                                rw.pitch_focused = false;
                             }
                             self.request_redraw();
                             return;
@@ -2364,12 +2388,14 @@ impl App {
                     let is_pan_drag = self.right_window.as_ref().map_or(false, |rw| rw.pan_dragging);
                     let is_sbpm_drag = self.right_window.as_ref().map_or(false, |rw| rw.sample_bpm_dragging);
                     let is_pitch_drag = self.right_window.as_ref().map_or(false, |rw| rw.pitch_dragging);
-                    if is_vol_drag || is_pan_drag || is_sbpm_drag || is_pitch_drag {
+                    let is_paulstretch_drag = self.right_window.as_ref().map_or(false, |rw| rw.paulstretch_factor_dragging);
+                    if is_vol_drag || is_pan_drag || is_sbpm_drag || is_pitch_drag || is_paulstretch_drag {
                         if let Some(rw) = &mut self.right_window {
                             rw.vol_dragging = false;
                             rw.pan_dragging = false;
                             rw.sample_bpm_dragging = false;
                             rw.pitch_dragging = false;
+                            rw.paulstretch_factor_dragging = false;
                         }
                         if let Some(rw) = &self.right_window {
                             let target = rw.target;
@@ -2399,14 +2425,22 @@ impl App {
                                             before.pan = drag_start_value;
                                         } else if is_sbpm_drag {
                                             before.sample_bpm = drag_start_value;
-                                        } else {
+                                        } else if is_pitch_drag {
                                             before.pitch_semitones = drag_start_value;
+                                        } else if is_paulstretch_drag {
+                                            before.paulstretch_factor = drag_start_value;
                                         }
                                         self.push_op(crate::operations::Operation::UpdateWaveform {
                                             id: _wf_id,
                                             before,
                                             after,
                                         });
+                                    }
+                                    // Re-process paulstretch when factor changes
+                                    #[cfg(feature = "native")]
+                                    if is_paulstretch_drag {
+                                        self.apply_paulstretch(_wf_id);
+                                        self.sync_audio_clips();
                                     }
                                 }
                                 ui::right_window::RightWindowTarget::Instrument(inst_id) => {

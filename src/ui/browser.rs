@@ -177,6 +177,10 @@ pub struct SampleBrowser {
     pub selected_entry: Option<usize>,
     /// Whether the Master ("Main") entry is currently selected.
     pub master_selected: bool,
+    /// When the cursor blink timer was last reset (focus gain or keystroke).
+    pub cursor_blink_start: TimeInstant,
+    /// Whether the blinking cursor is currently visible (cached for dirty check).
+    pub cursor_blink_visible: bool,
 }
 
 impl SampleBrowser {
@@ -215,6 +219,8 @@ impl SampleBrowser {
             file_index_building: false,
             search_debounce_deadline: None,
             search_clear_hovered: false,
+            cursor_blink_start: TimeInstant::now(),
+            cursor_blink_visible: true,
             layer_drop_indicator: None,
             toggle_hovered: false,
             selected_place: 0,
@@ -589,6 +595,20 @@ impl SampleBrowser {
     /// Returns true if a search rebuild is pending (debounce timer active).
     pub fn is_search_pending(&self) -> bool {
         self.search_debounce_deadline.is_some()
+    }
+
+    /// Tick the cursor blink timer. Returns true if visibility toggled (needs redraw).
+    pub fn tick_cursor_blink(&mut self) -> bool {
+        if !self.search_focused {
+            return false;
+        }
+        let visible = self.cursor_blink_start.elapsed().as_millis() % 1000 < 500;
+        if visible != self.cursor_blink_visible {
+            self.cursor_blink_visible = visible;
+            true
+        } else {
+            false
+        }
     }
 
     /// Advance smooth scroll animation. Returns true if still animating.
@@ -1643,8 +1663,13 @@ impl SampleBrowser {
             let line_h = 14.0 * scale;
             let text_x = sb_x + 8.0 * scale;
             let text_y = row_y + (search_bar_h - line_h) * 0.5;
+            let show_cursor = self.search_focused && self.cursor_blink_visible;
             let (text, color) = if self.search_focused || !self.search_query.is_empty() {
-                let display = format!("{}|", self.search_query);
+                let display = if show_cursor {
+                    format!("{}|", self.search_query)
+                } else {
+                    self.search_query.clone()
+                };
                 (display, crate::theme::RuntimeTheme::text_u8(theme.text_primary, 255))
             } else {
                 ("Search...".to_string(), crate::theme::RuntimeTheme::text_u8(theme.text_dim, 160))

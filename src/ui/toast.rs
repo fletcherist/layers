@@ -20,6 +20,8 @@ pub struct Toast {
     pub kind: ToastKind,
     pub created_at: Instant,
     pub duration: Duration,
+    pub id: Option<String>,
+    pub persistent: bool,
 }
 
 pub struct ToastManager {
@@ -48,13 +50,37 @@ impl ToastManager {
             kind,
             created_at: Instant::now(),
             duration: DEFAULT_DURATION,
+            id: None,
+            persistent: false,
         });
+    }
+
+    /// Push a persistent toast that stays until explicitly dismissed via `dismiss_by_id`.
+    /// If a toast with the same `id` already exists, it is replaced (message updated).
+    pub fn push_persistent(&mut self, id: impl Into<String>, message: impl Into<String>, kind: ToastKind) {
+        let id = id.into();
+        self.toasts.retain(|t| t.id.as_deref() != Some(&id));
+        self.toasts.push(Toast {
+            message: message.into(),
+            kind,
+            created_at: Instant::now(),
+            duration: DEFAULT_DURATION,
+            id: Some(id),
+            persistent: true,
+        });
+    }
+
+    /// Dismiss a persistent toast by its id. Returns `true` if one was removed.
+    pub fn dismiss_by_id(&mut self, id: &str) -> bool {
+        let before = self.toasts.len();
+        self.toasts.retain(|t| t.id.as_deref() != Some(id));
+        self.toasts.len() != before
     }
 
     /// Remove expired toasts. Returns `true` if any were removed.
     pub fn tick(&mut self) -> bool {
         let before = self.toasts.len();
-        self.toasts.retain(|t| t.created_at.elapsed() < t.duration);
+        self.toasts.retain(|t| t.persistent || t.created_at.elapsed() < t.duration);
         self.toasts.len() != before
     }
 
@@ -150,6 +176,9 @@ impl ToastManager {
 }
 
 fn toast_alpha(toast: &Toast) -> f32 {
+    if toast.persistent {
+        return 1.0;
+    }
     let elapsed = toast.created_at.elapsed().as_secs_f32();
     let total = toast.duration.as_secs_f32();
     let remaining = total - elapsed;

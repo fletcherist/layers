@@ -92,13 +92,14 @@ impl LoopRegion {
         if point_in_rect(world_pos, [p[0] + s[0] - border_thickness, p[1]], [border_thickness * 2.0, s[1]]) {
             return true;
         }
-        // LOOP badge area (pinned to viewport top)
-        let badge_w = LOOP_BADGE_W / camera.zoom;
-        let badge_h = LOOP_BADGE_H / camera.zoom;
+        // Label text area (pinned to viewport top, audio-sample style)
+        let pad = 6.0 / camera.zoom;
+        let label_w = LOOP_LABEL_HIT_W / camera.zoom;
+        let label_h = LOOP_LABEL_HIT_H / camera.zoom;
         if point_in_rect(
             world_pos,
-            [p[0] + 4.0 / camera.zoom, world_top + 4.0 / camera.zoom],
-            [badge_w, badge_h],
+            [self.position[0] + pad, world_top + pad],
+            [label_w, label_h],
         ) {
             return true;
         }
@@ -115,5 +116,5 @@ pub(crate) enum LoopHover {
 
 pub(crate) const LOOP_REGION_DEFAULT_WIDTH: f32 = 800.0;
 pub(crate) const LOOP_REGION_DEFAULT_HEIGHT: f32 = 250.0;
-pub(crate) const LOOP_BADGE_W: f32 = 70.0;
-pub(crate) const LOOP_BADGE_H: f32 = 22.0;
+pub(crate) const LOOP_LABEL_HIT_W: f32 = 50.0;
+pub(crate) const LOOP_LABEL_HIT_H: f32 = 16.0;

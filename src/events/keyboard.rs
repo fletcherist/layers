@@ -1004,6 +1004,9 @@ impl App {
 
             // --- browser search bar input ---
             if self.sample_browser.search_focused {
+                // Reset blink timer on every keystroke so cursor stays visible while typing.
+                self.sample_browser.cursor_blink_start = crate::TimeInstant::now();
+                self.sample_browser.cursor_blink_visible = true;
                 match &event.logical_key {
                     Key::Named(NamedKey::Escape) => {
                         self.sample_browser.search_query.clear();
@@ -1757,6 +1760,8 @@ impl App {
                                     }
                                 }
                                 self.sample_browser.search_focused = true;
+                                self.sample_browser.cursor_blink_start = crate::TimeInstant::now();
+                                self.sample_browser.cursor_blink_visible = true;
                                 self.sample_browser.text_dirty = true;
                                 self.request_redraw();
                             }

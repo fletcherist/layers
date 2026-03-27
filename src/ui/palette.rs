@@ -66,6 +66,7 @@ pub enum CommandAction {
     SetWarpOff,
     SetWarpRePitch,
     SetWarpSemitone,
+    SetWarpPaulStretch,
     OpenInstrumentGui,
     SetMidiClipColor(usize),
     CreateGroup,
@@ -74,6 +75,7 @@ pub enum CommandAction {
     ShowPlaceInFinder(usize),
     ShareSession,
     JoinSession,
+    DisconnectSession,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -404,6 +406,13 @@ pub const COMMANDS: &[CommandDef] = &[
         shortcut: "",
         category: "Session",
         action: CommandAction::JoinSession,
+        dev_only: false,
+    },
+    CommandDef {
+        name: "Disconnect Session",
+        shortcut: "",
+        category: "Session",
+        action: CommandAction::DisconnectSession,
         dev_only: false,
     },
 ];

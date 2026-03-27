@@ -479,6 +479,8 @@ impl App {
         let mut clip = midi::MidiClip::new(clip_pos, &self.settings);
         clip.size = [clip_w, clip_h];
         clip.instrument_id = Some(inst_id);
+        let color_idx = self.midi_clips.len() % crate::theme::WAVEFORM_COLORS.len();
+        clip.color = crate::theme::WAVEFORM_COLORS[color_idx];
         let clip_id = new_id();
         self.midi_clips.insert(clip_id, clip.clone());
 

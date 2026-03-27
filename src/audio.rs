@@ -1429,6 +1429,7 @@ impl AudioEngine {
             let effective_rate = match warp {
                 1 => clip_data.sample_rate as f64 * (sample_bpm as f64 / project_bpm as f64),
                 2 => clip_data.sample_rate as f64 * 2.0_f64.powf(pitch as f64 / 12.0),
+                3 => clip_data.sample_rate as f64, // PaulStretch: pre-processed, play at native rate
                 _ => clip_data.sample_rate as f64,
             };
             clips.push(PlaybackClip {
@@ -2023,6 +2024,7 @@ pub fn render_to_wav(
                 let effective_rate = match clip.warp_mode {
                     1 => clip.source_sample_rate as f64 * (clip.sample_bpm as f64 / clip.project_bpm as f64),
                     2 => clip.source_sample_rate as f64 * 2.0_f64.powf(clip.pitch_semitones as f64 / 12.0),
+                    3 => clip.source_sample_rate as f64, // PaulStretch: pre-processed
                     _ => clip.source_sample_rate as f64,
                 };
                 let source_idx = ((clip_t + clip.buffer_offset_secs) * effective_rate) as usize;

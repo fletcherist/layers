@@ -87,6 +87,15 @@ impl App {
                     take_group_json: wf.take_group.as_ref()
                         .map(|tg| serde_json::to_string(tg).unwrap_or_default())
                         .unwrap_or_default(),
+                    warp_mode: match wf.warp_mode {
+                        ui::waveform::WarpMode::Off => 0,
+                        ui::waveform::WarpMode::RePitch => 1,
+                        ui::waveform::WarpMode::Semitone => 2,
+                        ui::waveform::WarpMode::PaulStretch => 3,
+                    },
+                    sample_bpm: wf.sample_bpm,
+                    pitch_semitones: wf.pitch_semitones,
+                    paulstretch_factor: wf.paulstretch_factor,
                 })
                 .collect();
 
@@ -397,9 +406,15 @@ impl App {
                 fade_out_curve: sw.fade_out_curve,
                 volume: if sw.volume > 0.0 { sw.volume } else { 1.0 },
                 pan: sw.pan,
-                warp_mode: ui::waveform::WarpMode::Off,
-                sample_bpm: self.bpm,
-                pitch_semitones: 0.0,
+                warp_mode: match sw.warp_mode {
+                    1 => ui::waveform::WarpMode::RePitch,
+                    2 => ui::waveform::WarpMode::Semitone,
+                    3 => ui::waveform::WarpMode::PaulStretch,
+                    _ => ui::waveform::WarpMode::Off,
+                },
+                sample_bpm: if sw.sample_bpm > 0.0 { sw.sample_bpm } else { self.bpm },
+                pitch_semitones: sw.pitch_semitones,
+                paulstretch_factor: if sw.paulstretch_factor > 0.0 { sw.paulstretch_factor } else { 8.0 },
                 is_reversed: false,
                 disabled: sw.disabled,
                 sample_offset_px: sw.sample_offset_px,

@@ -11,6 +11,7 @@ pub enum WarpMode {
     Off,
     RePitch,
     Semitone,
+    PaulStretch,
 }
 
 impl Default for WarpMode {
@@ -21,6 +22,10 @@ impl Default for WarpMode {
 
 fn default_sample_bpm() -> f32 {
     120.0
+}
+
+fn default_paulstretch_factor() -> f32 {
+    8.0
 }
 
 const PEAK_BLOCK_SIZE: usize = 256;
@@ -134,6 +139,8 @@ pub struct WaveformView {
     pub sample_bpm: f32,
     #[serde(default)]
     pub pitch_semitones: f32,
+    #[serde(default = "default_paulstretch_factor")]
+    pub paulstretch_factor: f32,
     #[serde(default)]
     pub is_reversed: bool,
     pub disabled: bool,
@@ -173,7 +180,7 @@ pub struct WaveformVertex {
 
 const FADE_CURVE_SEGMENTS: usize = 24;
 pub const FADE_HANDLE_SIZE: f32 = 8.0;
-pub const DEFAULT_AUTO_FADE_PX: f32 = 10.0; // ~83ms at 120px/s
+pub const DEFAULT_AUTO_FADE_PX: f32 = 6.0; // ~50ms at 120px/s
 
 const SAMPLES_PER_PX_THRESHOLD: f32 = 4.0;
 
@@ -774,6 +781,7 @@ pub fn build_waveform_triangles(
     let stretch_ratio = match wf.warp_mode {
         WarpMode::RePitch => if wf.sample_bpm > 0.0 { bpm / wf.sample_bpm } else { 1.0 },
         WarpMode::Semitone => 1.0 / 2.0_f32.powf(wf.pitch_semitones / 12.0),
+        WarpMode::PaulStretch => 1.0, // Pre-stretched buffer is already the correct length
         WarpMode::Off => 1.0,
     };
 

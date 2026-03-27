@@ -109,6 +109,10 @@ pub struct RightWindow {
     pub pan_dragging: bool,
     pub sample_bpm_dragging: bool,
     pub pitch_dragging: bool,
+    pub paulstretch_factor: f32,
+    pub paulstretch_factor_dragging: bool,
+    pub paulstretch_factor_entry: ValueEntry,
+    pub paulstretch_factor_focused: bool,
     pub drag_start_y: f32,
     pub drag_start_value: f32,
     pub vol_entry: ValueEntry,
@@ -354,6 +358,14 @@ impl RightWindow {
     pub fn hit_test_pitch_text(&self, pos: [f32; 2], screen_w: f32, screen_h: f32, scale: f32) -> bool {
         if self.is_instrument() || self.is_multi() || self.is_group() || self.is_master() { return false; }
         if self.warp_mode != WarpMode::Semitone { return false; }
+        let (rp, rs) = Self::warp_param_text_rect(screen_w, screen_h, scale);
+        pos[0] >= rp[0] && pos[0] <= rp[0] + rs[0]
+            && pos[1] >= rp[1] && pos[1] <= rp[1] + rs[1]
+    }
+
+    pub fn hit_test_paulstretch_factor_text(&self, pos: [f32; 2], screen_w: f32, screen_h: f32, scale: f32) -> bool {
+        if self.is_instrument() || self.is_multi() || self.is_group() || self.is_master() { return false; }
+        if self.warp_mode != WarpMode::PaulStretch { return false; }
         let (rp, rs) = Self::warp_param_text_rect(screen_w, screen_h, scale);
         pos[0] >= rp[0] && pos[0] <= rp[0] + rs[0]
             && pos[1] >= rp[1] && pos[1] <= rp[1] + rs[1]
@@ -868,6 +880,7 @@ impl RightWindow {
     pub fn warp_mode_selector_text(&self) -> &'static str {
         match self.warp_mode {
             WarpMode::RePitch => "REPITCH",
+            WarpMode::PaulStretch => "PAULSTRETCH",
             WarpMode::Semitone | WarpMode::Off => "SEMITONE",
         }
     }
@@ -1248,6 +1261,35 @@ impl RightWindow {
                     line_height: val_line,
                     max_width: rw_w,
                     color: crate::theme::RuntimeTheme::text_u8(theme.text_secondary, pitch_alpha),
+                    weight: 400,
+                    bounds: None,
+                    center: true,
+                });
+            } else if self.warp_mode == WarpMode::PaulStretch {
+                out.push(TextEntry {
+                    text: "STRETCH".to_string(),
+                    x: param_pos[0],
+                    y: param_pos[1],
+                    font_size: label_font,
+                    line_height: label_line,
+                    max_width: rw_w,
+                    color: crate::theme::RuntimeTheme::text_u8(theme.text_secondary, 235),
+                    weight: 400,
+                    bounds: None,
+                    center: true,
+                });
+
+                let factor_idle = format!("{:.1}x", self.paulstretch_factor);
+                let factor_display = self.paulstretch_factor_entry.display(&factor_idle);
+                let factor_alpha: u8 = if self.paulstretch_factor_entry.is_editing() { 255 } else { 220 };
+                out.push(TextEntry {
+                    text: factor_display.to_string(),
+                    x: param_pos[0],
+                    y: param_pos[1] + label_line,
+                    font_size: val_font,
+                    line_height: val_line,
+                    max_width: rw_w,
+                    color: crate::theme::RuntimeTheme::text_u8(theme.text_secondary, factor_alpha),
                     weight: 400,
                     bounds: None,
                     center: true,

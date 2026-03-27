@@ -9,6 +9,8 @@ default = ["native"]
 native = [
     "dep:cpal",
     "dep:muda",
+    "dep:realfft",
+    "dep:rand",
     "dep:rfd",
     "dep:dirs",
     "dep:hound",
@@ -44,6 +46,8 @@ futures-util = { version = "0.3", optional = true }
 dirs = { version = "6", optional = true }
 rfd = { version = "0.15", optional = true }
 muda = { version = "0.17", optional = true }
+realfft = { version = "3", optional = true }
+rand = { version = "0.8", optional = true }
 
 [target.'cfg(any(target_os = "macos", target_os = "windows"))'.dependencies]
 vst3-gui = { path = "vst3-gui" }

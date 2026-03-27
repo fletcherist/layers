@@ -261,6 +261,7 @@ impl App {
                 self.automation_mode,
                 self.active_automation_param,
                 &self.midi_clips,
+                &self.instruments,
                 match self.hovered {
                     Some(HitTarget::MidiClip(i)) => Some(i),
                     _ => None,

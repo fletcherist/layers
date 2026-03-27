@@ -166,6 +166,7 @@ fn test_waveform_filename_survives_serde_roundtrip() {
         warp_mode: WarpMode::Off,
         sample_bpm: 120.0,
         pitch_semitones: 0.0,
+            paulstretch_factor: 8.0,
         is_reversed: false,
         disabled: false,
         sample_offset_px: 0.0,

@@ -12,6 +12,7 @@ use crate::grid::PIXELS_PER_SECOND;
 use crate::ui::browser;
 use crate::ui::right_window;
 use crate::effects;
+use crate::instruments;
 use crate::midi;
 use crate::settings::Settings;
 use crate::ui::settings_window::SettingsWindow;
@@ -308,6 +309,7 @@ pub(crate) struct Gpu {
     cached_auto_lane_bufs: Vec<(TextLabelCacheKey, TextBuffer)>,
     cached_midi_note_label_bufs: Vec<(TextLabelCacheKey, TextBuffer)>,
     cached_midi_per_note_bufs: Vec<(TextLabelCacheKey, TextBuffer)>,
+    cached_inst_label_bufs: Vec<(TextLabelCacheKey, TextBuffer)>,
     pub(crate) auto_lane_close_rects: Vec<(crate::entity_id::EntityId, [f32; 4])>,
 }
 
@@ -688,6 +690,7 @@ impl Gpu {
             cached_auto_lane_bufs: Vec::new(),
             cached_midi_note_label_bufs: Vec::new(),
             cached_midi_per_note_bufs: Vec::new(),
+            cached_inst_label_bufs: Vec::new(),
             auto_lane_close_rects: Vec::new(),
         }
     }
@@ -730,6 +733,7 @@ impl Gpu {
         automation_mode: bool,
         active_automation_param: crate::automation::AutomationParam,
         midi_clips: &indexmap::IndexMap<crate::entity_id::EntityId, midi::MidiClip>,
+        instruments: &indexmap::IndexMap<crate::entity_id::EntityId, instruments::Instrument>,
         hovered_midi_clip: Option<crate::entity_id::EntityId>,
         editing_midi_clip: Option<crate::entity_id::EntityId>,
         mouse_world: [f32; 2],
@@ -1229,52 +1233,61 @@ impl Gpu {
             }
         }
 
-        // Loop region "LOOP" badge label (world-space -> screen-space)
-        for (_lr_id, lr) in loop_regions {
-            if !lr.enabled {
-                continue;
-            }
-            if settings_window.is_none() && command_palette.is_none() && export_window.is_none() {
-                let pill_world_x = lr.position[0] + 4.0 / camera.zoom;
-                let pill_world_y = camera.position[1] + 8.0 / camera.zoom;
-                let pill_screen_x = (pill_world_x - camera.position[0]) * camera.zoom;
-                let pill_screen_y = (pill_world_y - camera.position[1]) * camera.zoom;
-                let pill_w_screen = crate::regions::LOOP_BADGE_W;
-                let pill_h_screen = crate::regions::LOOP_BADGE_H;
+        // Loop region labels (audio-sample style, world-space -> screen-space)
+        if settings_window.is_none() && command_palette.is_none() && export_window.is_none() {
+            for (idx, (_lr_id, lr)) in loop_regions.iter().enumerate() {
+                if !lr.enabled {
+                    continue;
+                }
+                let pad = 6.0 / camera.zoom;
+                let label_world_x = lr.position[0] + pad;
+                let label_world_y = camera.position[1] + pad;
+                let label_screen_x = (label_world_x - camera.position[0]) * camera.zoom;
+                let label_screen_y = (label_world_y - camera.position[1]) * camera.zoom;
+
+                let clip_screen_w = lr.size[0] * camera.zoom;
+                if clip_screen_w < 30.0 {
+                    continue;
+                }
+                let name_font = 10.0 * scale;
+                let name_line = 14.0 * scale;
+                let max_text_w = (clip_screen_w - 12.0 * scale).max(20.0);
 
                 let overlaps_ctx = if let Some((cm_pos, cm_size)) = ctx_menu_rect {
-                    pill_screen_x + pill_w_screen > cm_pos[0]
-                        && pill_screen_x < cm_pos[0] + cm_size[0]
-                        && pill_screen_y + pill_h_screen > cm_pos[1]
-                        && pill_screen_y < cm_pos[1] + cm_size[1]
+                    label_screen_x + max_text_w > cm_pos[0]
+                        && label_screen_x < cm_pos[0] + cm_size[0]
+                        && label_screen_y + name_line > cm_pos[1]
+                        && label_screen_y < cm_pos[1] + cm_size[1]
                 } else {
                     false
                 };
 
                 if !overlaps_ctx {
-                    let label_font = 11.0 * scale;
-                    let label_line = 16.0 * scale;
+                    let label_text = if idx == 0 {
+                        "Loop".to_string()
+                    } else {
+                        format!("Loop {}", idx + 1)
+                    };
+
                     let mut buf = TextBuffer::new(
                         &mut self.font_system,
-                        Metrics::new(label_font, label_line),
+                        Metrics::new(name_font, name_line),
                     );
-                    buf.set_size(
-                        &mut self.font_system,
-                        Some(pill_w_screen),
-                        Some(pill_h_screen),
-                    );
+                    buf.set_size(&mut self.font_system, Some(max_text_w), Some(name_line));
                     buf.set_text(
                         &mut self.font_system,
-                        "Loop",
-                        Attrs::new().family(Family::SansSerif).weight(glyphon::Weight(500)),
+                        &label_text,
+                        Attrs::new()
+                            .family(Family::Name(".AppleSystemUIFont"))
+                            .weight(glyphon::Weight(500)),
                         Shaping::Advanced,
                     );
                     buf.shape_until_scroll(&mut self.font_system, false);
                     text_buffers.push(buf);
                     text_meta.push((
-                        pill_screen_x + 8.0,
-                        pill_screen_y + (pill_h_screen - label_line) * 0.5,
-                        TextColor::rgb(255, 255, 255),
+                        label_screen_x,
+                        label_screen_y,
+                        TextColor::rgba(255, 255, 255, 180),
                         full_bounds,
                     ));
                 }
@@ -1407,6 +1420,99 @@ impl Gpu {
         }
         }
         self.cached_wf_label_bufs = new_wf_cache;
+
+        // Instrument name labels on MIDI clips (same style as waveform filename labels)
+        let mut old_inst_cache = std::mem::take(&mut self.cached_inst_label_bufs);
+        let mut new_inst_cache: Vec<(TextLabelCacheKey, TextBuffer)> = Vec::new();
+        let mut inst_label_meta: Vec<(f32, f32, TextColor, TextBounds)> = Vec::new();
+        if settings_window.is_none() && command_palette.is_none() && export_window.is_none()
+        { for (_mc_idx, mc) in midi_clips.iter() {
+            if mc.disabled { continue; }
+            let mc_right = mc.position[0] + mc.size[0];
+            let mc_bottom = mc.position[1] + mc.size[1];
+            if mc_right < world_left
+                || mc.position[0] > world_right
+                || mc_bottom < world_top
+                || mc.position[1] > world_bottom
+            {
+                continue;
+            }
+            let clip_screen_w = mc.size[0] * camera.zoom;
+            if clip_screen_w < 30.0 {
+                continue;
+            }
+
+            let display_name = mc.instrument_id
+                .and_then(|iid| instruments.get(&iid))
+                .and_then(|inst| {
+                    if !inst.name.is_empty() && inst.name != "instrument" {
+                        Some(inst.name.clone())
+                    } else if !inst.plugin_name.is_empty() {
+                        Some(inst.plugin_name.clone())
+                    } else {
+                        None
+                    }
+                });
+            let display_name = match display_name {
+                Some(n) => n,
+                None => continue,
+            };
+
+            let pad = 6.0 / camera.zoom;
+            let name_x_world = mc.position[0] + pad;
+            let name_y_world = mc.position[1] + pad;
+            let name_screen_x = (name_x_world - camera.position[0]) * camera.zoom;
+            let name_screen_y = (name_y_world - camera.position[1]) * camera.zoom;
+
+            if let Some((cm_pos, cm_size)) = ctx_menu_rect {
+                let max_text_w = (clip_screen_w - 12.0 * scale).max(20.0);
+                let name_line = 14.0 * scale;
+                if name_screen_x + max_text_w > cm_pos[0]
+                    && name_screen_x < cm_pos[0] + cm_size[0]
+                    && name_screen_y + name_line > cm_pos[1]
+                    && name_screen_y < cm_pos[1] + cm_size[1]
+                {
+                    continue;
+                }
+            }
+
+            let name_font = 10.0 * scale;
+            let name_line = 14.0 * scale;
+            let max_text_w = (clip_screen_w - 12.0 * scale).max(20.0);
+
+            let key = TextLabelCacheKey {
+                text: display_name.clone(),
+                max_width_q: (max_text_w * 2.0) as i32,
+                font_size_q: (name_font * 2.0) as i32,
+            };
+            if let Some(pos) = old_inst_cache.iter().position(|(k, _)| *k == key) {
+                new_inst_cache.push(old_inst_cache.swap_remove(pos));
+            } else {
+                let mut buf =
+                    TextBuffer::new(&mut self.font_system, Metrics::new(name_font, name_line));
+                buf.set_size(&mut self.font_system, Some(max_text_w), Some(name_line));
+                let attrs = Attrs::new()
+                    .family(Family::Name(".AppleSystemUIFont"))
+                    .weight(glyphon::Weight(500));
+                buf.set_text(
+                    &mut self.font_system,
+                    &display_name,
+                    attrs,
+                    Shaping::Advanced,
+                );
+                buf.shape_until_scroll(&mut self.font_system, false);
+                new_inst_cache.push((key, buf));
+            }
+
+            inst_label_meta.push((
+                name_screen_x,
+                name_screen_y,
+                TextColor::rgba(255, 255, 255, 180),
+                wf_label_bounds,
+            ));
+        }
+        }
+        self.cached_inst_label_bufs = new_inst_cache;
 
         // Text note content labels (cached shaping, positions recomputed each frame)
         let mut old_tn_cache = std::mem::take(&mut self.cached_text_note_bufs);
@@ -2149,7 +2255,7 @@ impl Gpu {
                 if !is_header && (actual_y + te.line_height < content_top_h || actual_y > content_bottom_h) {
                     continue;
                 }
-                let clip_top = if actual_y < content_top_h {
+                let clip_top = if !is_header && actual_y < content_top_h {
                     content_top_h
                 } else {
                     actual_y
@@ -2235,6 +2341,11 @@ impl Gpu {
             .iter()
             .zip(wf_label_meta.iter())
             .map(|(e, m)| cached_label_area(e, m));
+        let inst_label_areas = self
+            .cached_inst_label_bufs
+            .iter()
+            .zip(inst_label_meta.iter())
+            .map(|(e, m)| cached_label_area(e, m));
         let group_areas = self
             .cached_group_label_bufs
             .iter()
@@ -2275,6 +2386,7 @@ impl Gpu {
             .into_iter()
             .chain(other_areas)
             .chain(wf_areas)
+            .chain(inst_label_areas)
             .chain(group_areas)
             .chain(auto_dot_areas)
             .chain(auto_lane_areas)
