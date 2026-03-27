@@ -2,6 +2,8 @@
 mod project;
 #[cfg(feature = "native")]
 mod audio;
+#[cfg(all(feature = "native", target_os = "macos"))]
+mod aggregate_device;
 #[cfg(feature = "native")]
 mod export;
 mod automation;
@@ -288,6 +290,8 @@ struct App {
     source_audio_files: IndexMap<EntityId, (Vec<u8>, String)>,
     audio_engine: Option<NativeAudioEngine>,
     recorder: Option<NativeAudioRecorder>,
+    #[cfg(all(feature = "native", target_os = "macos"))]
+    aggregate_device: Option<aggregate_device::AggregateDevice>,
     recording_waveform_id: Option<EntityId>,
     /// If recording into a take group, this is the parent waveform ID.
     recording_take_parent_id: Option<EntityId>,
@@ -483,6 +487,11 @@ impl App {
             source_audio_files: IndexMap::new(),
             audio_engine: None,
             recorder: None,
+            #[cfg(all(feature = "native", target_os = "macos"))]
+            aggregate_device: {
+                // Placeholder; real value set during load_from_storage
+                None
+            },
             recording_waveform_id: None,
             recording_take_parent_id: None,
             monitoring_group_id: None,
@@ -1126,15 +1135,43 @@ impl App {
         let mut sample_browser = ui::browser::SampleBrowser::from_state(global_folders, expanded, visible);
         sample_browser.restore_width(browser_width);
 
+        // On macOS, create a CoreAudio aggregate device when input and output
+        // are on different hardware clocks.  The OS handles drift compensation
+        // so the ring buffer between input/output stays perfectly balanced.
+        #[cfg(all(feature = "native", target_os = "macos"))]
+        let aggregate_device = {
+            let have_input = settings.audio_input_device != "No Device"
+                && !settings.audio_input_device.is_empty();
+            let have_output = settings.audio_output_device != "No Device"
+                && !settings.audio_output_device.is_empty();
+            if have_input && have_output {
+                aggregate_device::AggregateDevice::new(
+                    &settings.audio_input_device,
+                    &settings.audio_output_device,
+                )
+            } else {
+                None
+            }
+        };
+
+        // When an aggregate device exists, use it for both input and output
+        // so they share a single clock.
+        #[cfg(all(feature = "native", target_os = "macos"))]
+        let agg_name: Option<String> = aggregate_device.as_ref().map(|a| a.name.clone());
+        #[cfg(not(all(feature = "native", target_os = "macos")))]
+        let agg_name: Option<String> = None;
+
         let device_name = if settings.audio_output_device == "No Device" {
             None
         } else {
             Some(settings.audio_output_device.as_str())
         };
-        let audio_engine = AudioEngine::new_with_device(device_name, settings.buffer_size as usize);
+        let output_device = agg_name.as_deref().or(device_name);
+        let audio_engine = AudioEngine::new_with_device(output_device, settings.buffer_size as usize);
         if let Some(ref engine) = audio_engine {
             let actual = engine.device_name();
-            if settings.audio_output_device != actual {
+            // Only update settings if NOT using aggregate (aggregate has a different name)
+            if agg_name.is_none() && settings.audio_output_device != actual {
                 println!(
                     "  Correcting stale output device setting: '{}' -> '{}'",
                     settings.audio_output_device, actual
@@ -1148,13 +1185,12 @@ impl App {
             println!("  Warning: no audio output device found");
         }
 
-        let mut recorder = AudioRecorder::new_with_device(
-            if settings.audio_input_device == "No Device" {
-                None
-            } else {
-                Some(settings.audio_input_device.as_str())
-            },
-        );
+        let input_device = if settings.audio_input_device == "No Device" {
+            None
+        } else {
+            agg_name.as_deref().or(Some(settings.audio_input_device.as_str()))
+        };
+        let mut recorder = AudioRecorder::new_with_device(input_device);
         if recorder.is_none() {
             println!("  Warning: no audio input device found");
         }
@@ -1254,6 +1290,8 @@ impl App {
             source_audio_files,
             audio_engine,
             recorder,
+            #[cfg(all(feature = "native", target_os = "macos"))]
+            aggregate_device,
             recording_waveform_id: None,
             recording_take_parent_id: None,
             monitoring_group_id: None,
@@ -3113,7 +3151,17 @@ impl App {
 
         let is_on = self.monitoring_group_id.is_some();
 
-        // Set engine flag first so the input callback sees it when the stream starts
+        // Reset ring buffer so stale data from a previous session is gone.
+        // Don't prefill with silence — the output callback will wait for the
+        // input stream to accumulate enough real data before consuming
+        // (handles hardware startup latency).
+        if is_on {
+            if let Some(ref engine) = self.audio_engine {
+                engine.monitor_ring().reset_and_prefill(0);
+            }
+        }
+
+        // Set engine flag so the output callback starts consuming from the ring
         if let Some(ref engine) = self.audio_engine {
             engine.set_monitoring_enabled(is_on);
         }

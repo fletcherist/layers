@@ -14,6 +14,7 @@ pub use crate::grid::PIXELS_PER_SECOND;
 pub use crate::ui::waveform::AudioClipData;
 
 const DEFAULT_EFFECT_BLOCK_SIZE: usize = 512;
+const MONITOR_RING_CAPACITY: usize = 8192;
 
 // ---------------------------------------------------------------------------
 // Lock-free SPSC ring buffer for input monitoring
@@ -71,6 +72,36 @@ impl MonitorRingBuffer {
         }
         self.read_pos.store(rp2, Ordering::Release);
         to_read
+    }
+
+    /// Return the number of samples currently available in the ring.
+    pub fn available(&self) -> usize {
+        let wp = self.write_pos.load(Ordering::Acquire);
+        let rp = self.read_pos.load(Ordering::Relaxed);
+        wp.wrapping_sub(rp).min(self.capacity)
+    }
+
+    /// Advance the read pointer by `n` samples without reading them.
+    /// Used to discard stale data and keep monitoring latency bounded.
+    pub fn skip(&self, n: usize) {
+        let rp = self.read_pos.load(Ordering::Relaxed);
+        self.read_pos.store(rp.wrapping_add(n), Ordering::Release);
+    }
+
+    /// Reset the ring and pre-fill with `n` zero samples.
+    /// Call when monitoring starts so the output callback has a cushion
+    /// of data to absorb timing jitter between input/output callbacks.
+    pub fn reset_and_prefill(&self, n: usize) {
+        let n = n.min(self.capacity);
+        self.read_pos.store(0, Ordering::Relaxed);
+        for i in 0..n {
+            unsafe { *self.data[i].get() = 0.0 };
+        }
+        self.write_pos.store(n, Ordering::Release);
+    }
+
+    pub fn capacity(&self) -> usize {
+        self.capacity
     }
 }
 
@@ -216,6 +247,7 @@ pub struct AudioEngine {
     bpm_bits: Arc<AtomicU64>,
     keyboard_preview: Arc<Mutex<KeyboardPreviewState>>,
     monitoring_enabled: Arc<AtomicBool>,
+    monitor_warmed_up: Arc<AtomicBool>,
     monitor_ring: Arc<MonitorRingBuffer>,
     monitor_effect_plugins: Arc<Mutex<Vec<Arc<Mutex<Option<crate::effects::PluginGuiHandle>>>>>>,
     monitor_volume_bits: Arc<AtomicU64>,
@@ -447,7 +479,35 @@ impl AudioEngine {
         }?;
         let actual_device_name = device.name().unwrap_or_else(|_| "Unknown".into());
         println!("  Audio output device: {}", actual_device_name);
-        let supported = device.default_output_config().ok()?;
+        // Prefer stereo output. Multi-channel interfaces (e.g. Audient iD14)
+        // may report 6+ channels by default — we only need 2 for stereo output.
+        let supported = {
+            let mut best: Option<cpal::SupportedStreamConfigRange> = None;
+            if let Ok(configs) = device.supported_output_configs() {
+                for cfg in configs {
+                    let ch = cfg.channels();
+                    if ch == 2 {
+                        best = Some(cfg);
+                        break;
+                    } else if best.is_none() || ch < best.as_ref().unwrap().channels() {
+                        best = Some(cfg);
+                    }
+                }
+            }
+            match best {
+                Some(range) => {
+                    // Prefer standard rates; max_sample_rate() can pick 96k+
+                    // which tightens monitoring ring buffer timing.
+                    let preferred = [48000u32, 44100, 96000];
+                    let sr = preferred.iter()
+                        .map(|&r| cpal::SampleRate(r))
+                        .find(|&r| r >= range.min_sample_rate() && r <= range.max_sample_rate())
+                        .unwrap_or_else(|| range.max_sample_rate());
+                    range.with_sample_rate(sr)
+                }
+                None => device.default_output_config().ok()?,
+            }
+        };
         let config: cpal::StreamConfig = supported.into();
 
         let sample_rate = config.sample_rate.0;
@@ -477,7 +537,8 @@ impl AudioEngine {
             pending: VecDeque::new(),
         }));
         let monitoring_enabled = Arc::new(AtomicBool::new(false));
-        let monitor_ring = MonitorRingBuffer::new(8192);
+        let monitor_warmed_up = Arc::new(AtomicBool::new(false));
+        let monitor_ring = MonitorRingBuffer::new(MONITOR_RING_CAPACITY);
         let monitor_effect_plugins: Arc<Mutex<Vec<Arc<Mutex<Option<crate::effects::PluginGuiHandle>>>>>> =
             Arc::new(Mutex::new(Vec::new()));
         let monitor_volume_bits = Arc::new(AtomicU64::new(1.0f64.to_bits()));
@@ -507,6 +568,7 @@ impl AudioEngine {
         let met_en = metronome_enabled.clone();
         let met_bpm = bpm_bits.clone();
         let mon_en = monitoring_enabled.clone();
+        let mon_warm = monitor_warmed_up.clone();
         let mon_ring_c = monitor_ring.clone();
         let mon_fx = monitor_effect_plugins.clone();
         let mon_vol = monitor_volume_bits.clone();
@@ -524,13 +586,13 @@ impl AudioEngine {
         let mut fx_out_r = vec![0.0f32; effect_block_size];
         let mut inst_out_l = vec![0.0f32; effect_block_size];
         let mut inst_out_r = vec![0.0f32; effect_block_size];
-        let mut mon_raw = vec![0.0f32; 8192];
+        let mut mon_raw = vec![0.0f32; MONITOR_RING_CAPACITY];
         let mut mon_fx_l = vec![0.0f32; 4096];
         let mut mon_fx_r = vec![0.0f32; 4096];
         let mut mon_fx_out_l = vec![0.0f32; effect_block_size];
         let mut mon_fx_out_r = vec![0.0f32; effect_block_size];
-        let mut mon_resampled_l = vec![0.0f32; 8192];
-        let mut mon_resampled_r = vec![0.0f32; 8192];
+        let mut mon_resampled_l = vec![0.0f32; MONITOR_RING_CAPACITY];
+        let mut mon_resampled_r = vec![0.0f32; MONITOR_RING_CAPACITY];
 
         let initial_mix_capacity: usize = 8192;
         let mut mix_capacity = initial_mix_capacity;
@@ -1288,19 +1350,51 @@ impl AudioEngine {
 
                     // Input monitoring: mix live mic input into output
                     // Handles sample rate conversion (input may differ from output)
-                    // and processes through monitor effect chain + volume/pan
+                    // and processes through monitor effect chain + volume/pan.
+                    // Uses jitter buffering to handle unsynchronized input/output clocks
+                    // (e.g. USB mic input vs built-in output — separate hardware clocks).
                     if mon_en.load(Ordering::Relaxed) {
+                        // Wait for input stream to accumulate enough data before
+                        // consuming.  Input hardware takes time to start producing
+                        // samples after the stream is opened — consuming too early
+                        // drains the ring buffer and causes clicks.
+                        if !mon_warm.load(Ordering::Relaxed) {
+                            let avail = mon_ring_c.available();
+                            if avail >= MONITOR_RING_CAPACITY / 4 {
+                                mon_warm.store(true, Ordering::Relaxed);
+                            }
+                        }
+                        if mon_warm.load(Ordering::Relaxed) {
                         let in_ch = mon_in_ch.load(Ordering::Relaxed).max(1);
                         let in_sr = mon_in_sr.load(Ordering::Relaxed).max(1) as f64;
                         let out_sr = sr;
 
-                        // How many input samples we need to produce `frames` output frames
-                        let ratio = in_sr / out_sr;
-                        let in_frames_needed = ((frames as f64) * ratio).ceil() as usize + 1;
+                        let base_ratio = in_sr / out_sr;
+
+                        // Adaptive resampling: adjust the sample-rate ratio based on
+                        // ring buffer fill level to smoothly compensate for clock drift
+                        // between USB input and built-in output devices.  When the ring
+                        // fills up (input faster) we consume slightly more; when it
+                        // empties (output faster) we consume slightly less.  This avoids
+                        // hard skips/drops that cause audible clicks.
+                        let avail = mon_ring_c.available();
+                        let ring_cap = MONITOR_RING_CAPACITY as f64;
+                        let target_fill = ring_cap * 0.5;
+                        let fill_error = (avail as f64 - target_fill) / ring_cap;
+                        let ratio = base_ratio * (1.0 + 0.005 * fill_error);
+
+                        // Safety net: hard skip only if ring is nearly full (>90%)
+                        // to prevent wrap-around corruption.
+                        if avail > (ring_cap as usize * 9 / 10) {
+                            let target = ring_cap as usize / 2;
+                            mon_ring_c.skip(avail - target);
+                        }
+
+                        let in_frames_needed = ((frames as f64) * ratio).ceil() as usize;
                         let in_samples_needed = in_frames_needed * in_ch;
                         let pop_len = in_samples_needed.min(mon_raw.len());
                         let got = mon_ring_c.pop(&mut mon_raw[..pop_len]);
-                        let in_frames_got = got / in_ch;
+                        let in_frames_got = got / in_ch.max(1);
 
                         // Deinterleave input into L/R
                         for j in 0..in_frames_got {
@@ -1316,16 +1410,36 @@ impl AudioEngine {
                         // Resample from input rate to output rate via linear interpolation
                         // into temporary buffers (not directly into dry_mix — we process FX first)
                         let mut mon_out_frames = 0usize;
-                        if in_frames_got > 1 {
+                        if in_frames_got > 0 {
                             for i in 0..frames {
                                 let src_pos = i as f64 * ratio;
                                 let idx = src_pos as usize;
-                                if idx + 1 >= in_frames_got { break; }
-                                let frac = (src_pos - idx as f64) as f32;
-                                mon_resampled_l[i] = mon_fx_l[idx] + (mon_fx_l[idx + 1] - mon_fx_l[idx]) * frac;
-                                mon_resampled_r[i] = mon_fx_r[idx] + (mon_fx_r[idx + 1] - mon_fx_r[idx]) * frac;
+                                if idx >= in_frames_got { break; }
+                                if idx + 1 < in_frames_got {
+                                    let frac = (src_pos - idx as f64) as f32;
+                                    mon_resampled_l[i] = mon_fx_l[idx] + (mon_fx_l[idx + 1] - mon_fx_l[idx]) * frac;
+                                    mon_resampled_r[i] = mon_fx_r[idx] + (mon_fx_r[idx + 1] - mon_fx_r[idx]) * frac;
+                                } else {
+                                    // Last available frame — hold value (no interpolation partner)
+                                    mon_resampled_l[i] = mon_fx_l[idx];
+                                    mon_resampled_r[i] = mon_fx_r[idx];
+                                }
                                 mon_out_frames = i + 1;
                             }
+                        }
+
+                        // Underrun recovery: fade last valid sample to zero over
+                        // remaining frames to avoid hard silence discontinuities.
+                        if mon_out_frames > 0 && mon_out_frames < frames {
+                            let last_l = mon_resampled_l[mon_out_frames - 1];
+                            let last_r = mon_resampled_r[mon_out_frames - 1];
+                            let gap = (frames - mon_out_frames) as f32;
+                            for i in mon_out_frames..frames {
+                                let fade = 1.0 - ((i - mon_out_frames) as f32 / gap);
+                                mon_resampled_l[i] = last_l * fade;
+                                mon_resampled_r[i] = last_r * fade;
+                            }
+                            mon_out_frames = frames;
                         }
 
                         // Process resampled monitor signal through monitor effect chain
@@ -1372,6 +1486,7 @@ impl AudioEngine {
                                 dry_mix[i][1] += mon_resampled_r[i] * m_vol * pan_r;
                             }
                         }
+                        } // mon_warm
                     }
 
                     // Mix browser preview clip into dry_mix
@@ -1529,6 +1644,7 @@ impl AudioEngine {
             bpm_bits,
             keyboard_preview,
             monitoring_enabled,
+            monitor_warmed_up,
             monitor_ring,
             monitor_effect_plugins,
             monitor_volume_bits,
@@ -1846,6 +1962,9 @@ impl AudioEngine {
     }
 
     pub fn set_monitoring_enabled(&self, enabled: bool) {
+        if enabled {
+            self.monitor_warmed_up.store(false, Ordering::Relaxed);
+        }
         self.monitoring_enabled.store(enabled, Ordering::Relaxed);
     }
 
@@ -2162,11 +2281,45 @@ impl AudioRecorder {
             _ => host.default_input_device()
                 .ok_or_else(|| "No microphone found. Connect a mic and try again.".to_string())?,
         };
-        let supported = device.default_input_config()
-            .map_err(|e| format!("Could not read microphone config: {e}"))?;
+        // Prefer a config with 1–2 channels. Some USB devices (e.g. multi-channel
+        // interfaces) report many channels by default (12, 16, …) which wastes ring
+        // buffer space and causes monitoring underruns.  Fall back to the default
+        // config if no low-channel config is found.
+        let supported = {
+            let mut best: Option<cpal::SupportedStreamConfigRange> = None;
+            if let Ok(configs) = device.supported_input_configs() {
+                for cfg in configs {
+                    let ch = cfg.channels();
+                    // Prefer mono or stereo
+                    if ch == 1 || ch == 2 {
+                        best = Some(cfg);
+                        if ch == 1 { break; } // ideal for a mic
+                    } else if best.is_none() {
+                        best = Some(cfg);
+                    }
+                }
+            }
+            match best {
+                Some(range) => {
+                    // Prefer standard rates; max_sample_rate() can pick 96k+
+                    // which tightens monitoring ring buffer timing.
+                    let preferred = [48000u32, 44100, 96000];
+                    let sr = preferred.iter()
+                        .map(|&r| cpal::SampleRate(r))
+                        .find(|&r| r >= range.min_sample_rate() && r <= range.max_sample_rate())
+                        .unwrap_or_else(|| range.max_sample_rate());
+                    range.with_sample_rate(sr)
+                }
+                None => device.default_input_config()
+                    .map_err(|e| format!("Could not read microphone config: {e}"))?,
+            }
+        };
         let config: cpal::StreamConfig = supported.into();
         self.sample_rate = config.sample_rate.0;
-        self.channels = config.channels as usize;
+        let device_channels = config.channels as usize;
+        // We only use the first 1–2 channels regardless of how many the
+        // device exposes (multi-channel interfaces can report 12, 16, …).
+        self.channels = device_channels.min(2);
 
         // Update engine's knowledge of input channel count and sample rate
         if let Some(ref ch_flag) = self.monitor_input_channels {
@@ -2181,20 +2334,46 @@ impl AudioRecorder {
         let rec = self.recording.clone();
         let mon = self.monitoring.clone();
         let mon_ring = self.monitor_ring.clone();
+        let effective_ch = self.channels;
 
         let stream = match device.build_input_stream(
             &config,
             move |data: &[f32], _: &cpal::InputCallbackInfo| {
-                // Push to recording buffer when recording
-                if rec.load(Ordering::Relaxed) {
-                    if let Ok(mut guard) = buf.try_lock() {
-                        guard.extend_from_slice(data);
+                // Multi-channel interfaces deliver all channels interleaved.
+                // Extract only the first 1–2 channels to keep buffers small.
+                if device_channels <= 2 {
+                    // Fast path: data already has 1–2 channels, use as-is
+                    if rec.load(Ordering::Relaxed) {
+                        if let Ok(mut guard) = buf.try_lock() {
+                            guard.extend_from_slice(data);
+                        }
                     }
-                }
-                // Push to monitoring ring buffer when monitoring
-                if mon.load(Ordering::Relaxed) {
-                    if let Some(ref ring) = mon_ring {
-                        ring.push(data);
+                    if mon.load(Ordering::Relaxed) {
+                        if let Some(ref ring) = mon_ring {
+                            ring.push(data);
+                        }
+                    }
+                } else {
+                    // Slow path: extract first effective_ch channels from each frame
+                    let num_frames = data.len() / device_channels;
+                    if rec.load(Ordering::Relaxed) {
+                        if let Ok(mut guard) = buf.try_lock() {
+                            guard.reserve(num_frames * effective_ch);
+                            for f in 0..num_frames {
+                                let base = f * device_channels;
+                                for c in 0..effective_ch {
+                                    guard.push(data[base + c]);
+                                }
+                            }
+                        }
+                    }
+                    if mon.load(Ordering::Relaxed) {
+                        if let Some(ref ring) = mon_ring {
+                            for f in 0..num_frames {
+                                let base = f * device_channels;
+                                ring.push(&data[base..base + effective_ch]);
+                            }
+                        }
                     }
                 }
             },

@@ -1,3 +1,4 @@
+- fix: monitoring clipping — CoreAudio aggregate device for OS-level drift compensation; warm-up gate; prefer 48kHz; fade-to-zero on underrun (54.2k loc)
 - fix: audio input device dropdown selection actually applied — AudioRecorder::new_with_device, reconnect on settings change (53.5k loc)
 - 2026-03-27: fix: Windows microphone permission check via registry consent store + toast errors (53.2k loc)
 - 2026-03-27: fix: segfault in macOS mic permission check — non-variadic objc_msgSend, remove nil block arg (53.2k loc)

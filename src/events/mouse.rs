@@ -587,11 +587,33 @@ impl App {
                                     "[audio] Input device changed: '{}' -> '{}'",
                                     prev_input_device, self.settings.audio_input_device
                                 );
+
+                                // Recreate aggregate device for new input/output pair
+                                #[cfg(target_os = "macos")]
+                                {
+                                    self.aggregate_device = None; // drop old
+                                    let have_in = self.settings.audio_input_device != "No Device"
+                                        && !self.settings.audio_input_device.is_empty();
+                                    let have_out = self.settings.audio_output_device != "No Device"
+                                        && !self.settings.audio_output_device.is_empty();
+                                    if have_in && have_out {
+                                        self.aggregate_device = crate::aggregate_device::AggregateDevice::new(
+                                            &self.settings.audio_input_device,
+                                            &self.settings.audio_output_device,
+                                        );
+                                    }
+                                }
+
+                                #[cfg(target_os = "macos")]
+                                let agg_name = self.aggregate_device.as_ref().map(|a| a.name.clone());
+                                #[cfg(not(target_os = "macos"))]
+                                let agg_name: Option<String> = None;
+
                                 let device_name =
                                     if self.settings.audio_input_device == "No Device" {
                                         None
                                     } else {
-                                        Some(self.settings.audio_input_device.as_str())
+                                        agg_name.as_deref().or(Some(self.settings.audio_input_device.as_str()))
                                     };
                                 let mut new_rec = AudioRecorder::new_with_device(device_name);
                                 if let (Some(ref mut rec), Some(ref eng)) =
