@@ -459,3 +459,67 @@ fn test_add_instrument_arms_keyboard() {
     assert_eq!(app.keyboard_instrument_id, Some(inst_id));
     assert!(app.computer_keyboard_armed);
 }
+
+#[test]
+fn test_add_instrument_into_monitoring_group() {
+    let mut app = App::new_headless();
+    let group_id = crate::entity_id::new_id();
+    let group = crate::group::Group::new(
+        group_id,
+        "TestGroup".to_string(),
+        [0.0, 0.0],
+        [100.0, 100.0],
+        vec![],
+    );
+    app.groups.insert(group_id, group);
+    app.monitoring_group_id = Some(group_id);
+
+    app.add_instrument("test-synth", "TestSynth");
+
+    let inst_id = *app.instruments.keys().next().unwrap();
+    let group = &app.groups[&group_id];
+    assert!(
+        group.member_ids.contains(&inst_id),
+        "instrument should be in monitoring group's member_ids"
+    );
+}
+
+#[test]
+fn test_add_instrument_no_monitoring_group() {
+    let mut app = App::new_headless();
+    assert!(app.monitoring_group_id.is_none());
+
+    app.add_instrument("test-synth", "TestSynth");
+
+    assert_eq!(app.instruments.len(), 1);
+    assert_eq!(app.midi_clips.len(), 1);
+    for g in app.groups.values() {
+        assert!(g.member_ids.is_empty());
+    }
+}
+
+#[test]
+fn test_add_instrument_into_group_undo() {
+    let mut app = App::new_headless();
+    let group_id = crate::entity_id::new_id();
+    let group = crate::group::Group::new(
+        group_id,
+        "TestGroup".to_string(),
+        [0.0, 0.0],
+        [100.0, 100.0],
+        vec![],
+    );
+    app.groups.insert(group_id, group);
+    app.monitoring_group_id = Some(group_id);
+
+    app.add_instrument("test-synth", "TestSynth");
+    assert_eq!(app.groups[&group_id].member_ids.len(), 1);
+
+    app.undo_op();
+    assert_eq!(app.instruments.len(), 0);
+    assert_eq!(app.midi_clips.len(), 0);
+    assert!(
+        app.groups[&group_id].member_ids.is_empty(),
+        "undo should remove instrument from group"
+    );
+}

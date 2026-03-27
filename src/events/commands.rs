@@ -475,18 +475,32 @@ impl App {
                         &self.components,
                         &self.component_instances,
                     ) {
-                        let member_ids: Vec<crate::entity_id::EntityId> = targets.iter().filter_map(|t| match t {
-                            HitTarget::Object(id)
-                            | HitTarget::Waveform(id)
-                            | HitTarget::LoopRegion(id)
-                            | HitTarget::ExportRegion(id)
-                            | HitTarget::ComponentDef(id)
-                            | HitTarget::ComponentInstance(id)
-                            | HitTarget::MidiClip(id)
-                            | HitTarget::TextNote(id)
-                            | HitTarget::Group(id)
-                            | HitTarget::Instrument(id) => Some(*id),
-                        }).collect();
+                        let mut member_ids: Vec<crate::entity_id::EntityId> = Vec::new();
+                        let mut seen = std::collections::HashSet::new();
+                        for t in &targets {
+                            let id = match t {
+                                // Resolve MIDI clips to their parent instrument
+                                HitTarget::MidiClip(id) => {
+                                    if let Some(inst_id) = self.midi_clips.get(id).and_then(|mc| mc.instrument_id) {
+                                        inst_id
+                                    } else {
+                                        *id
+                                    }
+                                }
+                                HitTarget::Object(id)
+                                | HitTarget::Waveform(id)
+                                | HitTarget::LoopRegion(id)
+                                | HitTarget::ExportRegion(id)
+                                | HitTarget::ComponentDef(id)
+                                | HitTarget::ComponentInstance(id)
+                                | HitTarget::TextNote(id)
+                                | HitTarget::Group(id)
+                                | HitTarget::Instrument(id) => *id,
+                            };
+                            if seen.insert(id) {
+                                member_ids.push(id);
+                            }
+                        }
                         let group_id = crate::entity_id::new_id();
                         let group_name = format!("Group {}", self.groups.len() + 1);
                         let group = crate::group::Group::new(group_id, group_name, pos, size, member_ids);

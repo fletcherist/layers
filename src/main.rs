@@ -1578,13 +1578,14 @@ impl App {
                 .build()
                 .expect("tokio rt for remote storage"),
         );
-        if let Some(rs) = storage::RemoteStorage::connect(url, None, rs_rt) {
+        let default_password = "layerslayerslayers";
+        if let Some(rs) = storage::RemoteStorage::connect(url, Some(default_password), rs_rt) {
             rs.use_project(project_id);
             self.remote_storage = Some(std::sync::Arc::new(rs));
         }
 
         // Real-time op sync
-        self.connect_to_server(url, project_id, None);
+        self.connect_to_server(url, project_id, Some(default_password));
 
         self.toast_manager.push(
             format!("Connecting to {SESSION_DB_HOST}/{project_id}…"),
@@ -4708,7 +4709,8 @@ fn main() {
 
     let db_password = std::env::args()
         .position(|a| a == "--db-password")
-        .and_then(|i| std::env::args().nth(i + 1));
+        .and_then(|i| std::env::args().nth(i + 1))
+        .or_else(|| Some("layerslayerslayers".to_string()));
 
     let event_loop = EventLoop::new().unwrap();
 

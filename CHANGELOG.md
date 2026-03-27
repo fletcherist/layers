@@ -1,3 +1,5 @@
+- 2026-03-27: fix: Cmd+G resolves MIDI clips to parent instrument; add_instrument adds to monitoring group (53.2k loc)
+- 2026-03-27: add default password "layerslayerslayers" for realtime connections (53.1k loc)
 - 2026-03-27: fix: layer context-menu delete now removes VST instruments and linked MIDI clips (53.1k loc)
 - fix: instruments silent during playback — Pass 1 clip mixing overwrote dry_mix instead of adding to it, wiping instrument audio (52.5k loc)
 - fix: MIDI timeline playback — sync_audio_clips after note creation + MIDI clip edge resize so engine receives MIDI events (52.5k loc)

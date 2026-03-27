@@ -560,12 +560,13 @@ fn group_includes_instrument_when_selected() {
     // Group them
     app.execute_command(CommandAction::CreateGroup);
 
-    // Should have one group containing all three
+    // MIDI clip resolves to its parent instrument, so group should contain
+    // instrument + waveform (deduplicated)
     assert_eq!(app.groups.len(), 1);
     let group = app.groups.values().next().unwrap();
-    assert_eq!(group.member_ids.len(), 3);
+    assert_eq!(group.member_ids.len(), 2);
     assert!(group.member_ids.contains(&inst_id), "instrument should be in group");
-    assert!(group.member_ids.contains(&mc_id), "midi clip should be in group");
+    assert!(!group.member_ids.contains(&mc_id), "midi clip should be resolved to instrument, not stored directly");
     assert!(group.member_ids.contains(&wf_id), "waveform should be in group");
 }
 
@@ -636,12 +637,33 @@ fn marquee_selecting_midi_clip_auto_includes_instrument() {
     // Instrument should be auto-included
     assert!(app.selected.contains(&HitTarget::Instrument(inst_id)), "instrument should be auto-included when its MIDI clip is marquee-selected");
 
-    // Now group — instrument should be a member
+    // Now group — MIDI clip resolves to instrument, so only instrument in member_ids
     app.execute_command(CommandAction::CreateGroup);
     assert_eq!(app.groups.len(), 1);
     let group = app.groups.values().next().unwrap();
     assert!(group.member_ids.contains(&inst_id), "instrument should be in group");
-    assert!(group.member_ids.contains(&mc_id), "midi clip should be in group");
+    assert!(!group.member_ids.contains(&mc_id), "midi clip should be resolved to instrument");
+}
+
+#[test]
+fn cmd_g_with_midi_clip_selected_groups_instrument() {
+    let mut app = App::new_headless();
+
+    app.add_instrument("test-synth", "TestSynth");
+    let inst_id = *app.instruments.keys().next().unwrap();
+    let mc_id = *app.midi_clips.keys().next().unwrap();
+
+    // Select only the MIDI clip (as happens when clicking on canvas)
+    app.selected.clear();
+    app.selected.push(HitTarget::MidiClip(mc_id));
+
+    // Cmd+G — should resolve MIDI clip to its parent instrument
+    app.execute_command(CommandAction::CreateGroup);
+
+    assert_eq!(app.groups.len(), 1);
+    let group = app.groups.values().next().unwrap();
+    assert_eq!(group.member_ids.len(), 1);
+    assert!(group.member_ids.contains(&inst_id), "group should contain the instrument, not the midi clip");
 }
 
 #[test]

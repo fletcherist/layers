@@ -533,10 +533,29 @@ impl App {
         let clip_id = new_id();
         self.midi_clips.insert(clip_id, clip.clone());
 
-        self.push_op(crate::operations::Operation::Batch(vec![
+        // Add instrument to the active monitoring group (if any)
+        let group_update_op = if let Some(group_id) = self.monitoring_group_id {
+            let before = self.groups.get(&group_id).cloned();
+            if let Some(before) = before {
+                self.groups.get_mut(&group_id).unwrap().member_ids.push(inst_id);
+                self.update_group_bounds(group_id);
+                let after = self.groups[&group_id].clone();
+                Some(crate::operations::Operation::UpdateGroup { id: group_id, before, after })
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        let mut batch_ops = vec![
             crate::operations::Operation::CreateInstrument { id: inst_id, data: inst_snap },
             crate::operations::Operation::CreateMidiClip { id: clip_id, data: clip },
-        ]));
+        ];
+        if let Some(group_op) = group_update_op {
+            batch_ops.push(group_op);
+        }
+        self.push_op(crate::operations::Operation::Batch(batch_ops));
 
         self.selected.clear();
         self.selected.push(HitTarget::MidiClip(clip_id));
