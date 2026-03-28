@@ -49,6 +49,7 @@ const kAudioAggregateDevicePropertyMainSubDevice: AudioObjectPropertySelector = 
 const kAudioObjectPropertyOwnedObjects: AudioObjectPropertySelector = 0x6F776E64; // 'ownd'
 const kAudioSubDevicePropertyDriftCompensation: AudioObjectPropertySelector = 0x64726674; // 'drft'
 const kAudioSubDeviceClassID: u32 = 0x61737562; // 'asub'
+const kAudioDevicePropertyBufferFrameSize: AudioObjectPropertySelector = 0x6673697A; // 'fsiz'
 
 #[repr(C)]
 struct AudioObjectPropertyAddress {
@@ -319,7 +320,7 @@ impl AggregateDevice {
     /// - either device is not found
     /// - both devices share the same clock domain (no aggregate needed)
     /// - CoreAudio refuses to create the aggregate
-    pub fn new(input_name: &str, output_name: &str) -> Option<Self> {
+    pub fn new(input_name: &str, output_name: &str, buffer_frames: u32) -> Option<Self> {
         let input_id = find_device_id_by_name(input_name)?;
         let output_id = find_device_id_by_name(output_name)?;
 
@@ -461,6 +462,28 @@ impl AggregateDevice {
                         );
                     }
                     println!("  Drift compensation enabled on {} sub-device(s)", sub_ids.len().saturating_sub(1));
+                }
+            }
+
+            // Set buffer frame size on the aggregate device — ensures
+            // hardware-level latency matches our desired buffer size.
+            // CPAL's BufferSize::Fixed only sets the AUHAL side; the
+            // aggregate device itself may default to 512-1024 frames.
+            {
+                let addr = global_addr(kAudioDevicePropertyBufferFrameSize);
+                let frames = buffer_frames;
+                let status = AudioObjectSetPropertyData(
+                    agg_id,
+                    &addr,
+                    0,
+                    ptr::null(),
+                    std::mem::size_of::<u32>() as u32,
+                    &frames as *const _ as *const c_void,
+                );
+                if status == 0 {
+                    println!("  Aggregate device buffer size: {} frames", frames);
+                } else {
+                    eprintln!("  Failed to set aggregate buffer size to {}: {}", frames, status);
                 }
             }
 

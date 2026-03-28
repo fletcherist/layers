@@ -342,11 +342,11 @@ struct App {
     op_redo_stack: Vec<operations::CommittedOp>,
     arrow_nudge_before: Option<Vec<(HitTarget, EntityBeforeState)>>,
     arrow_nudge_last: Option<TimeInstant>,
-    arrow_nudge_overlap_snapshots: IndexMap<EntityId, WaveformView>,
+    arrow_nudge_overlap_snapshots: IndexMap<EntityId, ClipSnapshot>,
     arrow_nudge_overlap_temp_splits: Vec<EntityId>,
     arrow_resize_before: Option<Vec<(EntityId, WaveformView)>>,
     arrow_resize_last: Option<TimeInstant>,
-    arrow_resize_overlap_snapshots: IndexMap<EntityId, WaveformView>,
+    arrow_resize_overlap_snapshots: IndexMap<EntityId, ClipSnapshot>,
     arrow_resize_overlap_temp_splits: Vec<EntityId>,
     current_project_name: String,
     effect_chains: IndexMap<EntityId, effects::EffectChain>,
@@ -379,7 +379,7 @@ struct App {
     bpm: f32,
     editing_bpm: ui::value_entry::ValueEntry,
     dragging_bpm: Option<(f32, f32)>,
-    bpm_drag_overlap_snapshots: IndexMap<EntityId, WaveformView>,
+    bpm_drag_overlap_snapshots: IndexMap<EntityId, ClipSnapshot>,
     bpm_drag_overlap_temp_splits: Vec<EntityId>,
     last_click_time: TimeInstant,
     last_browser_click_time: TimeInstant,
@@ -843,9 +843,18 @@ impl App {
         }
         // Keep overlap snapshots in sync so live restore uses the correct scale.
         for snap in self.bpm_drag_overlap_snapshots.values_mut() {
-            snap.position[0] *= scale;
-            snap.position[1] *= scale;
-            snap.size[1] *= scale;
+            match snap {
+                ClipSnapshot::Waveform(wf) => {
+                    wf.position[0] *= scale;
+                    wf.position[1] *= scale;
+                    wf.size[1] *= scale;
+                }
+                ClipSnapshot::MidiClip(mc) => {
+                    mc.position[0] *= scale;
+                    mc.position[1] *= scale;
+                    mc.size[1] *= scale;
+                }
+            }
         }
     }
 
@@ -1173,6 +1182,7 @@ impl App {
                 aggregate_device::AggregateDevice::new(
                     &settings.audio_input_device,
                     &settings.audio_output_device,
+                    settings.buffer_size,
                 )
             } else {
                 None
@@ -3376,6 +3386,22 @@ impl App {
         }
     }
 
+    /// Re-enable monitoring for a group (inverse of cleanup_group_monitoring).
+    pub(crate) fn restore_group_monitoring(&mut self, group_id: EntityId) {
+        self.monitoring_group_id = Some(group_id);
+        #[cfg(feature = "native")]
+        {
+            if let Some(ref engine) = self.audio_engine {
+                engine.monitor_ring().reset_and_prefill(0);
+                engine.set_monitoring_enabled(true);
+            }
+            if let Some(ref mut recorder) = self.recorder {
+                let _ = recorder.set_monitoring(true);
+            }
+        }
+        self.sync_monitor_effects();
+    }
+
     pub(crate) fn toggle_instrument_keyboard_preview(&mut self, inst_id: EntityId) {
         let is_active = self.computer_keyboard_armed && self.keyboard_instrument_id == Some(inst_id);
         if is_active {
@@ -4426,29 +4452,9 @@ impl App {
             }
             // Commit overlap changes from live resolution
             let overlap_snaps = std::mem::take(&mut self.arrow_nudge_overlap_snapshots);
-            for (id, original) in overlap_snaps {
-                if let Some(wf) = self.waveforms.get(&id) {
-                    if wf.disabled {
-                        self.waveforms.shift_remove(&id);
-                        let ac = self.audio_clips.shift_remove(&id);
-                        ops.push(crate::operations::Operation::DeleteWaveform {
-                            id, data: original, audio_clip: ac.map(|c| (id, c)),
-                        });
-                    } else {
-                        ops.push(crate::operations::Operation::UpdateWaveform {
-                            id, before: original, after: wf.clone(),
-                        });
-                    }
-                }
-            }
-            for id in self.arrow_nudge_overlap_temp_splits.drain(..) {
-                if let Some(wf_data) = self.waveforms.get(&id).cloned() {
-                    let ac = self.audio_clips.get(&id).cloned();
-                    ops.push(crate::operations::Operation::CreateWaveform {
-                        id, data: wf_data, audio_clip: ac.map(|c| (id, c)),
-                    });
-                }
-            }
+            let overlap_tsplits = std::mem::take(&mut self.arrow_nudge_overlap_temp_splits);
+            let overlap_ops = self.commit_overlap_ops(overlap_snaps, overlap_tsplits);
+            ops.extend(overlap_ops);
             if !ops.is_empty() {
                 self.push_op(crate::operations::Operation::Batch(ops));
             }
@@ -4475,29 +4481,9 @@ impl App {
                 }
             }
             let overlap_snaps = std::mem::take(&mut self.arrow_resize_overlap_snapshots);
-            for (id, original) in overlap_snaps {
-                if let Some(wf) = self.waveforms.get(&id) {
-                    if wf.disabled {
-                        self.waveforms.shift_remove(&id);
-                        let ac = self.audio_clips.shift_remove(&id);
-                        ops.push(crate::operations::Operation::DeleteWaveform {
-                            id, data: original, audio_clip: ac.map(|c| (id, c)),
-                        });
-                    } else {
-                        ops.push(crate::operations::Operation::UpdateWaveform {
-                            id, before: original, after: wf.clone(),
-                        });
-                    }
-                }
-            }
-            for id in self.arrow_resize_overlap_temp_splits.drain(..) {
-                if let Some(wf_data) = self.waveforms.get(&id).cloned() {
-                    let ac = self.audio_clips.get(&id).cloned();
-                    ops.push(crate::operations::Operation::CreateWaveform {
-                        id, data: wf_data, audio_clip: ac.map(|c| (id, c)),
-                    });
-                }
-            }
+            let overlap_tsplits = std::mem::take(&mut self.arrow_resize_overlap_temp_splits);
+            let overlap_ops = self.commit_overlap_ops(overlap_snaps, overlap_tsplits);
+            ops.extend(overlap_ops);
             if !ops.is_empty() {
                 self.push_op(crate::operations::Operation::Batch(ops));
             }
@@ -4567,14 +4553,17 @@ impl App {
             self.set_target_pos(t, [pos[0] + actual_dx, pos[1] + actual_dy]);
         }
 
-        // Live waveform overlap resolution (same as mouse drag)
-        let moved_wf_ids: Vec<EntityId> = targets.iter()
-            .filter_map(|t| if let HitTarget::Waveform(id) = t { Some(*id) } else { None })
+        // Live clip overlap resolution (same as mouse drag)
+        let moved_clip_ids: Vec<EntityId> = targets.iter()
+            .filter_map(|t| match t {
+                HitTarget::Waveform(id) | HitTarget::MidiClip(id) => Some(*id),
+                _ => None,
+            })
             .collect();
-        if !moved_wf_ids.is_empty() {
+        if !moved_clip_ids.is_empty() {
             let mut snaps = std::mem::take(&mut self.arrow_nudge_overlap_snapshots);
             let mut tsplits = std::mem::take(&mut self.arrow_nudge_overlap_temp_splits);
-            self.resolve_waveform_overlaps_live(&moved_wf_ids, &mut snaps, &mut tsplits);
+            self.resolve_clip_overlaps_live(&moved_clip_ids, &mut snaps, &mut tsplits);
             self.arrow_nudge_overlap_snapshots = snaps;
             self.arrow_nudge_overlap_temp_splits = tsplits;
         }
@@ -4622,7 +4611,7 @@ impl App {
 
         let mut snaps = std::mem::take(&mut self.arrow_resize_overlap_snapshots);
         let mut tsplits = std::mem::take(&mut self.arrow_resize_overlap_temp_splits);
-        self.resolve_waveform_overlaps_live(&wf_ids, &mut snaps, &mut tsplits);
+        self.resolve_clip_overlaps_live(&wf_ids, &mut snaps, &mut tsplits);
         self.arrow_resize_overlap_snapshots = snaps;
         self.arrow_resize_overlap_temp_splits = tsplits;
 
@@ -4861,7 +4850,7 @@ impl App {
                         data: wf_data,
                         audio_clip: Some((wf_id, ac_data)),
                     }];
-                    let overlap_ops = self.resolve_waveform_overlaps(&[wf_id]);
+                    let overlap_ops = self.resolve_clip_overlaps(&[wf_id]);
                     ops.extend(overlap_ops);
                     self.push_op(operations::Operation::Batch(ops));
                     self.pending_audio_loads_count = self.pending_audio_loads_count.saturating_sub(1);
@@ -4877,7 +4866,7 @@ impl App {
                         data: wf_data,
                         audio_clip: Some((wf_id, ac_data)),
                     }];
-                    let overlap_ops = self.resolve_waveform_overlaps(&[wf_id]);
+                    let overlap_ops = self.resolve_clip_overlaps(&[wf_id]);
                     ops.extend(overlap_ops);
                     self.push_op(operations::Operation::Batch(ops));
                     self.pending_audio_loads_count = self.pending_audio_loads_count.saturating_sub(1);

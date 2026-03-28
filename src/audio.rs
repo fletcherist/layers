@@ -572,13 +572,10 @@ impl AudioEngine {
         let met_en = metronome_enabled.clone();
         let met_bpm = bpm_bits.clone();
         let mon_en = monitoring_enabled.clone();
-        let mon_warm = monitor_warmed_up.clone();
         let mon_ring_c = monitor_ring.clone();
-        let mon_fx = monitor_effect_plugins.clone();
         let mon_vol = monitor_volume_bits.clone();
         let mon_pan = monitor_pan_bits.clone();
         let mon_in_ch = monitor_input_channels.clone();
-        let mon_in_sr = monitor_input_sample_rate.clone();
         let preview_c = preview_clip.clone();
         let preview_p = preview_playing.clone();
         let preview_pos = preview_position_bits.clone();
@@ -591,12 +588,6 @@ impl AudioEngine {
         let mut inst_out_l = vec![0.0f32; effect_block_size];
         let mut inst_out_r = vec![0.0f32; effect_block_size];
         let mut mon_raw = vec![0.0f32; MONITOR_RING_CAPACITY];
-        let mut mon_fx_l = vec![0.0f32; 4096];
-        let mut mon_fx_r = vec![0.0f32; 4096];
-        let mut mon_fx_out_l = vec![0.0f32; effect_block_size];
-        let mut mon_fx_out_r = vec![0.0f32; effect_block_size];
-        let mut mon_resampled_l = vec![0.0f32; MONITOR_RING_CAPACITY];
-        let mut mon_resampled_r = vec![0.0f32; MONITOR_RING_CAPACITY];
 
         let initial_mix_capacity: usize = 8192;
         let mut mix_capacity = initial_mix_capacity;
@@ -610,8 +601,6 @@ impl AudioEngine {
         let mut silent_buf = vec![0.0f32; effect_block_size];
 
         let mut entity_rms_local: HashMap<EntityId, f64> = HashMap::new();
-        let mut mon_debug_counter: u32 = 0;
-        let mon_log_interval: u32 = ((sr as u32) / (effect_block_size as u32)).max(1);
         let mut was_playing = false;
         let mut met_phase: f64 = 0.0;
         let mut met_samples_left: u32 = 0;
@@ -684,8 +673,6 @@ impl AudioEngine {
                         group_bus_r.resize(mix_capacity, 0.0f32);
                         chain_bus_l.resize(mix_capacity, 0.0f32);
                         chain_bus_r.resize(mix_capacity, 0.0f32);
-                        mon_resampled_l.resize(mix_capacity, 0.0f32);
-                        mon_resampled_r.resize(mix_capacity, 0.0f32);
                     }
                     dry_mix[..frames].fill([0.0, 0.0]);
 
@@ -1353,165 +1340,24 @@ impl AudioEngine {
                         }
                     }
 
-                    // Input monitoring: mix live mic input into output
-                    // Handles sample rate conversion (input may differ from output)
-                    // and processes through monitor effect chain + volume/pan.
-                    // Uses jitter buffering to handle unsynchronized input/output clocks
-                    // (e.g. USB mic input vs built-in output — separate hardware clocks).
+                    // Input monitoring: direct ring buffer → output, no processing.
                     if mon_en.load(Ordering::Relaxed) {
-                        // Wait for input stream to accumulate a small cushion before
-                        // consuming.  Threshold is 2x the callback buffer size — just
-                        // enough to absorb one callback of scheduling jitter.
-                        if !mon_warm.load(Ordering::Relaxed) {
-                            let avail = mon_ring_c.available();
-                            if avail >= effect_block_size * 2 {
-                                mon_warm.store(true, Ordering::Relaxed);
-                            }
-                        }
-                        if mon_warm.load(Ordering::Relaxed) {
                         let in_ch = mon_in_ch.load(Ordering::Relaxed).max(1);
-                        let in_sr = mon_in_sr.load(Ordering::Relaxed).max(1) as f64;
-                        let out_sr = sr;
-
-                        let base_ratio = in_sr / out_sr;
-
-                        // Adaptive resampling: adjust ratio based on ring fill to
-                        // compensate for clock drift between input/output devices.
-                        let avail = mon_ring_c.available();
-                        let ring_cap = MONITOR_RING_CAPACITY as f64;
-                        let target_fill = effect_block_size as f64 * 1.5;
-                        let fill_error = (avail as f64 - target_fill) / ring_cap;
-                        let ratio = (base_ratio * (1.0 + 0.03 * fill_error))
-                            .clamp(base_ratio * 0.95, base_ratio * 1.05);
-
-                        // Safety net: hard skip when ring is >75% full.
-                        let did_skip = if avail > (MONITOR_RING_CAPACITY * 3 / 4) {
-                            let target = (effect_block_size as f64 * 1.5) as usize;
-                            mon_ring_c.skip(avail - target);
-                            true
-                        } else {
-                            false
-                        };
-
-                        mon_debug_counter += 1;
-                        if mon_debug_counter % mon_log_interval == 0 {
-                            eprintln!(
-                                "[monitor] fill={}/{} target={} ratio={:.6} skip={}",
-                                avail, MONITOR_RING_CAPACITY,
-                                (effect_block_size as f64 * 1.5) as usize,
-                                ratio,
-                                if did_skip { "YES" } else { "no" }
-                            );
-                        }
-
-                        let in_frames_needed = ((frames as f64) * ratio).ceil() as usize;
-                        let in_samples_needed = in_frames_needed * in_ch;
-                        let pop_len = in_samples_needed.min(mon_raw.len());
+                        let samples_needed = frames * in_ch;
+                        let pop_len = samples_needed.min(mon_raw.len());
                         let got = mon_ring_c.pop(&mut mon_raw[..pop_len]);
-                        let in_frames_got = got / in_ch.max(1);
+                        let got_frames = got / in_ch;
 
-                        // Mono-duplicate channel 0 to both L/R.  Most mics are
-                        // mono; even "stereo" USB mics often have ch1 silent.
-                        // Pan control handles stereo placement.
-                        for j in 0..in_frames_got {
-                            let s = mon_raw[j * in_ch];
-                            mon_fx_l[j] = s;
-                            mon_fx_r[j] = s;
+                        let m_vol = load_f64(&mon_vol) as f32;
+                        let m_p = load_f64(&mon_pan) as f32;
+                        let pan_l = (2.0 * (1.0 - m_p)).min(1.0);
+                        let pan_r = (2.0 * m_p).min(1.0);
+
+                        for i in 0..got_frames {
+                            let s = mon_raw[i * in_ch] * m_vol;
+                            dry_mix[i][0] += s * pan_l;
+                            dry_mix[i][1] += s * pan_r;
                         }
-
-                        // Resample from input rate to output rate via linear interpolation
-                        // into temporary buffers (not directly into dry_mix — we process FX first)
-                        let mut mon_out_frames = 0usize;
-                        if in_frames_got > 0 {
-                            for i in 0..frames {
-                                let src_pos = i as f64 * ratio;
-                                let idx = src_pos as usize;
-                                if idx >= in_frames_got { break; }
-                                if idx + 1 < in_frames_got {
-                                    let frac = (src_pos - idx as f64) as f32;
-                                    mon_resampled_l[i] = mon_fx_l[idx] + (mon_fx_l[idx + 1] - mon_fx_l[idx]) * frac;
-                                    mon_resampled_r[i] = mon_fx_r[idx] + (mon_fx_r[idx + 1] - mon_fx_r[idx]) * frac;
-                                } else {
-                                    // Last available frame — hold value (no interpolation partner)
-                                    mon_resampled_l[i] = mon_fx_l[idx];
-                                    mon_resampled_r[i] = mon_fx_r[idx];
-                                }
-                                mon_out_frames = i + 1;
-                            }
-                        }
-
-                        // Underrun recovery: hold last sample for tiny gaps,
-                        // quadratic fade for larger ones.
-                        if mon_out_frames > 0 && mon_out_frames < frames {
-                            let last_l = mon_resampled_l[mon_out_frames - 1];
-                            let last_r = mon_resampled_r[mon_out_frames - 1];
-                            let gap = frames - mon_out_frames;
-                            if gap <= 4 {
-                                for i in mon_out_frames..frames {
-                                    mon_resampled_l[i] = last_l;
-                                    mon_resampled_r[i] = last_r;
-                                }
-                            } else {
-                                let fade_len = gap.min(64);
-                                for i in 0..fade_len {
-                                    let t = 1.0 - (i as f32 / fade_len as f32);
-                                    let t = t * t;
-                                    mon_resampled_l[mon_out_frames + i] = last_l * t;
-                                    mon_resampled_r[mon_out_frames + i] = last_r * t;
-                                }
-                                for i in (mon_out_frames + fade_len)..frames {
-                                    mon_resampled_l[i] = 0.0;
-                                    mon_resampled_r[i] = 0.0;
-                                }
-                            }
-                            mon_out_frames = frames;
-                        }
-
-                        // Process resampled monitor signal through monitor effect chain
-                        if mon_out_frames > 0 {
-                            #[cfg(feature = "native")]
-                            if let Ok(plugins_guard) = mon_fx.try_lock() {
-                                if !plugins_guard.is_empty() {
-                                    for block_start in (0..mon_out_frames).step_by(effect_block_size) {
-                                        let block_end = (block_start + effect_block_size).min(mon_out_frames);
-                                        let block_len = block_end - block_start;
-                                        // Copy block into fx_buf pair (reusing clip processing buffers — free at this point)
-                                        fx_buf_l[..block_len].copy_from_slice(&mon_resampled_l[block_start..block_end]);
-                                        fx_buf_r[..block_len].copy_from_slice(&mon_resampled_r[block_start..block_end]);
-                                        #[allow(unused_mut)]
-                                        let (mut src_l, mut src_r, mut dst_l, mut dst_r): (&mut [f32], &mut [f32], &mut [f32], &mut [f32]) =
-                                            (&mut fx_buf_l, &mut fx_buf_r, &mut mon_fx_out_l, &mut mon_fx_out_r);
-                                        for plugin_arc in plugins_guard.iter() {
-                                            dst_l[..block_len].copy_from_slice(&src_l[..block_len]);
-                                            dst_r[..block_len].copy_from_slice(&src_r[..block_len]);
-                                            if let Ok(guard) = plugin_arc.try_lock() {
-                                                if let Some(ref gui) = *guard {
-                                                    let inputs: [&[f32]; 2] = [&src_l[..block_len], &src_r[..block_len]];
-                                                    let mut outputs: [&mut [f32]; 2] = [&mut dst_l[..block_len], &mut dst_r[..block_len]];
-                                                    gui.process(&inputs, &mut outputs, block_len);
-                                                }
-                                            }
-                                            std::mem::swap(&mut src_l, &mut dst_l);
-                                            std::mem::swap(&mut src_r, &mut dst_r);
-                                        }
-                                        // After the ping-pong, result is in src_l/src_r
-                                        mon_resampled_l[block_start..block_end].copy_from_slice(&src_l[..block_len]);
-                                        mon_resampled_r[block_start..block_end].copy_from_slice(&src_r[..block_len]);
-                                    }
-                                }
-                            }
-
-                            // Apply monitor volume/pan and mix into dry_mix
-                            let m_vol = load_f64(&mon_vol) as f32;
-                            let m_p = load_f64(&mon_pan) as f32;
-                            let pan_l = (2.0 * (1.0 - m_p)).min(1.0);
-                            let pan_r = (2.0 * m_p).min(1.0);
-                            for i in 0..mon_out_frames {
-                                dry_mix[i][0] += mon_resampled_l[i] * m_vol * pan_l;
-                                dry_mix[i][1] += mon_resampled_r[i] * m_vol * pan_r;
-                            }
-                        }
-                        } // mon_warm
                     }
 
                     // Mix browser preview clip into dry_mix
@@ -1987,9 +1833,6 @@ impl AudioEngine {
     }
 
     pub fn set_monitoring_enabled(&self, enabled: bool) {
-        if enabled {
-            self.monitor_warmed_up.store(false, Ordering::Relaxed);
-        }
         self.monitoring_enabled.store(enabled, Ordering::Relaxed);
     }
 

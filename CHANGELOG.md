@@ -1,3 +1,6 @@
+- refactor: simplified monitoring — direct ring buffer→output, removed adaptive resampling/effects/warmup (55.7k loc)
+- 2026-03-28: refactor: unified clip overlap resolution — MIDI clips and audio clips now interact with each other (crop/split/disable) regardless of type (55.8k loc)
+- fix: monitoring latency ~150ms→~20-37ms — fixed buffer sizes, aggregate device buffer config, smaller ring buffer thresholds, mono mic fix (55.2k loc)
 - 2026-03-28: fix: undo group delete now restores solo, mute, and monitoring state (55.4k loc)
 - fix: theme sliders now visible on Light theme — removed Dark-only guard (55.4k loc)
 - feat: share window — progress bar during upload, editable project ID in share link with cursor/keyboard support (55.3k loc)

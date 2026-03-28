@@ -580,9 +580,24 @@ impl App {
                                     }
                                 }
 
-                                // Rebuild recorder with new buffer size
+                                // Rebuild aggregate device + recorder with new buffer size
                                 #[cfg(feature = "native")]
                                 {
+                                    #[cfg(target_os = "macos")]
+                                    {
+                                        self.aggregate_device = None; // drop old
+                                        let have_in = self.settings.audio_input_device != "No Device"
+                                            && !self.settings.audio_input_device.is_empty();
+                                        let have_out = self.settings.audio_output_device != "No Device"
+                                            && !self.settings.audio_output_device.is_empty();
+                                        if have_in && have_out {
+                                            self.aggregate_device = crate::aggregate_device::AggregateDevice::new(
+                                                &self.settings.audio_input_device,
+                                                &self.settings.audio_output_device,
+                                                self.settings.buffer_size,
+                                            );
+                                        }
+                                    }
                                     #[cfg(target_os = "macos")]
                                     let agg_name = self.aggregate_device.as_ref().map(|a| a.name.clone());
                                     #[cfg(not(target_os = "macos"))]
@@ -624,6 +639,7 @@ impl App {
                                         self.aggregate_device = crate::aggregate_device::AggregateDevice::new(
                                             &self.settings.audio_input_device,
                                             &self.settings.audio_output_device,
+                                            self.settings.buffer_size,
                                         );
                                     }
                                 }
@@ -2672,34 +2688,13 @@ impl App {
                     // Re-resolve after rounding correction, then commit snapshots
                     let mut snaps = std::mem::take(&mut self.bpm_drag_overlap_snapshots);
                     let mut tsplits = std::mem::take(&mut self.bpm_drag_overlap_temp_splits);
-                    self.resolve_all_waveform_overlaps_live(&mut snaps, &mut tsplits);
+                    self.resolve_all_clip_overlaps_live(&mut snaps, &mut tsplits);
                     let mut ops = Vec::new();
                     if (before_bpm - after).abs() > f32::EPSILON {
                         ops.push(crate::operations::Operation::SetBpm { before: before_bpm, after });
                     }
-                    for (id, original) in snaps {
-                        if let Some(wf) = self.waveforms.get(&id) {
-                            if wf.disabled {
-                                self.waveforms.shift_remove(&id);
-                                let ac = self.audio_clips.shift_remove(&id);
-                                ops.push(crate::operations::Operation::DeleteWaveform {
-                                    id, data: original, audio_clip: ac.map(|c| (id, c)),
-                                });
-                            } else {
-                                ops.push(crate::operations::Operation::UpdateWaveform {
-                                    id, before: original, after: wf.clone(),
-                                });
-                            }
-                        }
-                    }
-                    for id in tsplits {
-                        if let Some(wf_data) = self.waveforms.get(&id).cloned() {
-                            let ac = self.audio_clips.get(&id).cloned();
-                            ops.push(crate::operations::Operation::CreateWaveform {
-                                id, data: wf_data, audio_clip: ac.map(|c| (id, c)),
-                            });
-                        }
-                    }
+                    let overlap_ops = self.commit_overlap_ops(snaps, tsplits);
+                    ops.extend(overlap_ops);
                     if !ops.is_empty() {
                         self.push_op(crate::operations::Operation::Batch(ops));
                     }
@@ -2797,21 +2792,8 @@ impl App {
                                 });
                             }
                         }
-                        for (id, original) in &overlap_snapshots {
-                            if let Some(mc) = self.midi_clips.get(id) {
-                                if mc.disabled {
-                                    let _ = self.midi_clips.shift_remove(id);
-                                    ops.push(crate::operations::Operation::DeleteMidiClip { id: *id, data: original.clone() });
-                                } else {
-                                    ops.push(crate::operations::Operation::UpdateMidiClip { id: *id, before: original.clone(), after: mc.clone() });
-                                }
-                            }
-                        }
-                        for id in &overlap_temp_splits {
-                            if let Some(mc) = self.midi_clips.get(id) {
-                                ops.push(crate::operations::Operation::CreateMidiClip { id: *id, data: mc.clone() });
-                            }
-                        }
+                        let overlap_ops = self.commit_overlap_ops(overlap_snapshots, overlap_temp_splits);
+                        ops.extend(overlap_ops);
                         if ops.len() == 1 {
                             self.push_op(ops.into_iter().next().unwrap());
                         } else if ops.len() > 1 {
@@ -2915,23 +2897,8 @@ impl App {
                         if let Some(after) = self.midi_clips.get(&clip_id) {
                             ops.push(crate::operations::Operation::UpdateMidiClip { id: clip_id, before, after: after.clone() });
                         }
-                        // Commit overlap changes
-                        for (id, original) in &overlap_snapshots {
-                            if let Some(mc) = self.midi_clips.get(id) {
-                                if mc.disabled {
-                                    if let Some(data) = self.midi_clips.shift_remove(id) {
-                                        ops.push(crate::operations::Operation::DeleteMidiClip { id: *id, data: original.clone() });
-                                    }
-                                } else {
-                                    ops.push(crate::operations::Operation::UpdateMidiClip { id: *id, before: original.clone(), after: mc.clone() });
-                                }
-                            }
-                        }
-                        for id in &overlap_temp_splits {
-                            if let Some(mc) = self.midi_clips.get(id) {
-                                ops.push(crate::operations::Operation::CreateMidiClip { id: *id, data: mc.clone() });
-                            }
-                        }
+                        let overlap_ops = self.commit_overlap_ops(overlap_snapshots, overlap_temp_splits);
+                        ops.extend(overlap_ops);
                         if ops.len() == 1 {
                             self.push_op(ops.into_iter().next().unwrap());
                         } else if ops.len() > 1 {
@@ -3238,29 +3205,8 @@ impl App {
                         if let Some(after) = self.waveforms.get(&waveform_id) {
                             ops.push(crate::operations::Operation::UpdateWaveform { id: waveform_id, before, after: after.clone() });
                         }
-                        for (id, original) in overlap_snapshots {
-                            if let Some(wf) = self.waveforms.get(&id) {
-                                if wf.disabled {
-                                    self.waveforms.shift_remove(&id);
-                                    let ac = self.audio_clips.shift_remove(&id);
-                                    ops.push(crate::operations::Operation::DeleteWaveform {
-                                        id, data: original, audio_clip: ac.map(|c| (id, c)),
-                                    });
-                                } else {
-                                    ops.push(crate::operations::Operation::UpdateWaveform {
-                                        id, before: original, after: wf.clone(),
-                                    });
-                                }
-                            }
-                        }
-                        for id in overlap_temp_splits {
-                            if let Some(wf_data) = self.waveforms.get(&id).cloned() {
-                                let ac = self.audio_clips.get(&id).cloned();
-                                ops.push(crate::operations::Operation::CreateWaveform {
-                                    id, data: wf_data, audio_clip: ac.map(|c| (id, c)),
-                                });
-                            }
-                        }
+                        let overlap_ops = self.commit_overlap_ops(overlap_snapshots, overlap_temp_splits);
+                        ops.extend(overlap_ops);
                         if !ops.is_empty() {
                             self.push_op(crate::operations::Operation::Batch(ops));
                         }
@@ -3326,29 +3272,8 @@ impl App {
                         }
                     }
                     // Commit overlap changes from live resolution
-                    for (id, original) in overlap_snapshots {
-                        if let Some(wf) = self.waveforms.get(&id) {
-                            if wf.disabled {
-                                self.waveforms.shift_remove(&id);
-                                let ac = self.audio_clips.shift_remove(&id);
-                                ops.push(crate::operations::Operation::DeleteWaveform {
-                                    id, data: original, audio_clip: ac.map(|c| (id, c)),
-                                });
-                            } else {
-                                ops.push(crate::operations::Operation::UpdateWaveform {
-                                    id, before: original, after: wf.clone(),
-                                });
-                            }
-                        }
-                    }
-                    for id in overlap_temp_splits {
-                        if let Some(wf_data) = self.waveforms.get(&id).cloned() {
-                            let ac = self.audio_clips.get(&id).cloned();
-                            ops.push(crate::operations::Operation::CreateWaveform {
-                                id, data: wf_data, audio_clip: ac.map(|c| (id, c)),
-                            });
-                        }
-                    }
+                    let overlap_ops = self.commit_overlap_ops(overlap_snapshots, overlap_temp_splits);
+                    ops.extend(overlap_ops);
                     if !ops.is_empty() {
                         self.push_op(crate::operations::Operation::Batch(ops));
                     }
