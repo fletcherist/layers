@@ -967,6 +967,33 @@ fn delete_group_also_deletes_members() {
 }
 
 #[test]
+fn delete_all_members_also_deletes_group() {
+    let mut app = App::new_headless();
+
+    let wf_id = new_id();
+    app.waveforms.insert(wf_id, make_waveform(0.0, 0.0));
+
+    // Create a group containing the single waveform
+    app.selected.push(HitTarget::Waveform(wf_id));
+    app.execute_command(CommandAction::CreateGroup);
+    assert_eq!(app.groups.len(), 1);
+    let group_id = *app.groups.keys().next().unwrap();
+
+    // Select just the waveform (not the group) and delete
+    app.selected = vec![HitTarget::Waveform(wf_id)];
+    app.delete_selected();
+
+    assert_eq!(app.waveforms.len(), 0, "waveform should be deleted");
+    assert_eq!(app.groups.len(), 0, "empty group should be auto-deleted");
+
+    // Undo should restore both the waveform and the group
+    app.undo_op();
+    assert_eq!(app.waveforms.len(), 1, "waveform should be restored on undo");
+    assert_eq!(app.groups.len(), 1, "group should be restored on undo");
+    assert!(app.groups[&group_id].member_ids.contains(&wf_id), "group should contain waveform again");
+}
+
+#[test]
 fn alt_drag_group_deep_clones_members() {
     let mut app = App::new_headless();
 

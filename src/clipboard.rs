@@ -1058,13 +1058,13 @@ impl App {
                 || self.waveforms.contains_key(id)
                 || self.instruments.contains_key(id)
         });
-        if !del_ops.is_empty() {
-            self.push_op(operations::Operation::Batch(del_ops));
-        }
-
         // Remove deleted entities from group member lists and update bounds
         let all_deleted: Vec<EntityId> = [&obj_ids, &wf_ids, &lr_ids, &xr_ids, &mc_ids, &tn_ids, &component_instance_ids, &instrument_ids]
             .iter().flat_map(|v| v.iter().copied()).collect();
+        // Snapshot groups before mutation so undo can restore original member_ids
+        let groups_before: std::collections::HashMap<EntityId, crate::group::Group> = self.groups.iter()
+            .map(|(id, g)| (*id, g.clone()))
+            .collect();
         let mut groups_to_update: Vec<EntityId> = Vec::new();
         for (gid, group) in self.groups.iter_mut() {
             let before_len = group.member_ids.len();
@@ -1073,8 +1073,34 @@ impl App {
                 groups_to_update.push(*gid);
             }
         }
-        for gid in groups_to_update {
-            self.update_group_bounds(gid);
+
+        // Auto-delete groups that became empty after member removal
+        let empty_group_ids: Vec<EntityId> = groups_to_update.iter().copied()
+            .filter(|gid| self.groups.get(gid).map_or(false, |g| g.member_ids.is_empty()))
+            .collect();
+        for &gid in &empty_group_ids {
+            let was_soloed = self.solo_ids.contains(&gid);
+            let was_monitoring = self.monitoring_group_id == Some(gid);
+            self.cleanup_group_monitoring(gid);
+            if let Some(original) = groups_before.get(&gid) {
+                del_ops.push(operations::Operation::DeleteGroup { id: gid, data: original.clone(), was_soloed, was_monitoring });
+            }
+            self.solo_ids.remove(&gid);
+            self.groups.shift_remove(&gid);
+            // Remove from parent group member lists
+            for (_, parent) in self.groups.iter_mut() {
+                parent.member_ids.retain(|mid| *mid != gid);
+            }
+        }
+
+        if !del_ops.is_empty() {
+            self.push_op(operations::Operation::Batch(del_ops));
+        }
+
+        for gid in &groups_to_update {
+            if !empty_group_ids.contains(gid) {
+                self.update_group_bounds(*gid);
+            }
         }
 
         if self.keyboard_instrument_id.is_some_and(|id| !self.instruments.contains_key(&id)) {
