@@ -208,3 +208,155 @@ fn mute_member_of_soloed_group() {
     assert!(!app.should_play(wf1), "muted member should not play even in soloed group");
     assert!(app.should_play(wf2), "unmuted member of soloed group should still play");
 }
+
+#[test]
+fn delete_soloed_group_clears_solo() {
+    let mut app = App::new_headless();
+    let wf1 = new_id();
+    let wf2 = new_id();
+    let wf_other = new_id();
+    app.waveforms.insert(wf1, make_waveform(100.0, 100.0));
+    app.waveforms.insert(wf2, make_waveform(400.0, 100.0));
+    app.waveforms.insert(wf_other, make_waveform(700.0, 100.0));
+    app.selected = vec![HitTarget::Waveform(wf1), HitTarget::Waveform(wf2)];
+    app.execute_command(CommandAction::CreateGroup);
+
+    let group_id = *app.groups.keys().next().unwrap();
+
+    // Solo the group, then delete it
+    app.toggle_solo(group_id, false);
+    assert!(!app.should_play(wf_other), "unrelated waveform should be silenced by solo");
+
+    app.selected = vec![HitTarget::Group(group_id)];
+    app.delete_selected();
+
+    assert!(app.solo_ids.is_empty(), "solo_ids should be empty after deleting the soloed group");
+    assert!(app.should_play(wf_other), "unrelated waveform should play after soloed group is deleted");
+}
+
+#[test]
+fn delete_group_with_soloed_member_clears_solo() {
+    let mut app = App::new_headless();
+    let wf1 = new_id();
+    let wf2 = new_id();
+    let wf_other = new_id();
+    app.waveforms.insert(wf1, make_waveform(100.0, 100.0));
+    app.waveforms.insert(wf2, make_waveform(400.0, 100.0));
+    app.waveforms.insert(wf_other, make_waveform(700.0, 100.0));
+    app.selected = vec![HitTarget::Waveform(wf1), HitTarget::Waveform(wf2)];
+    app.execute_command(CommandAction::CreateGroup);
+
+    // Solo a member, then delete the group (which also deletes members)
+    app.toggle_solo(wf1, false);
+    assert!(!app.should_play(wf_other), "unrelated waveform silenced by solo");
+
+    let group_id = *app.groups.keys().next().unwrap();
+    app.selected = vec![HitTarget::Group(group_id)];
+    app.delete_selected();
+
+    assert!(app.solo_ids.is_empty(), "solo_ids should be empty after deleting group with soloed member");
+    assert!(app.should_play(wf_other), "unrelated waveform should play after deletion");
+}
+
+#[test]
+fn ungroup_soloed_group_clears_group_solo() {
+    let mut app = App::new_headless();
+    let wf1 = new_id();
+    let wf2 = new_id();
+    let wf_other = new_id();
+    app.waveforms.insert(wf1, make_waveform(100.0, 100.0));
+    app.waveforms.insert(wf2, make_waveform(400.0, 100.0));
+    app.waveforms.insert(wf_other, make_waveform(700.0, 100.0));
+    app.selected = vec![HitTarget::Waveform(wf1), HitTarget::Waveform(wf2)];
+    app.execute_command(CommandAction::CreateGroup);
+
+    let group_id = *app.groups.keys().next().unwrap();
+
+    // Solo the group, then ungroup
+    app.toggle_solo(group_id, false);
+    assert!(!app.should_play(wf_other), "unrelated waveform silenced by group solo");
+
+    app.selected = vec![HitTarget::Group(group_id)];
+    app.execute_command(CommandAction::UngroupSelected);
+
+    assert!(!app.solo_ids.contains(&group_id), "group solo should be cleared after ungroup");
+    // Members still exist but group is gone — solo on group ID was removed
+    assert!(app.should_play(wf_other), "unrelated waveform should play after ungrouping");
+}
+
+#[test]
+fn undo_delete_restores_group_solo() {
+    let mut app = App::new_headless();
+    let wf1 = new_id();
+    let wf2 = new_id();
+    let wf_other = new_id();
+    app.waveforms.insert(wf1, make_waveform(100.0, 100.0));
+    app.waveforms.insert(wf2, make_waveform(400.0, 100.0));
+    app.waveforms.insert(wf_other, make_waveform(700.0, 100.0));
+    app.selected = vec![HitTarget::Waveform(wf1), HitTarget::Waveform(wf2)];
+    app.execute_command(CommandAction::CreateGroup);
+
+    let group_id = *app.groups.keys().next().unwrap();
+
+    // Solo the group
+    app.toggle_solo(group_id, false);
+    assert!(app.solo_ids.contains(&group_id));
+
+    // Delete the group
+    app.selected = vec![HitTarget::Group(group_id)];
+    app.delete_selected();
+    assert!(app.solo_ids.is_empty());
+    assert!(app.groups.is_empty());
+
+    // Undo — group should be restored with solo
+    app.undo_op();
+    assert!(app.groups.contains_key(&group_id), "group should be restored");
+    assert!(app.solo_ids.contains(&group_id), "solo should be restored after undo");
+    assert!(!app.should_play(wf_other), "unrelated waveform should be silenced again");
+}
+
+#[test]
+fn undo_delete_restores_group_mute() {
+    let mut app = App::new_headless();
+    let wf1 = new_id();
+    app.waveforms.insert(wf1, make_waveform(100.0, 100.0));
+    app.selected = vec![HitTarget::Waveform(wf1)];
+    app.execute_command(CommandAction::CreateGroup);
+
+    let group_id = *app.groups.keys().next().unwrap();
+
+    // Mute the group
+    app.toggle_mute_disabled(group_id);
+    assert!(app.groups.get(&group_id).unwrap().disabled);
+
+    // Delete the group
+    app.selected = vec![HitTarget::Group(group_id)];
+    app.delete_selected();
+
+    // Undo — group should be restored with mute
+    app.undo_op();
+    assert!(app.groups.get(&group_id).unwrap().disabled, "mute should be restored after undo");
+}
+
+#[test]
+fn undo_delete_restores_group_monitoring() {
+    let mut app = App::new_headless();
+    let wf1 = new_id();
+    app.waveforms.insert(wf1, make_waveform(100.0, 100.0));
+    app.selected = vec![HitTarget::Waveform(wf1)];
+    app.execute_command(CommandAction::CreateGroup);
+
+    let group_id = *app.groups.keys().next().unwrap();
+
+    // Enable monitoring
+    app.monitoring_group_id = Some(group_id);
+
+    // Delete the group
+    app.selected = vec![HitTarget::Group(group_id)];
+    app.delete_selected();
+    assert!(app.monitoring_group_id.is_none());
+
+    // Undo — monitoring should be restored
+    app.undo_op();
+    assert_eq!(app.monitoring_group_id, Some(group_id), "monitoring should be restored after undo");
+}

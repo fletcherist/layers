@@ -1,4 +1,5 @@
 use crate::settings::Settings;
+use crate::ui::text_input::{TextInput, TextInputConfig};
 use crate::InstanceRaw;
 use crate::gpu::TextEntry;
 
@@ -7,29 +8,57 @@ use crate::gpu::TextEntry;
 // ---------------------------------------------------------------------------
 
 const WIN_WIDTH: f32 = 420.0;
-const WIN_HEIGHT: f32 = 150.0;
+const WIN_HEIGHT: f32 = 200.0;
 const BORDER_RADIUS: f32 = 12.0;
 const PADDING: f32 = 20.0;
 const URL_BOX_HEIGHT: f32 = 34.0;
 const BTN_WIDTH: f32 = 120.0;
 const BTN_HEIGHT: f32 = 32.0;
 const COPIED_DURATION: f32 = 2.0;
+const PROGRESS_BAR_HEIGHT: f32 = 6.0;
+
+/// Width of the prefix text "https://layers.audio/projects/" at scale 1.0
+const PREFIX_DISPLAY_WIDTH: f32 = 178.0;
+
+const URL_PREFIX: &str = "https://layers.audio/projects/";
+
+#[derive(Clone, PartialEq)]
+pub enum ShareUploadState {
+    Uploading,
+    Done,
+    Failed(String),
+}
 
 pub struct ShareWindow {
-    pub url: String,
+    pub id_input: TextInput,
+    pub upload_state: ShareUploadState,
+    pub progress: f32,
+    pub progress_label: String,
     pub copy_hovered: bool,
     pub copied: bool,
     pub copied_timer: f32,
 }
 
 impl ShareWindow {
-    pub fn new(url: String) -> Self {
+    pub fn new(share_id: String) -> Self {
+        let config = TextInputConfig {
+            multiline: false,
+            allow_spaces: false,
+            placeholder: String::new(),
+        };
         Self {
-            url,
+            id_input: TextInput::with_text(share_id, config),
+            upload_state: ShareUploadState::Uploading,
+            progress: 0.0,
+            progress_label: "Uploading…".to_string(),
             copy_hovered: false,
             copied: false,
             copied_timer: 0.0,
         }
+    }
+
+    pub fn full_url(&self) -> String {
+        format!("{}{}", URL_PREFIX, self.id_input.text())
     }
 
     pub fn tick(&mut self, dt: f32) {
@@ -59,11 +88,26 @@ impl ShareWindow {
     fn url_box_rect(&self, screen_w: f32, screen_h: f32, scale: f32) -> ([f32; 2], [f32; 2]) {
         let (wp, _) = self.win_rect(screen_w, screen_h, scale);
         let pad = PADDING * scale;
+        // Place URL box below the progress area
+        let y_offset = if self.upload_state == ShareUploadState::Uploading {
+            80.0
+        } else {
+            36.0
+        };
         let x = wp[0] + pad;
-        let y = wp[1] + 36.0 * scale;
+        let y = wp[1] + y_offset * scale;
         let w = WIN_WIDTH * scale - pad * 2.0;
         let h = URL_BOX_HEIGHT * scale;
         ([x, y], [w, h])
+    }
+
+    fn progress_bar_rect(&self, screen_w: f32, screen_h: f32, scale: f32) -> ([f32; 2], [f32; 2]) {
+        let (wp, ws) = self.win_rect(screen_w, screen_h, scale);
+        let bar_w = ws[0] - PADDING * 2.0 * scale;
+        let bar_h = PROGRESS_BAR_HEIGHT * scale;
+        let bar_x = wp[0] + PADDING * scale;
+        let bar_y = wp[1] + 56.0 * scale;
+        ([bar_x, bar_y], [bar_w, bar_h])
     }
 
     fn copy_button_rect(&self, screen_w: f32, screen_h: f32, scale: f32) -> ([f32; 2], [f32; 2]) {
@@ -76,6 +120,9 @@ impl ShareWindow {
     }
 
     pub fn hit_copy_button(&self, pos: [f32; 2], screen_w: f32, screen_h: f32, scale: f32) -> bool {
+        if self.upload_state == ShareUploadState::Uploading {
+            return false;
+        }
         let (bp, bs) = self.copy_button_rect(screen_w, screen_h, scale);
         pos[0] >= bp[0] && pos[0] <= bp[0] + bs[0]
             && pos[1] >= bp[1] && pos[1] <= bp[1] + bs[1]
@@ -135,9 +182,35 @@ impl ShareWindow {
             border_radius: 6.0 * scale,
         });
 
+        // Progress bar (only during upload)
+        if self.upload_state == ShareUploadState::Uploading {
+            let (bp, bs) = self.progress_bar_rect(screen_w, screen_h, scale);
+
+            // Bar background
+            out.push(InstanceRaw {
+                position: bp,
+                size: bs,
+                color: crate::theme::with_alpha(t.bg_elevated, 0.8),
+                border_radius: bs[1] * 0.5,
+            });
+
+            // Bar fill
+            let fill_w = bs[0] * self.progress.clamp(0.0, 1.0);
+            if fill_w > 0.5 {
+                out.push(InstanceRaw {
+                    position: bp,
+                    size: [fill_w, bs[1]],
+                    color: t.accent,
+                    border_radius: bs[1] * 0.5,
+                });
+            }
+        }
+
         // Copy button
         let (cbp, cbs) = self.copy_button_rect(screen_w, screen_h, scale);
-        let btn_color = if self.copy_hovered {
+        let btn_color = if self.upload_state == ShareUploadState::Uploading {
+            crate::theme::with_alpha(t.accent, 0.3)
+        } else if self.copy_hovered {
             t.accent
         } else {
             crate::theme::with_alpha(t.accent, 0.8)
@@ -182,25 +255,86 @@ impl ShareWindow {
             center: false,
         });
 
-        // URL text inside box
+        // Progress text (only during upload)
+        if self.upload_state == ShareUploadState::Uploading {
+            // Label
+            out.push(TextEntry {
+                text: self.progress_label.clone(),
+                x: wp[0] + PADDING * scale,
+                y: wp[1] + 38.0 * scale,
+                font_size: 11.0 * scale,
+                line_height: 14.0 * scale,
+                color: crate::theme::RuntimeTheme::text_u8(t.text_primary, 220),
+                weight: 400,
+                max_width: 300.0 * scale,
+                bounds: win_bounds,
+                center: false,
+            });
+
+            // Percentage
+            let pct = (self.progress * 100.0) as i32;
+            out.push(TextEntry {
+                text: format!("{}%", pct),
+                x: wp[0] + (WIN_WIDTH - PADDING) * scale - 40.0 * scale,
+                y: wp[1] + 38.0 * scale,
+                font_size: 11.0 * scale,
+                line_height: 14.0 * scale,
+                color: crate::theme::RuntimeTheme::text_u8(t.text_secondary, 200),
+                weight: 400,
+                max_width: 60.0 * scale,
+                bounds: win_bounds,
+                center: false,
+            });
+        }
+
+        // URL box: prefix (static) + editable ID
         let (ubp, ubs) = self.url_box_rect(screen_w, screen_h, scale);
-        // Truncate URL display to fit: show the full string but let max_width clip it
+        let text_y = ubp[1] + (ubs[1] - 14.0 * scale) * 0.5;
+        let url_bounds = Some([ubp[0], ubp[1], ubp[0] + ubs[0], ubp[1] + ubs[1]]);
+
+        // Prefix text (non-editable, dim)
         out.push(TextEntry {
-            text: self.url.clone(),
+            text: URL_PREFIX.to_string(),
             x: ubp[0] + 8.0 * scale,
-            y: ubp[1] + (ubs[1] - 14.0 * scale) * 0.5,
+            y: text_y,
             font_size: 11.0 * scale,
             line_height: 14.0 * scale,
-            color: crate::theme::RuntimeTheme::text_u8(t.text_secondary, 200),
+            color: crate::theme::RuntimeTheme::text_u8(t.text_dim, 160),
             weight: 400,
-            max_width: ubs[0] - 16.0 * scale,
-            bounds: win_bounds,
+            max_width: PREFIX_DISPLAY_WIDTH * scale,
+            bounds: url_bounds,
+            center: false,
+        });
+
+        // Editable ID text (with cursor when not uploading)
+        let id_display = if self.upload_state == ShareUploadState::Uploading {
+            self.id_input.text().to_string()
+        } else {
+            self.id_input.display_text()
+        };
+        let prefix_offset = PREFIX_DISPLAY_WIDTH * scale;
+        out.push(TextEntry {
+            text: id_display,
+            x: ubp[0] + 8.0 * scale + prefix_offset,
+            y: text_y,
+            font_size: 11.0 * scale,
+            line_height: 14.0 * scale,
+            color: crate::theme::RuntimeTheme::text_u8(t.text_primary, 255),
+            weight: 400,
+            max_width: ubs[0] - 16.0 * scale - prefix_offset,
+            bounds: url_bounds,
             center: false,
         });
 
         // Copy button label
         let (cbp, cbs) = self.copy_button_rect(screen_w, screen_h, scale);
-        let btn_label = if self.copied { "Copied!" } else { "Copy link" };
+        let btn_label = if self.copied {
+            "Copied!"
+        } else if self.upload_state == ShareUploadState::Uploading {
+            "Uploading…"
+        } else {
+            "Copy link"
+        };
         out.push(TextEntry {
             text: btn_label.to_string(),
             x: cbp[0],

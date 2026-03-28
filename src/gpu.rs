@@ -1341,6 +1341,12 @@ impl Gpu {
         }
 
         // Loop region labels (audio-sample style, world-space -> screen-space)
+        let canvas_bounds = TextBounds {
+            left: sample_browser.map_or(0.0, |b| b.panel_width(scale)) as i32,
+            top: 0,
+            right: right_window.map_or(w, |_| w - right_window::RIGHT_WINDOW_WIDTH * scale) as i32,
+            bottom: h as i32,
+        };
         if settings_window.is_none() && command_palette.is_none() && export_window.is_none() && share_window.is_none() {
             for (idx, (_lr_id, lr)) in loop_regions.iter().enumerate() {
                 if !lr.enabled {
@@ -1395,7 +1401,7 @@ impl Gpu {
                         label_screen_x,
                         label_screen_y,
                         TextColor::rgba(255, 255, 255, 180),
-                        full_bounds,
+                        canvas_bounds,
                     ));
                 }
             }
@@ -1407,14 +1413,9 @@ impl Gpu {
         let world_bottom = world_top + h / camera.zoom;
 
         // Waveform sample name labels (cached shaping, positions recomputed each frame)
-        let browser_right = sample_browser.map_or(0.0, |b| b.panel_width(scale));
-        let right_panel_left = right_window.map_or(w, |_| w - right_window::RIGHT_WINDOW_WIDTH * scale);
-        let wf_label_bounds = TextBounds {
-            left: browser_right as i32,
-            top: 0,
-            right: right_panel_left as i32,
-            bottom: h as i32,
-        };
+        let browser_right = canvas_bounds.left as f32;
+        let right_panel_left = canvas_bounds.right as f32;
+        let wf_label_bounds = canvas_bounds;
         let mut old_wf_cache = std::mem::take(&mut self.cached_wf_label_bufs);
         let mut new_wf_cache: Vec<(TextLabelCacheKey, TextBuffer)> = Vec::new();
         let mut wf_label_meta: Vec<(f32, f32, TextColor, TextBounds)> = Vec::new();

@@ -431,9 +431,6 @@ impl SettingsWindow {
         screen_h: f32,
         scale: f32,
     ) -> Option<usize> {
-        if settings.theme_preset != "Dark" {
-            return None;
-        }
         for i in 0..SLIDERS.len() {
             let (tp, ts) = self.slider_track_rect(i, screen_w, screen_h, scale);
             let val = Self::slider_value(settings, i);
@@ -906,11 +903,9 @@ impl SettingsWindow {
         match self.active_category {
             SettingsCategory::ThemeAndColors => {
                 // Sliders first so dropdown popup renders on top
-                if settings.theme_preset == "Dark" {
-                    self.build_slider_instances(
-                        &mut out, settings, screen_w, screen_h, scale, content_x, content_w, wp, t,
-                    );
-                }
+                self.build_slider_instances(
+                    &mut out, settings, screen_w, screen_h, scale, content_x, content_w, wp, t,
+                );
                 self.build_theme_dropdown_instances(
                     &mut out, settings, screen_w, screen_h, scale, content_x, content_w, wp, t,
                 );
@@ -1336,36 +1331,34 @@ impl SettingsWindow {
                     super::dropdown::build_popup_text(&mut out, THEME_PRESETS, selected, dp, ds, scale, &settings.theme);
                 }
 
-                // Slider rows (only when Default preset)
-                if settings.theme_preset == "Dark" {
-                    let value_font = 12.0 * scale;
-                    let value_line = 16.0 * scale;
-                    for (i, def) in SLIDERS.iter().enumerate() {
-                        let row_y = wp[1]
-                            + SECTION_HEADER_HEIGHT * scale
-                            + (i + 1) as f32 * ROW_HEIGHT * scale;
+                // Slider rows
+                let value_font = 12.0 * scale;
+                let value_line = 16.0 * scale;
+                for (i, def) in SLIDERS.iter().enumerate() {
+                    let row_y = wp[1]
+                        + SECTION_HEADER_HEIGHT * scale
+                        + (i + 1) as f32 * ROW_HEIGHT * scale;
 
-                        Self::push_row_label(&mut out, def.label, content_x, row_y, scale, settings);
+                    Self::push_row_label(&mut out, def.label, content_x, row_y, scale, settings);
 
-                        let val = Self::slider_value(settings, i);
-                        let display = (val * def.display_scale) as i32;
-                        let val_text = format!("{} {}", display, def.unit);
-                        let val_x = content_x + content_w - SLIDER_RIGHT_PAD * scale
-                            - VALUE_WIDTH * scale
-                            + 8.0 * scale;
-                        out.push(TextEntry {
-                            text: val_text,
-                            x: val_x,
-                            y: row_y + (ROW_HEIGHT * scale - value_line) * 0.5,
-                            font_size: value_font,
-                            line_height: value_line,
-                            color: crate::theme::RuntimeTheme::text_u8(settings.theme.text_secondary, 255),
-                            weight: 400,
-                            max_width: 300.0 * scale,
-                            bounds: None,
-                            center: false,
-                        });
-                    }
+                    let val = Self::slider_value(settings, i);
+                    let display = (val * def.display_scale) as i32;
+                    let val_text = format!("{} {}", display, def.unit);
+                    let val_x = content_x + content_w - SLIDER_RIGHT_PAD * scale
+                        - VALUE_WIDTH * scale
+                        + 8.0 * scale;
+                    out.push(TextEntry {
+                        text: val_text,
+                        x: val_x,
+                        y: row_y + (ROW_HEIGHT * scale - value_line) * 0.5,
+                        font_size: value_font,
+                        line_height: value_line,
+                        color: crate::theme::RuntimeTheme::text_u8(settings.theme.text_secondary, 255),
+                        weight: 400,
+                        max_width: 300.0 * scale,
+                        bounds: None,
+                        center: false,
+                    });
                 }
             }
             SettingsCategory::Audio => {

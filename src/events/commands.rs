@@ -505,7 +505,7 @@ impl App {
                         let group_name = format!("Group {}", self.groups.len() + 1);
                         let group = crate::group::Group::new(group_id, group_name, pos, size, member_ids);
                         self.groups.insert(group_id, group.clone());
-                        self.push_op(operations::Operation::CreateGroup { id: group_id, data: group });
+                        self.push_op(operations::Operation::CreateGroup { id: group_id, data: group, was_soloed: false, was_monitoring: false });
                         self.selected.clear();
                         self.selected.push(HitTarget::Group(group_id));
                         self.mark_dirty();
@@ -517,9 +517,13 @@ impl App {
                     if let HitTarget::Group(id) = t { Some(*id) } else { None }
                 });
                 if let Some(group_id) = group_target {
+                    let was_soloed = self.solo_ids.contains(&group_id);
+                    let was_monitoring = self.monitoring_group_id == Some(group_id);
+                    self.cleanup_group_monitoring(group_id);
+                    self.solo_ids.remove(&group_id);
                     if let Some(group) = self.groups.shift_remove(&group_id) {
                         let member_ids = group.member_ids.clone();
-                        self.push_op(operations::Operation::DeleteGroup { id: group_id, data: group });
+                        self.push_op(operations::Operation::DeleteGroup { id: group_id, data: group, was_soloed, was_monitoring });
                         self.selected.clear();
                         for mid in &member_ids {
                             // Try to figure out the HitTarget type for each member

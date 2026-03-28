@@ -439,7 +439,7 @@ impl App {
                             sw.hit_copy_button(self.mouse_pos, scr_w, scr_h, scale)
                         });
                         if copy_clicked {
-                            let url = self.share_window.as_ref().map(|sw| sw.url.clone());
+                            let url = self.share_window.as_ref().map(|sw| sw.full_url());
                             if let Some(url) = url {
                                 self.copy_share_url_to_clipboard(&url);
                             }
@@ -579,6 +579,30 @@ impl App {
                                         engine.toggle_playback();
                                     }
                                 }
+
+                                // Rebuild recorder with new buffer size
+                                #[cfg(feature = "native")]
+                                {
+                                    #[cfg(target_os = "macos")]
+                                    let agg_name = self.aggregate_device.as_ref().map(|a| a.name.clone());
+                                    #[cfg(not(target_os = "macos"))]
+                                    let agg_name: Option<String> = None;
+                                    let input_dev = if self.settings.audio_input_device == "No Device" {
+                                        None
+                                    } else {
+                                        agg_name.as_deref().or(Some(self.settings.audio_input_device.as_str()))
+                                    };
+                                    let mut new_rec = AudioRecorder::new_with_device(input_dev, self.settings.buffer_size);
+                                    if let (Some(ref mut rec), Some(ref eng)) = (&mut new_rec, &self.audio_engine) {
+                                        rec.set_monitor_ring(
+                                            eng.monitor_ring(),
+                                            eng.monitoring_enabled_flag(),
+                                            eng.monitor_input_channels_flag(),
+                                            eng.monitor_input_sample_rate_flag(),
+                                        );
+                                    }
+                                    self.recorder = new_rec;
+                                }
                             }
 
                             #[cfg(feature = "native")]
@@ -615,7 +639,7 @@ impl App {
                                     } else {
                                         agg_name.as_deref().or(Some(self.settings.audio_input_device.as_str()))
                                     };
-                                let mut new_rec = AudioRecorder::new_with_device(device_name);
+                                let mut new_rec = AudioRecorder::new_with_device(device_name, self.settings.buffer_size);
                                 if let (Some(ref mut rec), Some(ref eng)) =
                                     (&mut new_rec, &self.audio_engine)
                                 {

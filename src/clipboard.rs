@@ -46,7 +46,7 @@ impl App {
                                 ops.push(operations::Operation::CreateInstrument { id: *mid, data: snap });
                             }
                         }
-                        ops.push(operations::Operation::CreateGroup { id: *id, data: d.clone() });
+                        ops.push(operations::Operation::CreateGroup { id: *id, data: d.clone(), was_soloed: false, was_monitoring: false });
                     }
                 }
                 HitTarget::Instrument(_) => {}
@@ -997,6 +997,9 @@ impl App {
             self.instruments.shift_remove(&id);
         }
         for &id in &group_ids {
+            let was_soloed = self.solo_ids.contains(&id);
+            let was_monitoring = self.monitoring_group_id == Some(id);
+            self.cleanup_group_monitoring(id);
             if let Some(d) = self.groups.get(&id) {
                 // Delete all member entities that weren't already individually deleted
                 for mid in &d.member_ids {
@@ -1039,10 +1042,16 @@ impl App {
                         self.instruments.shift_remove(mid);
                     }
                 }
-                del_ops.push(operations::Operation::DeleteGroup { id, data: d.clone() });
+                del_ops.push(operations::Operation::DeleteGroup { id, data: d.clone(), was_soloed, was_monitoring });
             }
             self.groups.shift_remove(&id);
         }
+        // Clean up stale solo IDs referencing deleted entities
+        self.solo_ids.retain(|id| {
+            self.groups.contains_key(id)
+                || self.waveforms.contains_key(id)
+                || self.instruments.contains_key(id)
+        });
         if !del_ops.is_empty() {
             self.push_op(operations::Operation::Batch(del_ops));
         }

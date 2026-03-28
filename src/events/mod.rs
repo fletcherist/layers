@@ -278,19 +278,23 @@ impl ApplicationHandler for App {
                 while let Ok(status) = rx.try_recv() {
                     match status {
                         crate::ShareUploadStatus::Progress { current, total, .. } => {
-                            self.toast_manager.push_persistent(
-                                "share-upload",
-                                format!("Uploading audio {current}/{total}…"),
-                                crate::ui::toast::ToastKind::Info,
-                            );
+                            if let Some(sw) = &mut self.share_window {
+                                sw.progress = if total > 0 { current as f32 / total as f32 } else { 0.0 };
+                                sw.progress_label = format!("Uploading audio {current}/{total}…");
+                            }
                         }
                         crate::ShareUploadStatus::Done => {
-                            self.toast_manager.dismiss_by_id("share-upload");
+                            if let Some(sw) = &mut self.share_window {
+                                sw.upload_state = crate::ui::share_window::ShareUploadState::Done;
+                                sw.progress = 1.0;
+                            }
                             self.toast_manager.push("Project shared", crate::ui::toast::ToastKind::Success);
                             done = true;
                         }
                         crate::ShareUploadStatus::Failed(msg) => {
-                            self.toast_manager.dismiss_by_id("share-upload");
+                            if let Some(sw) = &mut self.share_window {
+                                sw.upload_state = crate::ui::share_window::ShareUploadState::Failed(msg.clone());
+                            }
                             self.toast_manager.push(
                                 format!("Share failed: {msg}"),
                                 crate::ui::toast::ToastKind::Error,
@@ -302,6 +306,7 @@ impl ApplicationHandler for App {
                 if done {
                     self.share_upload_rx = None;
                 }
+                self.request_redraw();
             }
 
             // --- Poll join download result (non-blocking) ---

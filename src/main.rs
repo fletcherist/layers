@@ -1215,7 +1215,7 @@ impl App {
         } else {
             agg_name.as_deref().or(Some(settings.audio_input_device.as_str()))
         };
-        let mut recorder = AudioRecorder::new_with_device(input_device);
+        let mut recorder = AudioRecorder::new_with_device(input_device, settings.buffer_size);
         if recorder.is_none() {
             println!("  Warning: no audio input device found");
         }
@@ -1848,8 +1848,17 @@ impl App {
             self.share_session(&id);
         }
 
-        let url = format!("https://layers.audio/projects/{id}");
-        self.share_window = Some(ui::share_window::ShareWindow::new(url));
+        let mut sw = ui::share_window::ShareWindow::new(id);
+        // If already connected, no upload will happen — start in Done state
+        #[cfg(feature = "native")]
+        if self.share_upload_rx.is_none() {
+            sw.upload_state = ui::share_window::ShareUploadState::Done;
+        }
+        #[cfg(not(feature = "native"))]
+        {
+            sw.upload_state = ui::share_window::ShareUploadState::Done;
+        }
+        self.share_window = Some(sw);
     }
 
     #[cfg(feature = "native")]
@@ -2993,7 +3002,7 @@ impl App {
         let name = format!("Group {}", self.groups.len() + 1);
         let group = crate::group::Group::new(id, name, pos, size, vec![]);
         self.groups.insert(id, group.clone());
-        self.push_op(operations::Operation::CreateGroup { id, data: group });
+        self.push_op(operations::Operation::CreateGroup { id, data: group, was_soloed: false, was_monitoring: false });
         self.selected.clear();
         self.selected.push(HitTarget::Group(id));
         self.request_redraw();
@@ -3349,6 +3358,23 @@ impl App {
 
     #[cfg(not(feature = "native"))]
     fn toggle_group_monitoring(&mut self, _group_id: EntityId) {}
+
+    /// If `group_id` has monitoring enabled, disable it and stop the audio pipeline.
+    pub(crate) fn cleanup_group_monitoring(&mut self, group_id: EntityId) {
+        if self.monitoring_group_id == Some(group_id) {
+            self.monitoring_group_id = None;
+            #[cfg(feature = "native")]
+            {
+                if let Some(ref engine) = self.audio_engine {
+                    engine.set_monitoring_enabled(false);
+                }
+                if let Some(ref mut recorder) = self.recorder {
+                    let _ = recorder.set_monitoring(false);
+                }
+            }
+            self.sync_monitor_effects();
+        }
+    }
 
     pub(crate) fn toggle_instrument_keyboard_preview(&mut self, inst_id: EntityId) {
         let is_active = self.computer_keyboard_armed && self.keyboard_instrument_id == Some(inst_id);
@@ -4222,7 +4248,7 @@ impl App {
                                 }
                             }
                             self.groups.insert(nid, g.clone());
-                            copy_ops.push(operations::Operation::CreateGroup { id: nid, data: g });
+                            copy_ops.push(operations::Operation::CreateGroup { id: nid, data: g, was_soloed: false, was_monitoring: false });
                             new_selected.push(HitTarget::Group(nid));
                         }
                     }

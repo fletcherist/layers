@@ -86,6 +86,54 @@ impl App {
                     self.request_redraw();
                     return;
                 }
+
+                let cmd = self.cmd_held();
+                use crate::ui::text_input::TextInputAction;
+
+                // Cmd+C: copy full URL to clipboard
+                if cmd && matches!(&event.logical_key, Key::Character(ch) if ch.as_ref() == "c") {
+                    let url = self.share_window.as_ref().map(|sw| sw.full_url());
+                    if let Some(url) = url {
+                        self.copy_share_url_to_clipboard(&url);
+                    }
+                    if let Some(sw) = &mut self.share_window {
+                        sw.copied = true;
+                        sw.copied_timer = 2.0;
+                    }
+                    self.request_redraw();
+                    return;
+                }
+
+                // Cmd+V: paste into editable ID
+                if cmd && matches!(&event.logical_key, Key::Character(ch) if ch.as_ref() == "v") {
+                    #[cfg(feature = "native")]
+                    if let Some(text) = self.read_system_clipboard_text() {
+                        if let Some(sw) = &mut self.share_window {
+                            sw.id_input.paste(&text);
+                        }
+                    }
+                    self.request_redraw();
+                    return;
+                }
+
+                // Forward all other keys to the TextInput
+                if let Some(sw) = &mut self.share_window {
+                    let action = sw.id_input.handle_key(&event.logical_key, cmd);
+                    match action {
+                        TextInputAction::Submit => {
+                            let new_id = sw.id_input.text().trim().to_string();
+                            if !new_id.is_empty() {
+                                self.share_id = Some(new_id);
+                            }
+                        }
+                        TextInputAction::Cancel => {
+                            self.share_window = None;
+                        }
+                        _ => {}
+                    }
+                }
+                self.request_redraw();
+                return;
             }
 
             if self.context_menu.is_some() {

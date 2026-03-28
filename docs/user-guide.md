@@ -47,6 +47,14 @@ Layers is a spatial digital audio workstation (DAW) where you arrange audio clip
   - [Using Instances](#using-instances)
 - [Sample Browser](#sample-browser)
 - [Settings & Customization](#settings--customization)
+- [Groups](#groups)
+  - [Creating Groups](#creating-groups)
+  - [Group Properties](#group-properties)
+- [Session Collaboration](#session-collaboration)
+  - [Sharing a Session](#sharing-a-session)
+  - [Joining a Session](#joining-a-session)
+  - [Disconnecting](#disconnecting)
+- [Takes & Comping](#takes--comping)
 - [Keyboard Shortcuts](#keyboard-shortcuts)
 - [Mouse Controls](#mouse-controls)
 
@@ -119,7 +127,7 @@ You can also add entire folders to the browser with `⇧⌘A` (or the **+** butt
 
 - **Move** — Click and drag a clip to reposition it. Clips snap to the grid.
 - **Resize** — Drag the left or right edge of a clip to trim it.
-- **Multi-select** — Click empty space and drag to create a selection box, or `Shift`+click to add clips to your selection.
+- **Multi-select** — Click empty space and drag to create a selection box.
 - **Nudge** — Use arrow keys to move selected clips by one grid step. `Shift`+arrows for larger steps (4 beats horizontal, 1 row vertical).
 - **Duplicate** — `⌘D`, or hold `Alt` while dragging to duplicate-and-move.
 - **Disable/Enable** — Press `0` to toggle a clip's playback on or off (disabled clips appear dimmed).
@@ -158,8 +166,10 @@ Warp modes control how a clip's playback relates to the project tempo. Select a 
 | **Off** | Plays at the original sample rate, ignoring project BPM |
 | **Re-Pitch** | Time-stretches the clip to match project BPM. Set the clip's original BPM in the Properties Panel and Layers handles the rest. |
 | **Semitone** | Pitch-shifts the clip by a number of semitones (–24 to +24) with automatic time compensation |
+| **PaulStretch** | Extreme granular time-stretching for ambient textures. Adjust the stretch factor (1.1–100×) in the Properties Panel. |
+| **Complex** | Advanced time-domain stretching algorithm that preserves transients and tonal quality |
 
-Double-click the pitch or sample BPM fields in the Properties Panel to type exact values.
+Double-click the pitch, sample BPM, or PaulStretch factor fields in the Properties Panel to type exact values.
 
 ---
 
@@ -230,7 +240,7 @@ The velocity lane is resizable — drag its top border to give yourself more or 
 3. Double-click the MIDI clip to enter the piano roll and write notes for the instrument.
 4. To open the plugin's native GUI, right-click the instrument in the **Layers** panel and choose **Open**.
 
-When you select an instrument or its MIDI clip, the **Properties Panel** on the right shows the instrument's volume, pan, and effect chain — the same controls available for audio clips.
+When you select an instrument or its MIDI clip, the **Properties Panel** on the right shows the instrument's channel strip — volume fader, pan knob, RMS level meter, solo/mute buttons, and effect chain slots. These are the same controls available for audio clips. Changes to volume and pan are heard in real time during playback.
 
 ### Effect Regions
 
@@ -344,6 +354,8 @@ Input monitoring works independently of recording — you can monitor without re
 5. A new audio clip is created on the canvas from your recording.
 
 Recordings are captured at 48 kHz in stereo.
+
+**Recording takes:** If you have an audio clip selected when you start recording, the new recording becomes a **take** on that clip instead of a separate clip. See [Takes & Comping](#takes--comping) for details.
 
 ---
 
@@ -477,6 +489,75 @@ Open Settings with `⌘,` (Cmd+Comma).
 
 ---
 
+## Groups
+
+### Creating Groups
+
+Select one or more clips (audio, MIDI, instruments, text notes) and press `⌘G` to group them. The group appears as a container around the selected items with its own name and controls.
+
+- **Ungroup** — Select a group and press `⇧⌘G` to dissolve it. Members remain on the canvas.
+
+### Group Properties
+
+When a group is selected, the **Properties Panel** shows:
+
+- **Group name** and member count
+- **Volume fader** — Controls the group's mix level. All members are routed through the group bus.
+- **Pan knob** — Sets the group's stereo position.
+- **Effect chain** — Add plugins that process the combined output of all group members.
+- **Solo / Mute** — Solo or mute the entire group at once.
+
+> **Tip:** Groups act as a mix bus — use them to apply shared effects (like reverb or compression) to a set of clips, or to control their combined volume with a single fader.
+
+---
+
+## Session Collaboration
+
+Layers supports real-time collaboration. Multiple people can work on the same project simultaneously.
+
+### Sharing a Session
+
+1. Open the command palette (`⌘K`) and choose **Share Session**.
+2. A session code is generated and copied to your clipboard.
+3. Your project state and audio are uploaded in the background — a toast shows upload progress.
+4. Share the code with collaborators.
+
+### Joining a Session
+
+1. Open the command palette (`⌘K`) and choose **Join Session**.
+2. Paste the session code and press `Enter`.
+3. The project downloads in the background and loads automatically.
+
+Once connected, you will see:
+
+- **Remote cursors** — Other users' cursor positions on the canvas.
+- **Live edits** — Changes sync in real time (moves, volume/pan changes, new clips, etc.).
+- **Playback sync** — Follow another user's play/stop state.
+
+If the connection drops, Layers automatically attempts to reconnect with exponential backoff.
+
+### Disconnecting
+
+Open the command palette and choose **Disconnect Session** to leave the collaborative session and return to local-only editing.
+
+---
+
+## Takes & Comping
+
+Takes let you record multiple versions of a part on the same clip and switch between them.
+
+1. **Select an audio clip** on the canvas.
+2. **Start recording** — The new recording becomes a take on the selected clip instead of a standalone clip.
+3. **Stop recording** — The take is added below the original.
+
+**Switching takes:** Click on a take lane to make it the active take. The active take is the one that plays back.
+
+**Expanding / collapsing takes:** The take lanes appear expanded after recording. They collapse when deselected, showing only the active take.
+
+All takes share the same horizontal position as the parent clip. Each take is a complete, independent recording that you can audition by clicking on it.
+
+---
+
 ## Keyboard Shortcuts
 
 ### General
@@ -522,10 +603,12 @@ Open Settings with `⌘,` (Cmd+Comma).
 | `⌘[` | Move selected layer up |
 | `⌘]` | Move selected layer down |
 
-### Audio Clips
+### Canvas & Clips
 
 | Shortcut | Action |
 |---|---|
+| `⌘G` | Create group from selection |
+| `⇧⌘G` | Ungroup selected group |
 | `⌘E` | Split clip at playhead |
 | `⌘L` | Add loop region to clip |
 | `⌘R` | Rename selected clip or effect region |
@@ -566,7 +649,6 @@ Open Settings with `⌘,` (Cmd+Comma).
 | Action | What it does |
 |---|---|
 | Click on clip | Select it (deselects others) |
-| `Shift`+click | Add clip to selection |
 | Drag clip | Move selected clips |
 | `Alt`+drag clip | Duplicate and move |
 | Drag clip edge | Resize (trim) clip |

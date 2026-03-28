@@ -14,7 +14,7 @@ pub use crate::grid::PIXELS_PER_SECOND;
 pub use crate::ui::waveform::AudioClipData;
 
 const DEFAULT_EFFECT_BLOCK_SIZE: usize = 512;
-const MONITOR_RING_CAPACITY: usize = 8192;
+const MONITOR_RING_CAPACITY: usize = 2048;
 
 // ---------------------------------------------------------------------------
 // Lock-free SPSC ring buffer for input monitoring
@@ -508,12 +508,16 @@ impl AudioEngine {
                 None => device.default_output_config().ok()?,
             }
         };
-        let config: cpal::StreamConfig = supported.into();
+        let config = cpal::StreamConfig {
+            channels: supported.channels(),
+            sample_rate: supported.sample_rate(),
+            buffer_size: cpal::BufferSize::Fixed(effect_block_size as u32),
+        };
 
         let sample_rate = config.sample_rate.0;
         let channels = config.channels as usize;
 
-        println!("  Audio engine: {} Hz, {} channels", sample_rate, channels);
+        println!("  Audio engine: {} Hz, {} channels, buffer={}", sample_rate, channels, effect_block_size);
 
         let playing = Arc::new(AtomicBool::new(false));
         let position_bits = Arc::new(AtomicU64::new(0.0f64.to_bits()));
@@ -607,6 +611,7 @@ impl AudioEngine {
 
         let mut entity_rms_local: HashMap<EntityId, f64> = HashMap::new();
         let mut mon_debug_counter: u32 = 0;
+        let mon_log_interval: u32 = ((sr as u32) / (effect_block_size as u32)).max(1);
         let mut was_playing = false;
         let mut met_phase: f64 = 0.0;
         let mut met_samples_left: u32 = 0;
@@ -1354,13 +1359,12 @@ impl AudioEngine {
                     // Uses jitter buffering to handle unsynchronized input/output clocks
                     // (e.g. USB mic input vs built-in output — separate hardware clocks).
                     if mon_en.load(Ordering::Relaxed) {
-                        // Wait for input stream to accumulate enough data before
-                        // consuming.  Input hardware takes time to start producing
-                        // samples after the stream is opened — consuming too early
-                        // drains the ring buffer and causes clicks.
+                        // Wait for input stream to accumulate a small cushion before
+                        // consuming.  Threshold is 2x the callback buffer size — just
+                        // enough to absorb one callback of scheduling jitter.
                         if !mon_warm.load(Ordering::Relaxed) {
                             let avail = mon_ring_c.available();
-                            if avail >= MONITOR_RING_CAPACITY / 4 {
+                            if avail >= effect_block_size * 2 {
                                 mon_warm.store(true, Ordering::Relaxed);
                             }
                         }
@@ -1371,23 +1375,33 @@ impl AudioEngine {
 
                         let base_ratio = in_sr / out_sr;
 
-                        // Adaptive resampling: adjust the sample-rate ratio based on
-                        // ring buffer fill level to smoothly compensate for clock drift
-                        // between USB input and built-in output devices.  When the ring
-                        // fills up (input faster) we consume slightly more; when it
-                        // empties (output faster) we consume slightly less.  This avoids
-                        // hard skips/drops that cause audible clicks.
+                        // Adaptive resampling: adjust ratio based on ring fill to
+                        // compensate for clock drift between input/output devices.
                         let avail = mon_ring_c.available();
                         let ring_cap = MONITOR_RING_CAPACITY as f64;
-                        let target_fill = ring_cap * 0.5;
+                        let target_fill = effect_block_size as f64 * 1.5;
                         let fill_error = (avail as f64 - target_fill) / ring_cap;
-                        let ratio = base_ratio * (1.0 + 0.005 * fill_error);
+                        let ratio = (base_ratio * (1.0 + 0.03 * fill_error))
+                            .clamp(base_ratio * 0.95, base_ratio * 1.05);
 
-                        // Safety net: hard skip only if ring is nearly full (>90%)
-                        // to prevent wrap-around corruption.
-                        if avail > (ring_cap as usize * 9 / 10) {
-                            let target = ring_cap as usize / 2;
+                        // Safety net: hard skip when ring is >75% full.
+                        let did_skip = if avail > (MONITOR_RING_CAPACITY * 3 / 4) {
+                            let target = (effect_block_size as f64 * 1.5) as usize;
                             mon_ring_c.skip(avail - target);
+                            true
+                        } else {
+                            false
+                        };
+
+                        mon_debug_counter += 1;
+                        if mon_debug_counter % mon_log_interval == 0 {
+                            eprintln!(
+                                "[monitor] fill={}/{} target={} ratio={:.6} skip={}",
+                                avail, MONITOR_RING_CAPACITY,
+                                (effect_block_size as f64 * 1.5) as usize,
+                                ratio,
+                                if did_skip { "YES" } else { "no" }
+                            );
                         }
 
                         let in_frames_needed = ((frames as f64) * ratio).ceil() as usize;
@@ -1396,15 +1410,13 @@ impl AudioEngine {
                         let got = mon_ring_c.pop(&mut mon_raw[..pop_len]);
                         let in_frames_got = got / in_ch.max(1);
 
-                        // Deinterleave input into L/R
+                        // Mono-duplicate channel 0 to both L/R.  Most mics are
+                        // mono; even "stereo" USB mics often have ch1 silent.
+                        // Pan control handles stereo placement.
                         for j in 0..in_frames_got {
-                            if in_ch >= 2 {
-                                mon_fx_l[j] = mon_raw[j * in_ch];
-                                mon_fx_r[j] = mon_raw[j * in_ch + 1];
-                            } else {
-                                mon_fx_l[j] = mon_raw[j];
-                                mon_fx_r[j] = mon_raw[j];
-                            }
+                            let s = mon_raw[j * in_ch];
+                            mon_fx_l[j] = s;
+                            mon_fx_r[j] = s;
                         }
 
                         // Resample from input rate to output rate via linear interpolation
@@ -1428,16 +1440,29 @@ impl AudioEngine {
                             }
                         }
 
-                        // Underrun recovery: fade last valid sample to zero over
-                        // remaining frames to avoid hard silence discontinuities.
+                        // Underrun recovery: hold last sample for tiny gaps,
+                        // quadratic fade for larger ones.
                         if mon_out_frames > 0 && mon_out_frames < frames {
                             let last_l = mon_resampled_l[mon_out_frames - 1];
                             let last_r = mon_resampled_r[mon_out_frames - 1];
-                            let gap = (frames - mon_out_frames) as f32;
-                            for i in mon_out_frames..frames {
-                                let fade = 1.0 - ((i - mon_out_frames) as f32 / gap);
-                                mon_resampled_l[i] = last_l * fade;
-                                mon_resampled_r[i] = last_r * fade;
+                            let gap = frames - mon_out_frames;
+                            if gap <= 4 {
+                                for i in mon_out_frames..frames {
+                                    mon_resampled_l[i] = last_l;
+                                    mon_resampled_r[i] = last_r;
+                                }
+                            } else {
+                                let fade_len = gap.min(64);
+                                for i in 0..fade_len {
+                                    let t = 1.0 - (i as f32 / fade_len as f32);
+                                    let t = t * t;
+                                    mon_resampled_l[mon_out_frames + i] = last_l * t;
+                                    mon_resampled_r[mon_out_frames + i] = last_r * t;
+                                }
+                                for i in (mon_out_frames + fade_len)..frames {
+                                    mon_resampled_l[i] = 0.0;
+                                    mon_resampled_r[i] = 0.0;
+                                }
                             }
                             mon_out_frames = frames;
                         }
@@ -2006,6 +2031,8 @@ pub struct AudioRecorder {
     monitor_input_sample_rate: Option<Arc<AtomicU64>>,
     /// Preferred device name; `None` means use the system default.
     device_name: Option<String>,
+    /// Buffer size hint for the input stream (frames per callback).
+    buffer_size: u32,
 }
 
 // ---------------------------------------------------------------------------
@@ -2186,12 +2213,12 @@ fn windows_check_microphone_permission() -> Result<(), String> {
 
 impl AudioRecorder {
     pub fn new() -> Option<Self> {
-        Self::new_with_device(None)
+        Self::new_with_device(None, 512)
     }
 
     /// Create a recorder targeting `device_name` (falls back to system default
     /// when `device_name` is `None` or `"No Device"`).
-    pub fn new_with_device(device_name: Option<&str>) -> Option<Self> {
+    pub fn new_with_device(device_name: Option<&str>, buffer_size: u32) -> Option<Self> {
         let host = cpal::default_host();
         let device = match device_name {
             Some(name) if name != "No Device" => {
@@ -2221,8 +2248,8 @@ impl AudioRecorder {
         let sample_rate = config.sample_rate.0;
         let channels = config.channels as usize;
         println!(
-            "  Audio recorder: {} Hz, {} channels",
-            sample_rate, channels
+            "  Audio recorder: {} Hz, {} channels, buffer={}",
+            sample_rate, channels, buffer_size
         );
 
         Some(Self {
@@ -2236,6 +2263,7 @@ impl AudioRecorder {
             monitor_input_channels: None,
             monitor_input_sample_rate: None,
             device_name: device_name.map(|s| s.to_string()),
+            buffer_size,
         })
     }
 
@@ -2314,7 +2342,11 @@ impl AudioRecorder {
                     .map_err(|e| format!("Could not read microphone config: {e}"))?,
             }
         };
-        let config: cpal::StreamConfig = supported.into();
+        let config = cpal::StreamConfig {
+            channels: supported.channels(),
+            sample_rate: supported.sample_rate(),
+            buffer_size: cpal::BufferSize::Fixed(self.buffer_size),
+        };
         self.sample_rate = config.sample_rate.0;
         let device_channels = config.channels as usize;
         // We only use the first 1–2 channels regardless of how many the

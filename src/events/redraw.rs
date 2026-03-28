@@ -7,8 +7,14 @@ impl App {
         self.update_recording_waveform();
         self.poll_pending_audio_loads();
         self.poll_export_progress();
-        if let Some(sw) = &mut self.share_window {
+        let share_needs_redraw = if let Some(sw) = &mut self.share_window {
             sw.tick(1.0 / 60.0);
+            sw.id_input.tick_cursor_blink()
+        } else {
+            false
+        };
+        if share_needs_redraw {
+            self.request_redraw();
         }
 
         // Keep redrawing while sample preview is playing (animates playhead)

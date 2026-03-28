@@ -77,8 +77,8 @@ pub enum Operation {
     UpdateTextNote { id: EntityId, before: TextNote, after: TextNote },
 
     // --- Group ---
-    CreateGroup { id: EntityId, data: Group },
-    DeleteGroup { id: EntityId, data: Group },
+    CreateGroup { id: EntityId, data: Group, #[serde(default)] was_soloed: bool, #[serde(default)] was_monitoring: bool },
+    DeleteGroup { id: EntityId, data: Group, #[serde(default)] was_soloed: bool, #[serde(default)] was_monitoring: bool },
     UpdateGroup { id: EntityId, before: Group, after: Group },
 
     // --- EffectChain ---
@@ -210,8 +210,8 @@ impl Operation {
             Operation::UpdateTextNote { id, before, after } => Operation::UpdateTextNote { id: *id, before: after.clone(), after: before.clone() },
 
             // Groups
-            Operation::CreateGroup { id, data } => Operation::DeleteGroup { id: *id, data: data.clone() },
-            Operation::DeleteGroup { id, data } => Operation::CreateGroup { id: *id, data: data.clone() },
+            Operation::CreateGroup { id, data, was_soloed, was_monitoring } => Operation::DeleteGroup { id: *id, data: data.clone(), was_soloed: *was_soloed, was_monitoring: *was_monitoring },
+            Operation::DeleteGroup { id, data, was_soloed, was_monitoring } => Operation::CreateGroup { id: *id, data: data.clone(), was_soloed: *was_soloed, was_monitoring: *was_monitoring },
             Operation::UpdateGroup { id, before, after } => Operation::UpdateGroup { id: *id, before: after.clone(), after: before.clone() },
 
             // EffectChains
@@ -498,10 +498,18 @@ impl Operation {
             }
 
             // --- Group ---
-            Operation::CreateGroup { id, data } => {
+            Operation::CreateGroup { id, data, was_soloed, was_monitoring } => {
                 app.groups.insert(*id, data.clone());
+                if *was_soloed {
+                    app.solo_ids.insert(*id);
+                }
+                if *was_monitoring {
+                    app.monitoring_group_id = Some(*id);
+                }
             }
             Operation::DeleteGroup { id, .. } => {
+                app.cleanup_group_monitoring(*id);
+                app.solo_ids.remove(id);
                 app.groups.shift_remove(id);
             }
             Operation::UpdateGroup { id, after, .. } => {
@@ -782,6 +790,24 @@ impl App {
         }
         self.op_redo_stack.clear();
         self.mark_dirty();
+
+        // Track waveform changes for delta remote sync
+        Self::collect_dirty_waveform_ids(&self.op_undo_stack.last().unwrap().op, &mut self.remote_dirty_waveforms);
+    }
+
+    /// Collect waveform IDs affected by an operation into the dirty set.
+    fn collect_dirty_waveform_ids(op: &Operation, dirty: &mut std::collections::HashSet<EntityId>) {
+        match op {
+            Operation::CreateWaveform { id, .. }
+            | Operation::DeleteWaveform { id, .. }
+            | Operation::UpdateWaveform { id, .. } => { dirty.insert(*id); }
+            Operation::Batch(ops) => {
+                for inner in ops {
+                    Self::collect_dirty_waveform_ids(inner, dirty);
+                }
+            }
+            _ => {}
+        }
     }
 
     /// Undo the most recent operation (op-based).
@@ -800,6 +826,17 @@ impl App {
             } else {
                 self.selected.clear();
             }
+            // Clean up monitoring/solo if the operation removed a group
+            if let Some(mon_id) = self.monitoring_group_id {
+                if !self.groups.contains_key(&mon_id) {
+                    self.cleanup_group_monitoring(mon_id);
+                }
+            }
+            self.solo_ids.retain(|id| {
+                self.groups.contains_key(id)
+                    || self.waveforms.contains_key(id)
+                    || self.instruments.contains_key(id)
+            });
             self.update_right_window();
             self.mark_dirty();
             self.sync_audio_clips();
@@ -819,6 +856,17 @@ impl App {
             } else {
                 self.selected.clear();
             }
+            // Clean up monitoring/solo if the operation removed a group
+            if let Some(mon_id) = self.monitoring_group_id {
+                if !self.groups.contains_key(&mon_id) {
+                    self.cleanup_group_monitoring(mon_id);
+                }
+            }
+            self.solo_ids.retain(|id| {
+                self.groups.contains_key(id)
+                    || self.waveforms.contains_key(id)
+                    || self.instruments.contains_key(id)
+            });
             self.update_right_window();
             self.mark_dirty();
             self.sync_audio_clips();
