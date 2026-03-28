@@ -833,10 +833,10 @@ impl AudioEngine {
                                         let il_mul = (2.0 * (1.0 - ip)).min(1.0) * iv;
                                         let ir_mul = (2.0 * ip).min(1.0) * iv;
 
-                                        // Route: grouped instruments go to per-bus accumulator when
-                                        // playing (group FX applied later in Pass 4); otherwise dry_mix.
-                                        let route_to_bus = is_playing
-                                            && region.group_bus_index.filter(|&i| i < num_group_buses).is_some();
+                                        // Route: grouped instruments go to per-bus accumulator
+                                        // (group FX applied later in Pass 4); otherwise dry_mix.
+                                        let route_to_bus =
+                                            region.group_bus_index.filter(|&i| i < num_group_buses).is_some();
                                         if route_to_bus {
                                             let gbi = region.group_bus_index.unwrap();
                                             let base = gbi * frames + offset;
@@ -1050,8 +1050,11 @@ impl AudioEngine {
                         }
                     }
 
+                    } // end if is_playing (clips + chain effects)
+
                     // Pass 3: grouped clips → optional clip FX → per-bus buffers
                     // Pass 4: group FX on each bus (topological order) → parent bus or dry_mix
+                    // (runs even when stopped so instrument keyboard preview goes through group FX)
                     if let Ok(buses_guard) = gb.try_lock() {
                         let num_buses = buses_guard.len();
                         if num_buses > 0 {
@@ -1059,7 +1062,8 @@ impl AudioEngine {
                             let mut all_bus_l: Vec<Vec<f32>> = (0..num_buses).map(|_| vec![0.0f32; frames]).collect();
                             let mut all_bus_r: Vec<Vec<f32>> = (0..num_buses).map(|_| vec![0.0f32; frames]).collect();
 
-                            // Pass 3: accumulate clips into their bus buffers
+                            // Pass 3: accumulate clips into their bus buffers (only during playback)
+                            if is_playing {
                             for (bus_idx, _bus) in buses_guard.iter().enumerate() {
                                 for (ci, clip) in clips_ref.iter().enumerate() {
                                     if clip.group_bus_index != Some(bus_idx) {
@@ -1118,14 +1122,15 @@ impl AudioEngine {
                                         clip_sum_sq[ci] += csq;
                                     }
                                 }
+                            }
+                            } // end if is_playing (Pass 3 clip accumulation)
 
-                                // Add grouped instrument output to the bus
-                                if bus_idx < num_group_buses {
-                                    let base = bus_idx * frames;
-                                    for j in 0..frames {
-                                        all_bus_l[bus_idx][j] += inst_per_bus_l[base + j];
-                                        all_bus_r[bus_idx][j] += inst_per_bus_r[base + j];
-                                    }
+                            // Add grouped instrument output to buses (always, for keyboard preview)
+                            for bus_idx in 0..num_group_buses.min(num_buses) {
+                                let base = bus_idx * frames;
+                                for j in 0..frames {
+                                    all_bus_l[bus_idx][j] += inst_per_bus_l[base + j];
+                                    all_bus_r[bus_idx][j] += inst_per_bus_r[base + j];
                                 }
                             }
 
@@ -1217,7 +1222,8 @@ impl AudioEngine {
                         }
                     }
 
-                    // Process through effect regions if any are active
+                    // Process through effect regions if any are active (only during playback)
+                    if is_playing {
                     if let Some(ref regions) = regions_guard {
                         if !regions.is_empty() {
                             for region in regions.iter() {
@@ -1354,7 +1360,7 @@ impl AudioEngine {
                         }
                     }
 
-                    } // end if is_playing (clips + effects)
+                    } // end if is_playing (effect regions)
 
                     // Metronome click synthesis
                     if is_playing && met_en.load(Ordering::Relaxed) {

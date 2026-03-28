@@ -469,7 +469,7 @@ impl App {
         });
     }
 
-    pub(crate) fn add_instrument(&mut self, plugin_id: &str, plugin_name: &str) {
+    pub(crate) fn add_instrument(&mut self, plugin_id: &str, plugin_name: &str, target_group: Option<EntityId>) {
         self.ensure_plugins_scanned();
 
         let ppb = grid::pixels_per_beat(self.bpm);
@@ -477,9 +477,16 @@ impl App {
         let clip_w = ppb * beats_per_bar * midi::MIDI_CLIP_DEFAULT_BARS as f32;
         let clip_h = midi::MIDI_CLIP_DEFAULT_HEIGHT;
 
-        let (sw, sh, _) = self.screen_info();
-        let center = self.camera.screen_to_world([sw * 0.5, sh * 0.5]);
-        let clip_pos = [center[0] - clip_w * 0.5, center[1] - clip_h * 0.5];
+        let clip_pos = if target_group.is_some() {
+            // When dropping onto a group, place at mouse position
+            let world = self.camera.screen_to_world(self.mouse_pos);
+            let snap_x = crate::snap_to_grid(world[0], &self.settings, self.camera.zoom, self.bpm);
+            [snap_x, world[1] - clip_h * 0.5]
+        } else {
+            let (sw, sh, _) = self.screen_info();
+            let center = self.camera.screen_to_world([sw * 0.5, sh * 0.5]);
+            [center[0] - clip_w * 0.5, center[1] - clip_h * 0.5]
+        };
 
         let plugin_path = self
             .plugin_registry
@@ -533,8 +540,8 @@ impl App {
         let clip_id = new_id();
         self.midi_clips.insert(clip_id, clip.clone());
 
-        // Add instrument to the active monitoring group (if any)
-        let group_update_op = if let Some(group_id) = self.monitoring_group_id {
+        // Add instrument to drop target group, or the active monitoring group
+        let group_update_op = if let Some(group_id) = target_group.or(self.monitoring_group_id) {
             let before = self.groups.get(&group_id).cloned();
             if let Some(before) = before {
                 self.groups.get_mut(&group_id).unwrap().member_ids.push(inst_id);

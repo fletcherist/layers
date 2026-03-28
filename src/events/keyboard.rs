@@ -1173,7 +1173,7 @@ impl App {
                             if let Some((_plugin_id, _plugin_name)) = plugin_info {
                                 #[cfg(feature = "native")]
                                 if _is_instrument {
-                                    self.add_instrument(&_plugin_id, &_plugin_name);
+                                    self.add_instrument(&_plugin_id, &_plugin_name, None);
                                 } else {
                                     self.add_plugin_to_selected_effect_region(&_plugin_id, &_plugin_name);
                                 }
@@ -1236,7 +1236,7 @@ impl App {
                             #[cfg(feature = "native")]
                             {
                                 if _is_instrument {
-                                    self.add_instrument(&_plugin_id, &_plugin_name);
+                                    self.add_instrument(&_plugin_id, &_plugin_name, None);
                                 } else {
                                     self.add_plugin_to_selected_effect_region(&_plugin_id, &_plugin_name);
                                 }

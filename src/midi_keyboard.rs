@@ -20,11 +20,14 @@ pub fn piano_key_midi_before_octave(physical: &PhysicalKey) -> Option<u8> {
         KeyCode::KeyH => Some(69),
         KeyCode::KeyJ => Some(71),
         KeyCode::KeyK => Some(72),
+        KeyCode::KeyL => Some(74),
         KeyCode::KeyW => Some(61),
         KeyCode::KeyE => Some(63),
         KeyCode::KeyT => Some(66),
         KeyCode::KeyY => Some(68),
         KeyCode::KeyU => Some(70),
+        KeyCode::KeyI => Some(73),
+        KeyCode::KeyO => Some(75),
         _ => None,
     }
 }

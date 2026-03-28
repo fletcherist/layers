@@ -1175,14 +1175,6 @@ impl SampleBrowser {
             border_radius: 0.0,
         });
 
-        // --- Right edge separator ---
-        out.push(InstanceRaw {
-            position: [w - 1.0 * scale, 0.0],
-            size: [1.0 * scale, screen_h],
-            color: [1.0, 1.0, 1.0, 0.07],
-            border_radius: 0.0,
-        });
-
         // --- Content area items ---
         let visible_h = self.visible_height(screen_h, scale);
         let first_visible = (self.scroll_offset / item_h) as usize;
@@ -1559,6 +1551,14 @@ impl SampleBrowser {
                 border_radius: 2.0 * scale,
             });
         }
+
+        // --- Right edge separator (drawn last so it's on top of content) ---
+        out.push(InstanceRaw {
+            position: [w - 1.0 * scale, 0.0],
+            size: [1.0 * scale, screen_h],
+            color: [1.0, 1.0, 1.0, 0.07],
+            border_radius: 0.0,
+        });
 
         out
     }

@@ -310,6 +310,8 @@ struct App {
     recording_take_parent_id: Option<EntityId>,
     /// Which group has monitoring enabled (mic input routed through group's FX chain).
     monitoring_group_id: Option<EntityId>,
+    /// Group under cursor during browser/plugin drag — used for drop-into-group.
+    drag_drop_target_group: Option<EntityId>,
     monitor_effect_chain_id: Option<EntityId>,
     monitor_volume: f32,
     monitor_pan: f32,
@@ -554,6 +556,7 @@ impl App {
             recording_waveform_id: None,
             recording_take_parent_id: None,
             monitoring_group_id: None,
+            drag_drop_target_group: None,
             monitor_effect_chain_id: None,
             monitor_volume: 1.0,
             monitor_pan: 0.5,
@@ -1384,6 +1387,7 @@ impl App {
             recording_waveform_id: None,
             recording_take_parent_id: None,
             monitoring_group_id: None,
+            drag_drop_target_group: None,
             monitor_effect_chain_id: None,
             monitor_volume: 1.0,
             monitor_pan: 0.5,
@@ -2000,6 +2004,22 @@ impl App {
         }
     }
 
+    /// Find the smallest group whose bounds contain the current mouse world position.
+    /// Used during browser/plugin drags to determine drop target.
+    fn find_drop_target_group(&self) -> Option<EntityId> {
+        let world = self.camera.screen_to_world(self.mouse_pos);
+        let mut best: Option<(EntityId, f32)> = None;
+        for (&id, group) in self.groups.iter() {
+            if point_in_rect(world, group.position, group.size) {
+                let area = group.size[0] * group.size[1];
+                if best.is_none() || area < best.unwrap().1 {
+                    best = Some((id, area));
+                }
+            }
+        }
+        best.map(|(id, _)| id)
+    }
+
     /// Recompute a group's bounding box from its member entities.
     pub(crate) fn update_group_bounds(&mut self, group_id: EntityId) {
         self.update_group_bounds_inner(group_id, &mut std::collections::HashSet::new());
@@ -2199,7 +2219,7 @@ impl App {
         self.right_window = None;
     }
 
-    /// Open the right window inspector for a specific waveform (used when adding effects).
+    /// Open the right window sample panel for a specific waveform (used when adding effects).
     pub(crate) fn open_right_window_for(&mut self, wf_id: EntityId) {
         if let Some(wf) = self.waveforms.get(&wf_id) {
             self.right_window = Some(ui::right_window::RightWindow {
@@ -2247,7 +2267,7 @@ impl App {
         }
     }
 
-    /// Open the right window inspector for an instrument.
+    /// Open the right window panel for an instrument.
     pub(crate) fn update_right_window_for_instrument(&mut self, inst_id: EntityId) {
         if let Some(inst) = self.instruments.get(&inst_id) {
             let (vol_entry, vol_fader_focused, pan_knob_focused) =
@@ -4016,7 +4036,7 @@ impl App {
     #[cfg(not(feature = "native"))]
     fn update_recording_waveform(&mut self) {}
     #[cfg(not(feature = "native"))]
-    fn drop_audio_from_browser(&mut self, _path: &std::path::Path) {}
+    fn drop_audio_from_browser(&mut self, _path: &std::path::Path) -> Option<EntityId> { None }
     #[cfg(not(feature = "native"))]
     fn load_browser_preview(&mut self, _path: &std::path::Path) {}
     #[cfg(not(feature = "native"))]
@@ -4786,14 +4806,14 @@ impl App {
 
     /// `poll_pending_audio_loads`.
     #[cfg(feature = "native")]
-    fn drop_audio_from_browser(&mut self, path: &std::path::Path) {
+    fn drop_audio_from_browser(&mut self, path: &std::path::Path) -> Option<EntityId> {
         let ext = path
             .extension()
             .map(|e| e.to_string_lossy().to_lowercase())
             .unwrap_or_default();
 
         if !AUDIO_EXTENSIONS.contains(&ext.as_str()) {
-            return;
+            return None;
         }
 
         let world = self.camera.screen_to_world(self.mouse_pos);
@@ -4947,6 +4967,8 @@ impl App {
                 });
             }
         });
+
+        Some(wf_id)
     }
 
     /// Called each frame to finalize any background audio loads.

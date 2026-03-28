@@ -53,6 +53,7 @@ pub(crate) struct RenderContext<'a> {
     pub(crate) hidden_take_children: &'a HashSet<EntityId>,
     pub(crate) solo_ids: &'a std::collections::HashSet<EntityId>,
     pub(crate) following_user: Option<crate::entity_id::EntityId>,
+    pub(crate) drag_drop_target_group: Option<crate::entity_id::EntityId>,
 }
 
 /// Returns true if an entity should appear dimmed on canvas due to solo/mute/disabled state.
@@ -468,11 +469,13 @@ pub(crate) fn build_instances(out: &mut Vec<InstanceRaw>, ctx: &RenderContext) {
         }
         let is_sel = ctx.selected.contains(&HitTarget::Group(id));
         let is_hov = ctx.hovered == Some(HitTarget::Group(id));
+        let is_drop_target = ctx.drag_drop_target_group == Some(id);
         out.extend(crate::group::build_group_instances(
             group,
             camera,
             is_hov,
             is_sel,
+            is_drop_target,
             &ctx.settings.theme,
         ));
         // Dim overlay for muted/non-soloed groups

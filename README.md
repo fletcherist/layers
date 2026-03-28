@@ -1,6 +1,6 @@
 # Layers
 
-![Version](https://img.shields.io/badge/version-0.2.13-green)
+![Version](https://img.shields.io/badge/version-0.2.18-green)
 ![Rust](https://img.shields.io/badge/built%20with-Rust-orange?logo=rust)
 ![License](https://img.shields.io/badge/license-Apache%202.0-blue)
 ![Status](https://img.shields.io/badge/status-alpha-red)

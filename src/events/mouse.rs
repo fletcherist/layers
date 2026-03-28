@@ -1460,7 +1460,7 @@ impl App {
                             self.command_palette = None;
                             #[cfg(feature = "native")]
                             if mode == PaletteMode::InstrumentPicker {
-                                self.add_instrument(&_plugin_id, &_plugin_name);
+                                self.add_instrument(&_plugin_id, &_plugin_name, None);
                             } else {
                                 self.add_plugin_to_selected_effect_region(&_plugin_id, &_plugin_name);
                             }
@@ -1515,7 +1515,7 @@ impl App {
                                 #[cfg(feature = "native")]
                                 {
                                     if is_instrument {
-                                        self.add_instrument(&unique_id, &name);
+                                        self.add_instrument(&unique_id, &name, None);
                                     } else {
                                         self.add_plugin_to_selected_effect_region(&unique_id, &name);
                                     }
@@ -1636,7 +1636,7 @@ impl App {
                                     if is_dbl && *is_instrument {
                                         let uid = unique_id.clone();
                                         let nm = entry.name.clone();
-                                        self.add_instrument(&uid, &nm);
+                                        self.add_instrument(&uid, &nm, None);
                                         return;
                                     }
                                     if is_dbl && !is_instrument {
@@ -3240,8 +3240,21 @@ impl App {
                         && self.sample_browser.contains(self.mouse_pos, sh, scale);
                     if !in_browser {
                         let path = path.clone();
-                        self.drop_audio_from_browser(&path);
+                        let target_group = self.drag_drop_target_group;
+                        let wf_id = self.drop_audio_from_browser(&path);
+                        if let (Some(wf_id), Some(group_id)) = (wf_id, target_group) {
+                            if let Some(before) = self.groups.get(&group_id).cloned() {
+                                self.groups.get_mut(&group_id).unwrap().member_ids.push(wf_id);
+                                self.update_group_bounds(group_id);
+                                let after = self.groups[&group_id].clone();
+                                self.push_op(crate::operations::Operation::UpdateGroup {
+                                    id: group_id, before, after,
+                                });
+                                self.editing_group = Some(group_id);
+                            }
+                        }
                     }
+                    self.drag_drop_target_group = None;
                     self.drag = DragState::None;
                     self.update_hover();
                     self.request_redraw();
@@ -3262,7 +3275,11 @@ impl App {
                         && self.sample_browser.contains(self.mouse_pos, sh, scale);
                     if !in_browser {
                         if is_instrument {
-                            self.add_instrument(&plugin_id, &plugin_name);
+                            let target_group = self.drag_drop_target_group;
+                            self.add_instrument(&plugin_id, &plugin_name, target_group);
+                            if let Some(group_id) = target_group {
+                                self.editing_group = Some(group_id);
+                            }
                         } else {
                             // Check if dropped on the right window panel → add to inspected target's chain
                             let rw_target = self.right_window.as_ref().map(|rw| rw.target);
@@ -3302,6 +3319,7 @@ impl App {
                             }
                         }
                     }
+                    self.drag_drop_target_group = None;
                     self.drag = DragState::None;
                     self.update_hover();
                     self.request_redraw();

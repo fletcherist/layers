@@ -49,7 +49,7 @@ fn make_waveform_sized(x: f32, y: f32, w: f32, h: f32) -> WaveformView {
 #[test]
 fn test_layer_tree_built_from_entities() {
     let mut app = App::new_headless();
-    app.add_instrument("test-synth", "TestSynth");
+    app.add_instrument("test-synth", "TestSynth", None);
 
     app.refresh_project_browser_entries();
     assert!(!app.layer_tree.is_empty());
@@ -63,7 +63,7 @@ fn test_layer_tree_built_from_entities() {
 #[test]
 fn test_midi_clip_nested_under_instrument() {
     let mut app = App::new_headless();
-    app.add_instrument("test-synth", "TestSynth");
+    app.add_instrument("test-synth", "TestSynth", None);
     app.refresh_project_browser_entries();
 
     assert_eq!(app.layer_tree.len(), 1);
@@ -76,7 +76,7 @@ fn test_midi_clip_nested_under_instrument() {
 #[test]
 fn test_layer_tree_sync_removes_stale() {
     let mut app = App::new_headless();
-    app.add_instrument("test-synth", "TestSynth");
+    app.add_instrument("test-synth", "TestSynth", None);
     let inst_id = app.instruments.keys().next().copied().unwrap();
     app.refresh_project_browser_entries();
     assert_eq!(app.layer_tree.len(), 1);
@@ -94,12 +94,12 @@ fn test_layer_tree_sync_removes_stale() {
 #[test]
 fn test_move_node_up_down() {
     let mut app = App::new_headless();
-    app.add_instrument("synth-a", "SynthA");
+    app.add_instrument("synth-a", "SynthA", None);
     let id_a = *app.instruments.keys().next().unwrap();
     app.selected.clear();
 
     // Add a second instrument
-    app.add_instrument("synth-b", "SynthB");
+    app.add_instrument("synth-b", "SynthB", None);
     let id_b = *app.instruments.keys().nth(1).unwrap();
     app.refresh_project_browser_entries();
 
@@ -126,7 +126,7 @@ fn test_move_node_up_down() {
 #[test]
 fn test_flatten_respects_expanded() {
     let mut app = App::new_headless();
-    app.add_instrument("test-synth", "TestSynth");
+    app.add_instrument("test-synth", "TestSynth", None);
     app.refresh_project_browser_entries();
 
     // Expanded by default — should see instrument + midi child
@@ -157,7 +157,7 @@ fn test_flatten_respects_expanded() {
 #[test]
 fn test_layer_tree_storage_roundtrip() {
     let mut app = App::new_headless();
-    app.add_instrument("test-synth", "TestSynth");
+    app.add_instrument("test-synth", "TestSynth", None);
     app.refresh_project_browser_entries();
 
     let stored = layers::tree_to_stored(&app.layer_tree);
@@ -171,7 +171,7 @@ fn test_layer_tree_storage_roundtrip() {
 #[test]
 fn test_midi_clip_has_instrument_id_after_add_instrument() {
     let mut app = App::new_headless();
-    app.add_instrument("test-synth", "TestSynth");
+    app.add_instrument("test-synth", "TestSynth", None);
 
     let mc = app.midi_clips.values().next().unwrap();
     let inst_id = app.instruments.keys().next().copied().unwrap();
@@ -204,7 +204,7 @@ fn test_flat_layer_row_color() {
 #[test]
 fn test_delete_instrument_cascades_midi_clips() {
     let mut app = App::new_headless();
-    app.add_instrument("test-synth", "TestSynth");
+    app.add_instrument("test-synth", "TestSynth", None);
     assert_eq!(app.instruments.len(), 1);
     assert_eq!(app.midi_clips.len(), 1);
 
@@ -218,7 +218,7 @@ fn test_delete_instrument_cascades_midi_clips() {
 #[test]
 fn test_delete_selected_instrument_removes_instrument_and_child_clip() {
     let mut app = App::new_headless();
-    app.add_instrument("test-synth", "TestSynth");
+    app.add_instrument("test-synth", "TestSynth", None);
     let inst_id = app.instruments.keys().next().copied().unwrap();
 
     app.selected = vec![HitTarget::Instrument(inst_id)];

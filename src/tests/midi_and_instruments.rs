@@ -105,7 +105,7 @@ fn test_add_instrument_one_step() {
     assert!(app.instruments.is_empty());
 
     // Single-step: add_instrument creates instrument + MIDI clip with plugin assigned
-    app.add_instrument("test-synth", "Test Synth");
+    app.add_instrument("test-synth", "Test Synth", None);
     assert_eq!(app.instruments.len(), 1);
     assert_eq!(app.midi_clips.len(), 1);
 
@@ -206,7 +206,7 @@ fn test_computer_keyboard_state_and_project_browser() {
     use crate::ui::browser::BrowserCategory;
 
     let mut app = App::new_headless();
-    app.add_instrument("test-synth", "TestSynth");
+    app.add_instrument("test-synth", "TestSynth", None);
     let inst_id = *app.instruments.keys().next().unwrap();
     let mc_id = *app.midi_clips.keys().next().unwrap();
 
@@ -240,7 +240,7 @@ fn test_computer_keyboard_state_and_project_browser() {
     app.sync_computer_keyboard_to_engine();
     assert_eq!(app.keyboard_instrument_id, Some(inst_id));
 
-    app.add_instrument("test-synth-2", "TestSynth2");
+    app.add_instrument("test-synth-2", "TestSynth2", None);
     // Close and re-open to trigger entry refresh
     app.execute_command(CommandAction::ToggleBrowser);
     app.execute_command(CommandAction::ToggleBrowser);
@@ -256,7 +256,7 @@ fn test_computer_keyboard_state_and_project_browser() {
 #[test]
 fn test_instrument_default_volume_pan() {
     let mut app = App::new_headless();
-    app.add_instrument("test-synth", "TestSynth");
+    app.add_instrument("test-synth", "TestSynth", None);
     assert_eq!(app.instruments.len(), 1);
     let inst = app.instruments.values().next().unwrap();
     assert!((inst.volume - 1.0).abs() < f32::EPSILON, "default volume should be 1.0");
@@ -268,7 +268,7 @@ fn test_instrument_default_volume_pan() {
 fn test_instrument_right_window_opens_on_instrument_click() {
     use crate::ui::right_window::RightWindowTarget;
     let mut app = App::new_headless();
-    app.add_instrument("test-synth", "TestSynth");
+    app.add_instrument("test-synth", "TestSynth", None);
     let inst_id = *app.instruments.keys().next().unwrap();
 
     // Open right window for instrument
@@ -284,7 +284,7 @@ fn test_instrument_right_window_opens_on_instrument_click() {
 fn test_midi_clip_selection_opens_instrument_right_window() {
     use crate::ui::right_window::RightWindowTarget;
     let mut app = App::new_headless();
-    app.add_instrument("test-synth", "TestSynth");
+    app.add_instrument("test-synth", "TestSynth", None);
     let inst_id = *app.instruments.keys().next().unwrap();
     let mc_id = *app.midi_clips.keys().next().unwrap();
 
@@ -301,7 +301,7 @@ fn test_midi_clip_selection_opens_instrument_right_window() {
 fn test_instrument_volume_undo_redo() {
     use crate::instruments::InstrumentSnapshot;
     let mut app = App::new_headless();
-    app.add_instrument("test-synth", "TestSynth");
+    app.add_instrument("test-synth", "TestSynth", None);
     let inst_id = *app.instruments.keys().next().unwrap();
 
     // Change volume via operation
@@ -331,9 +331,9 @@ fn test_instrument_selection_in_layers_panel() {
     let mut app = App::new_headless();
 
     // Add two instruments
-    app.add_instrument("synth-a", "SynthA");
+    app.add_instrument("synth-a", "SynthA", None);
     let inst_a = *app.instruments.keys().next().unwrap();
-    app.add_instrument("synth-b", "SynthB");
+    app.add_instrument("synth-b", "SynthB", None);
     let inst_b = *app.instruments.keys().last().unwrap();
 
     // Simulate clicking instrument A in layers panel
@@ -363,9 +363,9 @@ fn test_instrument_selection_in_layers_panel() {
 fn test_sync_keyboard_instrument_from_instrument_selection() {
     let mut app = App::new_headless();
 
-    app.add_instrument("synth-a", "SynthA");
+    app.add_instrument("synth-a", "SynthA", None);
     let inst_a = *app.instruments.keys().next().unwrap();
-    app.add_instrument("synth-b", "SynthB");
+    app.add_instrument("synth-b", "SynthB", None);
     let inst_b = *app.instruments.keys().last().unwrap();
 
     // Select instrument A directly (simulates clicking in layers panel)
@@ -398,9 +398,9 @@ fn test_sync_keyboard_instrument_from_instrument_selection() {
 #[test]
 fn test_toggle_instrument_keyboard_preview() {
     let mut app = App::new_headless();
-    app.add_instrument("synth-a", "SynthA");
+    app.add_instrument("synth-a", "SynthA", None);
     let inst_a = *app.instruments.keys().next().unwrap();
-    app.add_instrument("synth-b", "SynthB");
+    app.add_instrument("synth-b", "SynthB", None);
     let inst_b = *app.instruments.keys().last().unwrap();
 
     // After adding synth-b, keyboard should target it
@@ -427,7 +427,7 @@ fn test_toggle_instrument_keyboard_preview() {
 fn test_flatten_tree_shows_instrument_preview_target() {
     use crate::layers;
     let mut app = App::new_headless();
-    app.add_instrument("synth-a", "SynthA");
+    app.add_instrument("synth-a", "SynthA", None);
     let inst_id = *app.instruments.keys().next().unwrap();
     app.refresh_project_browser_entries();
 
@@ -454,7 +454,7 @@ fn test_flatten_tree_shows_instrument_preview_target() {
 fn test_add_instrument_arms_keyboard() {
     let mut app = App::new_headless();
     app.computer_keyboard_armed = false;
-    app.add_instrument("test-synth", "TestSynth");
+    app.add_instrument("test-synth", "TestSynth", None);
     let inst_id = *app.instruments.keys().next().unwrap();
     assert_eq!(app.keyboard_instrument_id, Some(inst_id));
     assert!(app.computer_keyboard_armed);
@@ -474,7 +474,7 @@ fn test_add_instrument_into_monitoring_group() {
     app.groups.insert(group_id, group);
     app.monitoring_group_id = Some(group_id);
 
-    app.add_instrument("test-synth", "TestSynth");
+    app.add_instrument("test-synth", "TestSynth", None);
 
     let inst_id = *app.instruments.keys().next().unwrap();
     let group = &app.groups[&group_id];
@@ -489,7 +489,7 @@ fn test_add_instrument_no_monitoring_group() {
     let mut app = App::new_headless();
     assert!(app.monitoring_group_id.is_none());
 
-    app.add_instrument("test-synth", "TestSynth");
+    app.add_instrument("test-synth", "TestSynth", None);
 
     assert_eq!(app.instruments.len(), 1);
     assert_eq!(app.midi_clips.len(), 1);
@@ -512,7 +512,7 @@ fn test_add_instrument_into_group_undo() {
     app.groups.insert(group_id, group);
     app.monitoring_group_id = Some(group_id);
 
-    app.add_instrument("test-synth", "TestSynth");
+    app.add_instrument("test-synth", "TestSynth", None);
     assert_eq!(app.groups[&group_id].member_ids.len(), 1);
 
     app.undo_op();

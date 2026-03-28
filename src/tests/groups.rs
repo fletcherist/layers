@@ -473,7 +473,7 @@ fn group_bounds_include_instrument_midi_clips() {
     let mut app = App::new_headless();
 
     // Add an instrument (creates a paired MIDI clip)
-    app.add_instrument("test-synth", "TestSynth");
+    app.add_instrument("test-synth", "TestSynth", None);
     let inst_id = *app.instruments.keys().next().unwrap();
     let mc_id = *app.midi_clips.keys().next().unwrap();
 
@@ -508,7 +508,7 @@ fn instrument_inside_group_shows_midi_clip_children_in_layer_tree() {
     let mut app = App::new_headless();
 
     // Add an instrument (creates a paired MIDI clip)
-    app.add_instrument("test-synth", "TestSynth");
+    app.add_instrument("test-synth", "TestSynth", None);
     let inst_id = *app.instruments.keys().next().unwrap();
     let mc_id = *app.midi_clips.keys().next().unwrap();
 
@@ -543,7 +543,7 @@ fn group_includes_instrument_when_selected() {
     let mut app = App::new_headless();
 
     // Add an instrument (creates a paired MIDI clip)
-    app.add_instrument("test-synth", "TestSynth");
+    app.add_instrument("test-synth", "TestSynth", None);
     let inst_id = *app.instruments.keys().next().unwrap();
     let mc_id = *app.midi_clips.keys().next().unwrap();
 
@@ -575,7 +575,7 @@ fn select_all_includes_instruments_and_midi_clips() {
     let mut app = App::new_headless();
 
     // Add an instrument (creates a paired MIDI clip)
-    app.add_instrument("test-synth", "TestSynth");
+    app.add_instrument("test-synth", "TestSynth", None);
     let inst_id = *app.instruments.keys().next().unwrap();
     let mc_id = *app.midi_clips.keys().next().unwrap();
 
@@ -596,7 +596,7 @@ fn ungroup_restores_instrument_to_selection() {
     let mut app = App::new_headless();
 
     // Add an instrument
-    app.add_instrument("test-synth", "TestSynth");
+    app.add_instrument("test-synth", "TestSynth", None);
     let inst_id = *app.instruments.keys().next().unwrap();
 
     // Add a waveform
@@ -625,7 +625,7 @@ fn marquee_selecting_midi_clip_auto_includes_instrument() {
     let mut app = App::new_headless();
 
     // Add an instrument (creates a paired MIDI clip)
-    app.add_instrument("test-synth", "TestSynth");
+    app.add_instrument("test-synth", "TestSynth", None);
     let inst_id = *app.instruments.keys().next().unwrap();
     let mc_id = *app.midi_clips.keys().next().unwrap();
 
@@ -649,7 +649,7 @@ fn marquee_selecting_midi_clip_auto_includes_instrument() {
 fn cmd_g_with_midi_clip_selected_groups_instrument() {
     let mut app = App::new_headless();
 
-    app.add_instrument("test-synth", "TestSynth");
+    app.add_instrument("test-synth", "TestSynth", None);
     let inst_id = *app.instruments.keys().next().unwrap();
     let mc_id = *app.midi_clips.keys().next().unwrap();
 
@@ -1343,4 +1343,78 @@ fn nested_group_layer_tree() {
     assert_eq!(child_node.kind, crate::layers::LayerNodeKind::Group);
     assert_eq!(child_node.children.len(), 1);
     assert_eq!(child_node.children[0].entity_id, wf1);
+}
+
+#[test]
+fn drop_audio_into_group_adds_member() {
+    let mut app = App::new_headless();
+
+    // Create a group with one waveform
+    let wf1 = new_id();
+    app.waveforms.insert(wf1, make_waveform(100.0, 100.0));
+    app.selected.push(HitTarget::Waveform(wf1));
+    app.execute_command(CommandAction::CreateGroup);
+    assert_eq!(app.groups.len(), 1);
+    let group_id = *app.groups.keys().next().unwrap();
+    assert_eq!(app.groups[&group_id].member_ids.len(), 1);
+
+    // Simulate dropping a new waveform into the group
+    let wf2 = new_id();
+    app.waveforms.insert(wf2, make_waveform(120.0, 120.0));
+    let before = app.groups[&group_id].clone();
+    app.groups.get_mut(&group_id).unwrap().member_ids.push(wf2);
+    app.update_group_bounds(group_id);
+    let after = app.groups[&group_id].clone();
+
+    assert_eq!(app.groups[&group_id].member_ids.len(), 2);
+    assert!(app.groups[&group_id].member_ids.contains(&wf1));
+    assert!(app.groups[&group_id].member_ids.contains(&wf2));
+}
+
+#[test]
+fn find_drop_target_group_picks_smallest() {
+    let mut app = App::new_headless();
+
+    // Create two nested groups — outer is bigger, inner is smaller
+    let outer_id = new_id();
+    let inner_id = new_id();
+    app.groups.insert(outer_id, crate::group::Group {
+        id: outer_id,
+        name: "Outer".to_string(),
+        position: [0.0, 0.0],
+        size: [400.0, 400.0],
+        member_ids: vec![inner_id],
+        effect_chain_id: None,
+        volume: 1.0,
+        pan: 0.5,
+        disabled: false,
+    });
+    app.groups.insert(inner_id, crate::group::Group {
+        id: inner_id,
+        name: "Inner".to_string(),
+        position: [50.0, 50.0],
+        size: [100.0, 100.0],
+        member_ids: vec![],
+        effect_chain_id: None,
+        volume: 1.0,
+        pan: 0.5,
+        disabled: false,
+    });
+
+    // Default camera is at (-100, -50) with zoom 1.0
+    // screen_to_world(screen) = [screen[0] + cam.x, screen[1] + cam.y]
+    // So to hit world (75, 75) we need screen (175, 125)
+    app.mouse_pos = [175.0, 125.0];
+    let target = app.find_drop_target_group();
+    assert_eq!(target, Some(inner_id), "should pick the innermost (smallest) group");
+
+    // Position mouse outside inner but inside outer (world 10, 10 → screen 110, 60)
+    app.mouse_pos = [110.0, 60.0];
+    let target = app.find_drop_target_group();
+    assert_eq!(target, Some(outer_id), "should pick outer group when not inside inner");
+
+    // Position mouse outside both groups (world 500, 500 → screen 600, 550)
+    app.mouse_pos = [600.0, 550.0];
+    let target = app.find_drop_target_group();
+    assert_eq!(target, None, "should return None when not inside any group");
 }

@@ -506,11 +506,12 @@ impl App {
             return;
         }
 
-        // If dragging from browser or plugin, just request redraw for ghost
+        // If dragging from browser or plugin, compute drop target group and redraw
         if matches!(
             self.drag,
             DragState::DraggingFromBrowser { .. } | DragState::DraggingPlugin { .. }
         ) {
+            self.drag_drop_target_group = self.find_drop_target_group();
             self.request_redraw();
             return;
         }

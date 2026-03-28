@@ -1,3 +1,8 @@
+- feat: extend computer MIDI keyboard with L (D5), I (C#5), O (Eb5) keys (v0.2.18, 56.6k loc)
+- feat: drop audio/instrument from browser onto a group to add it inside, with accent border highlight on hover (v0.2.17, 56.7k loc)
+- fix: browser right edge border now renders on top of layer rows (v0.2.16, 56.6k loc)
+- fix: group FX (reverb etc.) now apply to instrument keyboard preview when playback is stopped (v0.2.15, 56.5k loc)
+- rename right panel header from INSPECTOR to SAMPLE for audio clips (v0.2.14, 56.5k loc)
 - 2026-03-28: feat: nested groups — groups inside groups with cascading volume/pan/effects, recursive solo/mute, Figma-style nesting (56.5k loc)
 - double-click instrument in browser to add it to canvas (55.8k loc)
 - ui: reduce left padding for plugin list items in browser (55.8k loc)

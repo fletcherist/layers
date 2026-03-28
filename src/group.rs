@@ -188,13 +188,16 @@ pub(crate) fn build_group_instances(
     camera: &Camera,
     is_hovered: bool,
     is_selected: bool,
+    is_drop_target: bool,
     theme: &crate::theme::RuntimeTheme,
 ) -> Vec<InstanceRaw> {
     let mut out = Vec::new();
 
     // Subtle fill
     let mut fill = theme.component_fill_color;
-    if is_hovered || is_selected {
+    if is_drop_target {
+        fill[3] = (fill[3] + 0.08).min(1.0);
+    } else if is_hovered || is_selected {
         fill[3] = (fill[3] + 0.03).min(1.0);
     }
     out.push(InstanceRaw {
@@ -205,8 +208,12 @@ pub(crate) fn build_group_instances(
     });
 
     // Border — skip when selected since the global selection overlay draws
-    // its own thick border + corner handles.
-    if !is_selected {
+    // its own thick border + corner handles (unless it's a drop target).
+    if is_drop_target {
+        let bw = 2.0 / camera.zoom;
+        let bc = theme.accent;
+        crate::push_border(&mut out, group.position, group.size, bw, bc);
+    } else if !is_selected {
         let bw = 1.0 / camera.zoom;
         let mut bc = theme.component_border_color;
         if is_hovered {

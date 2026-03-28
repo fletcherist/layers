@@ -1024,7 +1024,7 @@ impl RightWindow {
         let val_line = 16.0 * scale;
         let rw_w = RIGHT_WINDOW_WIDTH * scale;
 
-        // "INSPECTOR" header label (with selection count for multi-selection)
+        // Right window header label (with selection count for multi-selection)
         let header_text = if self.is_master() {
             "MAIN".to_string()
         } else if self.is_monitor() {
@@ -1034,7 +1034,7 @@ impl RightWindow {
         } else if self.is_multi() {
             format!("{} CLIPS", self.selection_count())
         } else {
-            "INSPECTOR".to_string()
+            "SAMPLE".to_string()
         };
         out.push(TextEntry {
             text: header_text,

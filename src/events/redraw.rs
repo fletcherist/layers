@@ -116,6 +116,7 @@ impl App {
                     hidden_take_children: &hidden_take_children,
                     solo_ids: &self.solo_ids,
                     following_user: self.following_user,
+                    drag_drop_target_group: self.drag_drop_target_group,
                 };
                 build_instances(&mut self.cached_instances, &render_ctx);
                 build_waveform_vertices(&mut self.cached_wf_verts, &render_ctx);
