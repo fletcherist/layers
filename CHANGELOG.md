@@ -1,3 +1,4 @@
+- fix: recording group no longer has extra padding — uses same zero-padding bounds as Cmd+G grouping (54.5k loc)
 - refactor: unified TextInput component — all 6 text inputs (search, palette, session, rename, waveform, text notes) share one struct with cursor positioning, arrow keys, Cmd+V paste (54.5k loc)
 - fix: Join Session input — Cmd+V paste from system clipboard, cursor blink, Cmd+A/Cmd+Backspace (54.3k loc)
 - fix: share button pinned to exact top-right corner; hidden when right panel opens (54.2k loc)

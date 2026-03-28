@@ -3430,28 +3430,7 @@ impl App {
 
                     // Finalize recording group — recompute bounds to encompass all members
                     if let Some(group_id) = self.recording_group_id.take() {
-                        let padding = 10.0;
-                        if let Some(g) = self.groups.get(&group_id) {
-                            let member_ids = g.member_ids.clone();
-                            let mut min_x = f32::MAX;
-                            let mut min_y = f32::MAX;
-                            let mut max_x = f32::MIN;
-                            let mut max_y = f32::MIN;
-                            for mid in &member_ids {
-                                if let Some(wf) = self.waveforms.get(mid) {
-                                    min_x = min_x.min(wf.position[0]);
-                                    min_y = min_y.min(wf.position[1]);
-                                    max_x = max_x.max(wf.position[0] + wf.size[0]);
-                                    max_y = max_y.max(wf.position[1] + wf.size[1]);
-                                }
-                            }
-                            if min_x < f32::MAX {
-                                if let Some(g) = self.groups.get_mut(&group_id) {
-                                    g.position = [min_x - padding, min_y - padding];
-                                    g.size = [max_x - min_x + padding * 2.0, max_y - min_y + padding * 2.0];
-                                }
-                            }
-                        }
+                        self.update_group_bounds(group_id);
                     }
 
                     self.sync_audio_clips();
