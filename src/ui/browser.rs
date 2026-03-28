@@ -25,8 +25,6 @@ const SIDEBAR_SECTION_GAP: f32 = 18.0;
 const INDENT_PX: f32 = 16.0;
 const SCROLLBAR_WIDTH: f32 = 6.0;
 const COLLAPSED_WIDTH: f32 = 20.0;
-/// Width of the toggle `◄` button in the search bar row.
-const TOGGLE_BTN_SIZE: f32 = 20.0;
 /// Vertical gap between the last category item and the "Places" section header inside the sidebar.
 const PLACES_SECTION_GAP: f32 = 8.0;
 /// Height of the "Places" label row inside the sidebar.
@@ -667,22 +665,12 @@ impl SampleBrowser {
     /// - When collapsed: the entire 16px strip.
     pub fn hit_toggle_button(&self, pos: [f32; 2], scale: f32) -> bool {
         if self.visible {
-            let (bp, bs) = self.toggle_button_rect(scale);
-            pos[0] >= bp[0] && pos[0] <= bp[0] + bs[0]
-                && pos[1] >= bp[1] && pos[1] <= bp[1] + bs[1]
+            false
         } else {
             pos[0] >= 0.0 && pos[0] <= COLLAPSED_WIDTH * scale
         }
     }
 
-    /// Rect `([x, y], [w, h])` for the `◄` toggle button in the search bar row.
-    fn toggle_button_rect(&self, scale: f32) -> ([f32; 2], [f32; 2]) {
-        let margin = 6.0 * scale;
-        let row_y = HEADER_HEIGHT * scale;
-        let btn_sz = TOGGLE_BTN_SIZE * scale;
-        let y = row_y + (SEARCH_BAR_HEIGHT * scale - btn_sz) * 0.5;
-        ([margin, y], [btn_sz, btn_sz])
-    }
 
     pub fn set_width_from_screen(&mut self, screen_x: f32, scale: f32) {
         let w = (screen_x / scale).clamp(MIN_BROWSER_WIDTH, MAX_BROWSER_WIDTH);
@@ -700,8 +688,7 @@ impl SampleBrowser {
     fn clear_button_rect(&self, scale: f32) -> ([f32; 2], [f32; 2]) {
         let w = self.panel_width(scale);
         let margin = 6.0 * scale;
-        let toggle_offset = (TOGGLE_BTN_SIZE + 6.0) * scale;
-        let sb_x = margin + toggle_offset;
+        let sb_x = margin;
         let row_y = HEADER_HEIGHT * scale;
         let search_bar_h = SEARCH_BAR_HEIGHT * scale;
         let sb_y = row_y + margin;
@@ -764,7 +751,7 @@ impl SampleBrowser {
     pub fn hit_search_bar(&self, pos: [f32; 2], scale: f32) -> bool {
         let top = HEADER_HEIGHT * scale;
         let bottom = top + SEARCH_BAR_HEIGHT * scale;
-        let left = (6.0 + TOGGLE_BTN_SIZE + 6.0) * scale; // after toggle button
+        let left = 6.0 * scale;
         pos[1] >= top
             && pos[1] < bottom
             && pos[0] >= left
@@ -792,37 +779,27 @@ impl SampleBrowser {
         })
     }
 
-    /// Icon entry for the browser toggle button.
-    pub fn get_toggle_icon_entry(&self, theme: &crate::theme::RuntimeTheme, scale: f32, screen_h: f32) -> crate::gpu::IconEntry {
+    /// Icon entry for the browser toggle button (only shown when collapsed).
+    pub fn get_toggle_icon_entry(&self, theme: &crate::theme::RuntimeTheme, scale: f32, screen_h: f32) -> Option<crate::gpu::IconEntry> {
+        if self.visible {
+            return None;
+        }
         let icon_size = 14.0 * scale;
         let color = if self.toggle_hovered {
             crate::theme::RuntimeTheme::text_u8(theme.text_primary, 200)
         } else {
             crate::theme::RuntimeTheme::text_u8(theme.text_secondary, 130)
         };
-        if self.visible {
-            let (bp, bs) = self.toggle_button_rect(scale);
-            let x = bp[0] + (bs[0] - icon_size) * 0.5;
-            let y = bp[1] + (bs[1] - icon_size) * 0.5;
-            crate::gpu::IconEntry {
-                codepoint: crate::icons::CHEVRON_LEFT,
-                x,
-                y,
-                size: icon_size,
-                color,
-            }
-        } else {
-            let strip_w = COLLAPSED_WIDTH * scale;
-            let x = (strip_w - icon_size) * 0.5;
-            let y = (screen_h - icon_size) * 0.5;
-            crate::gpu::IconEntry {
-                codepoint: crate::icons::CHEVRON_RIGHT,
-                x,
-                y,
-                size: icon_size,
-                color,
-            }
-        }
+        let strip_w = COLLAPSED_WIDTH * scale;
+        let x = (strip_w - icon_size) * 0.5;
+        let y = (screen_h - icon_size) * 0.5;
+        Some(crate::gpu::IconEntry {
+            codepoint: crate::icons::CHEVRON_RIGHT,
+            x,
+            y,
+            size: icon_size,
+            color,
+        })
     }
 
     /// Icon entries for Places in the sidebar: a folder icon per place row + folder-add for "Add Folder…".
@@ -923,7 +900,7 @@ impl SampleBrowser {
     }
 
     pub fn update_hover(&mut self, pos: [f32; 2], screen_h: f32, scale: f32) {
-        self.toggle_hovered = self.hit_toggle_button(pos, scale);
+        self.toggle_hovered = if self.visible { false } else { self.hit_toggle_button(pos, scale) };
         if !self.visible {
             return;
         }
@@ -1063,20 +1040,8 @@ impl SampleBrowser {
                 color: [1.0, 1.0, 1.0, 0.07],
                 border_radius: 0.0,
             });
-            // Toggle button (◄) hover highlight
-            if self.toggle_hovered {
-                let (bp, bs) = self.toggle_button_rect(scale);
-                out.push(InstanceRaw {
-                    position: bp,
-                    size: bs,
-                    color: [1.0, 1.0, 1.0, 0.07],
-                    border_radius: 3.0 * scale,
-                });
-            }
             let margin = 6.0 * scale;
-            // Offset search bar right to make room for the toggle button
-            let toggle_offset = (TOGGLE_BTN_SIZE + 6.0) * scale;
-            let sb_x = margin + toggle_offset;
+            let sb_x = margin;
             let sb_y = row_y + margin;
             let sb_w_inner = w - sb_x - margin;
             let sb_h = search_bar_h - 2.0 * margin;
@@ -1648,8 +1613,7 @@ impl SampleBrowser {
         let search_bar_h = SEARCH_BAR_HEIGHT * scale;
         let row_y = header_h;
         let margin = 6.0 * scale;
-        let toggle_offset = (TOGGLE_BTN_SIZE + 6.0) * scale;
-        let sb_x = margin + toggle_offset;
+        let sb_x = margin;
         let sb_w_inner = w - sb_x - margin;
         let font_sz = 11.0 * scale;
         let line_h = 14.0 * scale;
@@ -1811,14 +1775,10 @@ impl SampleBrowser {
                     });
                 }
                 EntryKind::Plugin { is_instrument, .. } => {
-                    let text_x = cx + 22.0 * scale;
+                    let text_x = cx + 14.0 * scale;
                     let font_sz = 12.0 * scale;
                     let line_h = 16.0 * scale;
-                    let color = if *is_instrument {
-                        crate::theme::RuntimeTheme::text_u8(theme.text_primary, 230)
-                    } else {
-                        crate::theme::RuntimeTheme::text_u8(theme.text_secondary, 240)
-                    };
+                    let color = crate::theme::RuntimeTheme::text_u8(theme.text_primary, 230);
                     out.push(TextEntry {
                         text: entry.name.clone(),
                         x: text_x,

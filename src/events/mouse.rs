@@ -1633,6 +1633,12 @@ impl App {
                                     self.last_browser_click_time = now;
                                     self.last_browser_click_idx = Some(idx);
 
+                                    if is_dbl && *is_instrument {
+                                        let uid = unique_id.clone();
+                                        let nm = entry.name.clone();
+                                        self.add_instrument(&uid, &nm);
+                                        return;
+                                    }
                                     if is_dbl && !is_instrument {
                                         if let Some(HitTarget::Waveform(wf_id)) = self.selected.first().copied() {
                                             self.add_plugin_to_waveform_chain(wf_id, unique_id, &entry.name);

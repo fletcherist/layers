@@ -15,4 +15,5 @@ To count lines of code, run: `find src -name '*.rs' | xargs wc -l | tail -1`
 # Version Bump Rule
 
 After completing each task, increment the patch version in `Cargo.toml`. Only touch the third number (e.g. 0.2.1 → 0.2.2). The first two numbers are managed by the user.
+Also change a version at README.md version badge.
 

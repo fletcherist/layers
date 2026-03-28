@@ -1100,17 +1100,18 @@ impl Gpu {
             }
         }
 
-        // Browser toggle icon (≡ when visible, › when collapsed) and search clear icon
+        // Browser toggle icon (› when collapsed) and search clear icon
         if let Some(br) = sample_browser {
-            let ie = br.get_toggle_icon_entry(&settings.theme, scale, h);
-            let buf = shape_icon_entry(&mut self.font_system, &ie);
-            text_buffers.push(buf);
-            text_meta.push((
-                ie.x,
-                ie.y,
-                TextColor::rgba(ie.color[0], ie.color[1], ie.color[2], ie.color[3]),
-                full_bounds,
-            ));
+            if let Some(ie) = br.get_toggle_icon_entry(&settings.theme, scale, h) {
+                let buf = shape_icon_entry(&mut self.font_system, &ie);
+                text_buffers.push(buf);
+                text_meta.push((
+                    ie.x,
+                    ie.y,
+                    TextColor::rgba(ie.color[0], ie.color[1], ie.color[2], ie.color[3]),
+                    full_bounds,
+                ));
+            }
             if let Some(ie) = br.get_search_clear_icon_entry(&settings.theme, scale) {
                 let buf = shape_icon_entry(&mut self.font_system, &ie);
                 text_buffers.push(buf);

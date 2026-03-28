@@ -1,3 +1,7 @@
+- double-click instrument in browser to add it to canvas (55.8k loc)
+- ui: reduce left padding for plugin list items in browser (55.8k loc)
+- fix: crash on Escape when text input cursor out of bounds (55.8k loc)
+- fix: instruments and effects use same text color in browser list (55.7k loc)
 - fix: monitoring audio now routed through recording group's plugin chain (reverb, etc.) (55.8k loc)
 - remove sidebar collapse button from search bar — collapse only via Cmd+B or palette (55.7k loc)
 - fix: monitoring throttling on re-enable — input stream stays alive across toggles, only mixer flag changes (55.8k loc)

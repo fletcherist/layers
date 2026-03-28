@@ -254,10 +254,11 @@ impl TextInput {
 
     pub fn display_text(&self) -> String {
         if self.blink_visible {
+            let cursor = self.cursor.min(self.text.len());
             let mut result = String::with_capacity(self.text.len() + 1);
-            result.push_str(&self.text[..self.cursor]);
+            result.push_str(&self.text[..cursor]);
             result.push('|');
-            result.push_str(&self.text[self.cursor..]);
+            result.push_str(&self.text[cursor..]);
             result
         } else {
             self.text.clone()
