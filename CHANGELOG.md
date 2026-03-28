@@ -1,3 +1,4 @@
+- fix: properly tear down old monitoring stream before rebuilding audio infrastructure on settings change (55.8k loc)
 - fix: monitoring state now restored after changing buffer size, output device, or input device in settings (55.7k loc)
 - refactor: simplified monitoring — direct ring buffer→output, removed adaptive resampling/effects/warmup (55.7k loc)
 - 2026-03-28: refactor: unified clip overlap resolution — MIDI clips and audio clips now interact with each other (crop/split/disable) regardless of type (55.8k loc)

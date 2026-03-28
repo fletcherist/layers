@@ -551,6 +551,13 @@ impl App {
                                 // Reconnect recorder to the new engine's ring buffer/flags
                                 #[cfg(feature = "native")]
                                 {
+                                    // Stop old monitoring stream — its closure captures the
+                                    // old engine's ring/flag which are now orphaned.  Dropping
+                                    // the stream lets ensure_stream() create a fresh one that
+                                    // captures the new engine's arcs.
+                                    if let Some(ref mut rec) = self.recorder {
+                                        let _ = rec.set_monitoring(false);
+                                    }
                                     if let (Some(ref mut rec), Some(ref eng)) = (&mut self.recorder, &self.audio_engine) {
                                         rec.set_monitor_ring(
                                             eng.monitor_ring(),
@@ -583,6 +590,20 @@ impl App {
                                     "[audio] Buffer size changed: {} -> {}",
                                     prev_buffer_size, self.settings.buffer_size
                                 );
+
+                                // Tear down old monitoring before destroying its
+                                // aggregate device — the old stream's AudioUnit must be
+                                // disposed while the device it's connected to still exists.
+                                #[cfg(feature = "native")]
+                                {
+                                    if let Some(ref engine) = self.audio_engine {
+                                        engine.set_monitoring_enabled(false);
+                                    }
+                                    if let Some(ref mut recorder) = self.recorder {
+                                        let _ = recorder.set_monitoring(false);
+                                    }
+                                    self.recorder = None;
+                                }
 
                                 let old_pos = self.audio_engine.as_ref().map(|e| e.position_seconds());
                                 let old_vol = self.audio_engine.as_ref().map(|e| e.master_volume());
@@ -673,6 +694,16 @@ impl App {
                                     "[audio] Input device changed: '{}' -> '{}'",
                                     prev_input_device, self.settings.audio_input_device
                                 );
+
+                                // Tear down old monitoring before destroying its
+                                // aggregate device — same reasoning as buffer size change.
+                                if let Some(ref engine) = self.audio_engine {
+                                    engine.set_monitoring_enabled(false);
+                                }
+                                if let Some(ref mut recorder) = self.recorder {
+                                    let _ = recorder.set_monitoring(false);
+                                }
+                                self.recorder = None;
 
                                 // Recreate aggregate device for new input/output pair
                                 #[cfg(target_os = "macos")]
