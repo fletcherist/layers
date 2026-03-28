@@ -547,6 +547,35 @@ impl App {
                                         engine.toggle_playback();
                                     }
                                 }
+
+                                // Reconnect recorder to the new engine's ring buffer/flags
+                                #[cfg(feature = "native")]
+                                {
+                                    if let (Some(ref mut rec), Some(ref eng)) = (&mut self.recorder, &self.audio_engine) {
+                                        rec.set_monitor_ring(
+                                            eng.monitor_ring(),
+                                            eng.monitoring_enabled_flag(),
+                                            eng.monitor_input_channels_flag(),
+                                            eng.monitor_input_sample_rate_flag(),
+                                        );
+                                    }
+                                    if self.monitoring_group_id.is_some() {
+                                        if let Some(ref engine) = self.audio_engine {
+                                            engine.monitor_ring().reset_and_prefill(0);
+                                            engine.set_monitoring_enabled(true);
+                                        }
+                                        if let Some(ref mut recorder) = self.recorder {
+                                            if let Some(err) = recorder.set_monitoring(true) {
+                                                eprintln!("[audio] Failed to restore monitoring after output device change: {}", err);
+                                                self.monitoring_group_id = None;
+                                                if let Some(ref engine) = self.audio_engine {
+                                                    engine.set_monitoring_enabled(false);
+                                                }
+                                            }
+                                        }
+                                        self.sync_monitor_effects();
+                                    }
+                                }
                             }
 
                             if self.settings.buffer_size != prev_buffer_size {
@@ -617,6 +646,24 @@ impl App {
                                         );
                                     }
                                     self.recorder = new_rec;
+
+                                    // Restore monitoring on the new engine/recorder
+                                    if self.monitoring_group_id.is_some() {
+                                        if let Some(ref engine) = self.audio_engine {
+                                            engine.monitor_ring().reset_and_prefill(0);
+                                            engine.set_monitoring_enabled(true);
+                                        }
+                                        if let Some(ref mut recorder) = self.recorder {
+                                            if let Some(err) = recorder.set_monitoring(true) {
+                                                eprintln!("[audio] Failed to restore monitoring after buffer size change: {}", err);
+                                                self.monitoring_group_id = None;
+                                                if let Some(ref engine) = self.audio_engine {
+                                                    engine.set_monitoring_enabled(false);
+                                                }
+                                            }
+                                        }
+                                        self.sync_monitor_effects();
+                                    }
                                 }
                             }
 
@@ -667,6 +714,24 @@ impl App {
                                     );
                                 }
                                 self.recorder = new_rec;
+
+                                // Restore monitoring on the new recorder
+                                if self.monitoring_group_id.is_some() {
+                                    if let Some(ref engine) = self.audio_engine {
+                                        engine.monitor_ring().reset_and_prefill(0);
+                                        engine.set_monitoring_enabled(true);
+                                    }
+                                    if let Some(ref mut recorder) = self.recorder {
+                                        if let Some(err) = recorder.set_monitoring(true) {
+                                            eprintln!("[audio] Failed to restore monitoring after input device change: {}", err);
+                                            self.monitoring_group_id = None;
+                                            if let Some(ref engine) = self.audio_engine {
+                                                engine.set_monitoring_enabled(false);
+                                            }
+                                        }
+                                    }
+                                    self.sync_monitor_effects();
+                                }
                             }
 
                             self.request_redraw();

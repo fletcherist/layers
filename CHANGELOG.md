@@ -1,3 +1,4 @@
+- fix: monitoring state now restored after changing buffer size, output device, or input device in settings (55.7k loc)
 - refactor: simplified monitoring — direct ring buffer→output, removed adaptive resampling/effects/warmup (55.7k loc)
 - 2026-03-28: refactor: unified clip overlap resolution — MIDI clips and audio clips now interact with each other (crop/split/disable) regardless of type (55.8k loc)
 - fix: monitoring latency ~150ms→~20-37ms — fixed buffer sizes, aggregate device buffer config, smaller ring buffer thresholds, mono mic fix (55.2k loc)
