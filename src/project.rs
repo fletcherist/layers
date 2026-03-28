@@ -368,6 +368,7 @@ impl App {
         for id in self.bpm_drag_overlap_temp_splits.drain(..) {
             self.waveforms.shift_remove(&id);
             self.audio_clips.shift_remove(&id);
+            self.midi_clips.shift_remove(&id);
         }
         self.command_palette = None;
         self.context_menu = None;
@@ -629,6 +630,7 @@ impl App {
         for id in self.bpm_drag_overlap_temp_splits.drain(..) {
             self.waveforms.shift_remove(&id);
             self.audio_clips.shift_remove(&id);
+            self.midi_clips.shift_remove(&id);
         }
         self.command_palette = None;
         self.context_menu = None;

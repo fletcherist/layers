@@ -613,7 +613,7 @@ impl App {
                                     self.rescale_camera_for_bpm(scale);
                                     self.bpm = after;
                                     self.resize_warped_clips();
-                                    let overlap_ops = self.resolve_all_waveform_overlaps();
+                                    let overlap_ops = self.resolve_all_clip_overlaps();
                                     let mut ops = vec![crate::operations::Operation::SetBpm { before, after }];
                                     ops.extend(overlap_ops);
                                     self.push_op(crate::operations::Operation::Batch(ops));

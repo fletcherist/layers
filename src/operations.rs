@@ -504,7 +504,7 @@ impl Operation {
                     app.solo_ids.insert(*id);
                 }
                 if *was_monitoring {
-                    app.monitoring_group_id = Some(*id);
+                    app.restore_group_monitoring(*id);
                 }
             }
             Operation::DeleteGroup { id, .. } => {
@@ -651,7 +651,7 @@ impl Operation {
                 app.rescale_camera_for_bpm(scale);
                 app.bpm = *after;
                 app.resize_warped_clips();
-                app.resolve_all_waveform_overlaps();
+                app.resolve_all_clip_overlaps();
             }
 
             // --- Batch ---
@@ -731,29 +731,9 @@ impl App {
                 }
                 // Commit overlap changes from live resolution
                 let overlap_snaps = std::mem::take(&mut self.arrow_nudge_overlap_snapshots);
-                for (id, original) in overlap_snaps {
-                    if let Some(wf) = self.waveforms.get(&id) {
-                        if wf.disabled {
-                            self.waveforms.shift_remove(&id);
-                            let ac = self.audio_clips.shift_remove(&id);
-                            nudge_ops.push(Operation::DeleteWaveform {
-                                id, data: original, audio_clip: ac.map(|c| (id, c)),
-                            });
-                        } else {
-                            nudge_ops.push(Operation::UpdateWaveform {
-                                id, before: original, after: wf.clone(),
-                            });
-                        }
-                    }
-                }
-                for id in self.arrow_nudge_overlap_temp_splits.drain(..) {
-                    if let Some(wf_data) = self.waveforms.get(&id).cloned() {
-                        let ac = self.audio_clips.get(&id).cloned();
-                        nudge_ops.push(Operation::CreateWaveform {
-                            id, data: wf_data, audio_clip: ac.map(|c| (id, c)),
-                        });
-                    }
-                }
+                let overlap_tsplits = std::mem::take(&mut self.arrow_nudge_overlap_temp_splits);
+                let overlap_ops = self.commit_overlap_ops(overlap_snaps, overlap_tsplits);
+                nudge_ops.extend(overlap_ops);
                 if !nudge_ops.is_empty() {
                     let nudge_batch = Operation::Batch(nudge_ops);
                     // Push the nudge batch directly (inline to avoid recursion)

@@ -63,7 +63,7 @@ fn test_fully_covered_waveform_deleted() {
     app.waveforms.insert(bg_id, make_waveform(150.0, 50.0, 100.0));
     app.audio_clips.insert(bg_id, make_audio_clip());
 
-    let ops = app.resolve_waveform_overlaps(&[active_id]);
+    let ops = app.resolve_clip_overlaps(&[active_id]);
 
     assert!(!ops.is_empty(), "should produce delete ops");
     assert!(app.waveforms.get(&bg_id).is_none(), "background waveform should be deleted");
@@ -86,7 +86,7 @@ fn test_tail_overlap_crops_right_edge() {
     app.waveforms.insert(bg_id, make_waveform(100.0, 50.0, 200.0));
     app.audio_clips.insert(bg_id, make_audio_clip());
 
-    let ops = app.resolve_waveform_overlaps(&[active_id]);
+    let ops = app.resolve_clip_overlaps(&[active_id]);
 
     assert!(!ops.is_empty(), "should produce update ops");
     let bg = app.waveforms.get(&bg_id).expect("background should still exist");
@@ -109,7 +109,7 @@ fn test_head_overlap_crops_left_edge() {
     app.waveforms.insert(bg_id, make_waveform(200.0, 50.0, 200.0));
     app.audio_clips.insert(bg_id, make_audio_clip());
 
-    let ops = app.resolve_waveform_overlaps(&[active_id]);
+    let ops = app.resolve_clip_overlaps(&[active_id]);
 
     assert!(!ops.is_empty(), "should produce update ops");
     let bg = app.waveforms.get(&bg_id).expect("background should still exist");
@@ -133,7 +133,7 @@ fn test_no_overlap_different_y() {
     app.waveforms.insert(bg_id, make_waveform(100.0, 200.0, 200.0));
     app.audio_clips.insert(bg_id, make_audio_clip());
 
-    let ops = app.resolve_waveform_overlaps(&[active_id]);
+    let ops = app.resolve_clip_overlaps(&[active_id]);
 
     assert!(ops.is_empty(), "should produce no ops for non-overlapping Y");
     assert!(app.waveforms.get(&bg_id).is_some(), "background waveform should remain");
@@ -155,7 +155,7 @@ fn test_no_overlap_same_y_different_x() {
     app.waveforms.insert(bg_id, make_waveform(300.0, 50.0, 100.0));
     app.audio_clips.insert(bg_id, make_audio_clip());
 
-    let ops = app.resolve_waveform_overlaps(&[active_id]);
+    let ops = app.resolve_clip_overlaps(&[active_id]);
 
     assert!(ops.is_empty(), "should produce no ops when no horizontal overlap");
     assert!(app.waveforms.get(&bg_id).is_some());
@@ -176,7 +176,7 @@ fn test_small_tail_overlap_deletes() {
     app.waveforms.insert(bg_id, make_waveform(190.0, 50.0, 10.0));
     app.audio_clips.insert(bg_id, make_audio_clip());
 
-    let _ops = app.resolve_waveform_overlaps(&[active_id]);
+    let _ops = app.resolve_clip_overlaps(&[active_id]);
 
     assert!(app.waveforms.get(&bg_id).is_none(), "tiny waveform should be deleted");
 }
@@ -196,7 +196,7 @@ fn test_fade_clamped_on_tail_crop() {
     app.waveforms.insert(bg_id, bg);
     app.audio_clips.insert(bg_id, make_audio_clip());
 
-    let _ops = app.resolve_waveform_overlaps(&[active_id]);
+    let _ops = app.resolve_clip_overlaps(&[active_id]);
 
     let bg = app.waveforms.get(&bg_id).expect("should still exist");
     let new_width = bg.size[0]; // should be 150
@@ -220,12 +220,12 @@ fn test_live_overlap_restores_on_move_away() {
     app.waveforms.insert(bg_id, make_waveform(100.0, 50.0, 200.0));
     app.audio_clips.insert(bg_id, make_audio_clip());
 
-    let mut snaps: IndexMap<crate::entity_id::EntityId, WaveformView> = IndexMap::new();
+    let mut snaps: IndexMap<crate::entity_id::EntityId, crate::ClipSnapshot> = IndexMap::new();
     let mut tsplits: Vec<crate::entity_id::EntityId> = Vec::new();
 
     // Simulate drag: move active to overlap bg
     app.waveforms.get_mut(&active_id).unwrap().position[0] = 200.0; // now 200..400, overlaps bg 100..300
-    app.resolve_waveform_overlaps_live(&[active_id], &mut snaps, &mut tsplits);
+    app.resolve_clip_overlaps_live(&[active_id], &mut snaps, &mut tsplits);
 
     assert!(!snaps.is_empty(), "should have snapshotted bg");
     let bg = app.waveforms.get(&bg_id).unwrap();
@@ -233,7 +233,7 @@ fn test_live_overlap_restores_on_move_away() {
 
     // Simulate drag: move active away (no more overlap)
     app.waveforms.get_mut(&active_id).unwrap().position[0] = 500.0; // back to 500..700
-    app.resolve_waveform_overlaps_live(&[active_id], &mut snaps, &mut tsplits);
+    app.resolve_clip_overlaps_live(&[active_id], &mut snaps, &mut tsplits);
 
     let bg = app.waveforms.get(&bg_id).unwrap();
     assert!((bg.size[0] - 200.0).abs() < 0.01, "bg should be restored to original 200 after moving away, got {}", bg.size[0]);
@@ -258,19 +258,19 @@ fn test_live_overlap_disabled_restored_on_move_away() {
     app.waveforms.insert(bg_id, make_waveform(100.0, 50.0, 100.0));
     app.audio_clips.insert(bg_id, make_audio_clip());
 
-    let mut snaps: IndexMap<crate::entity_id::EntityId, WaveformView> = IndexMap::new();
+    let mut snaps: IndexMap<crate::entity_id::EntityId, crate::ClipSnapshot> = IndexMap::new();
     let mut tsplits: Vec<crate::entity_id::EntityId> = Vec::new();
 
     // Move active to fully cover bg
     app.waveforms.get_mut(&active_id).unwrap().position[0] = 50.0; // 50..450 covers 100..200
-    app.resolve_waveform_overlaps_live(&[active_id], &mut snaps, &mut tsplits);
+    app.resolve_clip_overlaps_live(&[active_id], &mut snaps, &mut tsplits);
 
     let bg = app.waveforms.get(&bg_id).unwrap();
     assert!(bg.disabled, "bg should be disabled (hidden) when fully covered");
 
     // Move active away
     app.waveforms.get_mut(&active_id).unwrap().position[0] = 500.0;
-    app.resolve_waveform_overlaps_live(&[active_id], &mut snaps, &mut tsplits);
+    app.resolve_clip_overlaps_live(&[active_id], &mut snaps, &mut tsplits);
 
     let bg = app.waveforms.get(&bg_id).unwrap();
     assert!(!bg.disabled, "bg should be restored and not disabled after moving away");
@@ -278,7 +278,7 @@ fn test_live_overlap_disabled_restored_on_move_away() {
 }
 
 #[test]
-fn test_resolve_all_waveform_overlaps_rightmost_wins() {
+fn test_resolve_all_clip_overlaps_rightmost_wins() {
     let mut app = App::new_headless();
 
     let left_id = new_id();
@@ -293,7 +293,7 @@ fn test_resolve_all_waveform_overlaps_rightmost_wins() {
     app.waveforms.insert(right_id, make_waveform(250.0, 50.0, 200.0));
     app.audio_clips.insert(right_id, make_audio_clip());
 
-    let ops = app.resolve_all_waveform_overlaps();
+    let ops = app.resolve_all_clip_overlaps();
 
     assert!(!ops.is_empty(), "should produce ops");
     let left = app.waveforms.get(&left_id).expect("left should exist");
@@ -328,7 +328,7 @@ fn test_bpm_decrease_causes_overlap_resolved() {
     app.rescale_clip_positions(old_bpm / new_bpm);
     app.bpm = new_bpm;
 
-    let ops = app.resolve_all_waveform_overlaps();
+    let ops = app.resolve_all_clip_overlaps();
 
     // A (x=50, w=100, covers 50..150) and B (x=100, w=100, covers 100..200) overlap.
     // B is rightmost (starts at 100) so B wins. A's tail gets cropped at B's start (100).
@@ -356,13 +356,13 @@ fn test_bpm_live_drag_overlap_snapshots() {
     app.audio_clips.insert(id_b, make_audio_clip());
     app.bpm = 120.0;
 
-    let mut snaps: IndexMap<crate::entity_id::EntityId, WaveformView> = IndexMap::new();
+    let mut snaps: IndexMap<crate::entity_id::EntityId, crate::ClipSnapshot> = IndexMap::new();
     let mut tsplits: Vec<crate::entity_id::EntityId> = Vec::new();
 
     // Simulate BPM drag that compresses positions (scale = 0.5)
     app.rescale_clip_positions(0.5);
     app.bpm = 240.0;
-    app.resolve_all_waveform_overlaps_live(&mut snaps, &mut tsplits);
+    app.resolve_all_clip_overlaps_live(&mut snaps, &mut tsplits);
 
     // Should have cropped A
     let a = app.waveforms.get(&id_a).unwrap();
@@ -372,7 +372,7 @@ fn test_bpm_live_drag_overlap_snapshots() {
     // Simulate dragging BPM back (undo compression, scale = 2.0 to go from 240 back to 120)
     app.rescale_clip_positions(2.0);
     app.bpm = 120.0;
-    app.resolve_all_waveform_overlaps_live(&mut snaps, &mut tsplits);
+    app.resolve_all_clip_overlaps_live(&mut snaps, &mut tsplits);
 
     // Should restore A to original
     let a = app.waveforms.get(&id_a).unwrap();
@@ -459,7 +459,7 @@ fn test_split_when_active_inside_background() {
     app.audio_clips.insert(bg_id, make_audio_clip());
 
     let initial_wf_count = app.waveforms.len();
-    let ops = app.resolve_waveform_overlaps(&[active_id]);
+    let ops = app.resolve_clip_overlaps(&[active_id]);
 
     assert!(!ops.is_empty(), "should produce ops");
     assert_eq!(app.waveforms.len(), initial_wf_count + 1, "should have created one new waveform");
@@ -504,12 +504,12 @@ fn test_split_live_preview_and_restore() {
     app.waveforms.insert(bg_id, make_waveform(100.0, 50.0, 400.0));
     app.audio_clips.insert(bg_id, make_audio_clip());
 
-    let mut snaps: IndexMap<crate::entity_id::EntityId, WaveformView> = IndexMap::new();
+    let mut snaps: IndexMap<crate::entity_id::EntityId, crate::ClipSnapshot> = IndexMap::new();
     let mut tsplits: Vec<crate::entity_id::EntityId> = Vec::new();
 
     // Move active into bg: active at 200..300, bg covers 100..500
     app.waveforms.get_mut(&active_id).unwrap().position[0] = 200.0;
-    app.resolve_waveform_overlaps_live(&[active_id], &mut snaps, &mut tsplits);
+    app.resolve_clip_overlaps_live(&[active_id], &mut snaps, &mut tsplits);
 
     // Should have split bg: left [100..200], right [300..500]
     assert!(!snaps.is_empty(), "should have snapshotted bg");
@@ -525,7 +525,7 @@ fn test_split_live_preview_and_restore() {
 
     // Move active away: should restore bg and remove temp split
     app.waveforms.get_mut(&active_id).unwrap().position[0] = 800.0;
-    app.resolve_waveform_overlaps_live(&[active_id], &mut snaps, &mut tsplits);
+    app.resolve_clip_overlaps_live(&[active_id], &mut snaps, &mut tsplits);
 
     let bg = app.waveforms.get(&bg_id).unwrap();
     assert!((bg.size[0] - 400.0).abs() < 0.01, "bg should be restored to original 400, got {}", bg.size[0]);
@@ -550,7 +550,7 @@ fn test_split_min_width_threshold() {
     app.waveforms.insert(bg_id, make_waveform(100.0, 50.0, 400.0));
     app.audio_clips.insert(bg_id, make_audio_clip());
 
-    let _ops = app.resolve_waveform_overlaps(&[active_id]);
+    let _ops = app.resolve_clip_overlaps(&[active_id]);
 
     // Both left (5px) and right (5px) are below WAVEFORM_MIN_WIDTH_PX (10.0)
     // Left should be deleted, right should not be created

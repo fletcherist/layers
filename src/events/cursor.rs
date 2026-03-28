@@ -84,7 +84,7 @@ impl App {
             self.resize_warped_clips();
             let mut snaps = std::mem::take(&mut self.bpm_drag_overlap_snapshots);
             let mut tsplits = std::mem::take(&mut self.bpm_drag_overlap_temp_splits);
-            self.resolve_all_waveform_overlaps_live(&mut snaps, &mut tsplits);
+            self.resolve_all_clip_overlaps_live(&mut snaps, &mut tsplits);
             self.bpm_drag_overlap_snapshots = snaps;
             self.bpm_drag_overlap_temp_splits = tsplits;
             self.sync_audio_clips();
@@ -639,7 +639,7 @@ impl App {
             let mut tsplits = if let DragState::ResizingMidiClipEdge { overlap_temp_splits, .. } = &mut self.drag {
                 std::mem::take(overlap_temp_splits)
             } else { Vec::new() };
-            self.resolve_midi_clip_overlaps_live(&[clip_id], &mut snaps, &mut tsplits);
+            self.resolve_clip_overlaps_live(&[clip_id], &mut snaps, &mut tsplits);
             if let DragState::ResizingMidiClipEdge { overlap_snapshots, overlap_temp_splits, .. } = &mut self.drag {
                 *overlap_snapshots = snaps;
                 *overlap_temp_splits = tsplits;
@@ -754,7 +754,7 @@ impl App {
             } else {
                 (indexmap::IndexMap::new(), Vec::new())
             };
-            self.resolve_waveform_overlaps_live(&[waveform_id], &mut snaps, &mut tsplits);
+            self.resolve_clip_overlaps_live(&[waveform_id], &mut snaps, &mut tsplits);
             if let DragState::ResizingWaveform { ref mut overlap_snapshots, ref mut overlap_temp_splits, .. } = self.drag {
                 *overlap_snapshots = snaps;
                 *overlap_temp_splits = tsplits;
@@ -911,17 +911,20 @@ impl App {
                         needs_sync = true;
                     }
                 }
-                // Live waveform overlap resolution during drag
-                let moved_wf_ids: Vec<crate::entity_id::EntityId> = offsets.iter()
-                    .filter_map(|(t, _)| if let HitTarget::Waveform(id) = t { Some(*id) } else { None })
+                // Live clip overlap resolution during drag (both waveforms and MIDI clips)
+                let moved_clip_ids: Vec<crate::entity_id::EntityId> = offsets.iter()
+                    .filter_map(|(t, _)| match t {
+                        HitTarget::Waveform(id) | HitTarget::MidiClip(id) => Some(*id),
+                        _ => None,
+                    })
                     .collect();
-                if !moved_wf_ids.is_empty() {
+                if !moved_clip_ids.is_empty() {
                     let (mut snaps, mut tsplits) = if let DragState::MovingSelection { ref mut overlap_snapshots, ref mut overlap_temp_splits, .. } = self.drag {
                         (std::mem::take(overlap_snapshots), std::mem::take(overlap_temp_splits))
                     } else {
                         (indexmap::IndexMap::new(), Vec::new())
                     };
-                    self.resolve_waveform_overlaps_live(&moved_wf_ids, &mut snaps, &mut tsplits);
+                    self.resolve_clip_overlaps_live(&moved_clip_ids, &mut snaps, &mut tsplits);
                     if let DragState::MovingSelection { ref mut overlap_snapshots, ref mut overlap_temp_splits, .. } = self.drag {
                         *overlap_snapshots = snaps;
                         *overlap_temp_splits = tsplits;
@@ -1121,7 +1124,7 @@ impl App {
                         let mut tsplits = if let DragState::MovingMidiClip { overlap_temp_splits, .. } = &mut self.drag {
                             std::mem::take(overlap_temp_splits)
                         } else { Vec::new() };
-                        self.resolve_midi_clip_overlaps_live(&[clip_id], &mut snaps, &mut tsplits);
+                        self.resolve_clip_overlaps_live(&[clip_id], &mut snaps, &mut tsplits);
                         if let DragState::MovingMidiClip { overlap_snapshots, overlap_temp_splits, .. } = &mut self.drag {
                             *overlap_snapshots = snaps;
                             *overlap_temp_splits = tsplits;

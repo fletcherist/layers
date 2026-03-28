@@ -315,7 +315,7 @@ impl App {
             operations::Operation::UpdateWaveform { id: wf_id, before: before_wf, after: after_wf },
             operations::Operation::CreateWaveform { id: right_id, data: right_wf_data, audio_clip: right_ac_data.map(|c| (right_id, c)) },
         ];
-        let overlap_ops = self.resolve_waveform_overlaps(&[wf_id, right_id]);
+        let overlap_ops = self.resolve_clip_overlaps(&[wf_id, right_id]);
         split_ops.extend(overlap_ops);
         self.push_op(operations::Operation::Batch(split_ops));
         self.sync_audio_clips();
@@ -569,11 +569,14 @@ impl App {
 
         // Build ops from all duplicated entities
         dup_ops.extend(self.build_create_ops(&new_selected));
-        let dup_wf_ids: Vec<EntityId> = new_selected.iter()
-            .filter_map(|t| if let HitTarget::Waveform(id) = t { Some(*id) } else { None })
+        let dup_clip_ids: Vec<EntityId> = new_selected.iter()
+            .filter_map(|t| match t {
+                HitTarget::Waveform(id) | HitTarget::MidiClip(id) => Some(*id),
+                _ => None,
+            })
             .collect();
-        if !dup_wf_ids.is_empty() {
-            let overlap_ops = self.resolve_waveform_overlaps(&dup_wf_ids);
+        if !dup_clip_ids.is_empty() {
+            let overlap_ops = self.resolve_clip_overlaps(&dup_clip_ids);
             dup_ops.extend(overlap_ops);
         }
         if !dup_ops.is_empty() {
@@ -905,11 +908,14 @@ impl App {
 
         // Build ops from pasted entities
         let mut paste_ops = self.build_create_ops(&new_selected);
-        let pasted_wf_ids: Vec<EntityId> = new_selected.iter()
-            .filter_map(|t| if let HitTarget::Waveform(id) = t { Some(*id) } else { None })
+        let pasted_clip_ids: Vec<EntityId> = new_selected.iter()
+            .filter_map(|t| match t {
+                HitTarget::Waveform(id) | HitTarget::MidiClip(id) => Some(*id),
+                _ => None,
+            })
             .collect();
-        if !pasted_wf_ids.is_empty() {
-            let overlap_ops = self.resolve_waveform_overlaps(&pasted_wf_ids);
+        if !pasted_clip_ids.is_empty() {
+            let overlap_ops = self.resolve_clip_overlaps(&pasted_clip_ids);
             paste_ops.extend(overlap_ops);
         }
         if !paste_ops.is_empty() {

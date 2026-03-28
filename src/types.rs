@@ -12,6 +12,16 @@ use crate::text_note;
 use crate::ui::waveform::{AudioClipData, WaveformView};
 
 // ---------------------------------------------------------------------------
+// Unified clip snapshot for cross-type overlap resolution
+// ---------------------------------------------------------------------------
+
+#[derive(Clone)]
+pub(crate) enum ClipSnapshot {
+    Waveform(WaveformView),
+    MidiClip(midi::MidiClip),
+}
+
+// ---------------------------------------------------------------------------
 // Canvas objects
 // ---------------------------------------------------------------------------
 
@@ -53,7 +63,7 @@ pub(crate) enum DragState {
         offsets: Vec<(HitTarget, [f32; 2])>,
         anchor_idx: usize,
         before_states: Vec<(HitTarget, EntityBeforeState)>,
-        overlap_snapshots: IndexMap<EntityId, WaveformView>,
+        overlap_snapshots: IndexMap<EntityId, ClipSnapshot>,
         overlap_temp_splits: Vec<EntityId>,
     },
     PendingBrowserDrag {
@@ -109,7 +119,7 @@ pub(crate) enum DragState {
         initial_size_w: f32,
         initial_offset_px: f32,
         before: WaveformView,
-        overlap_snapshots: IndexMap<EntityId, WaveformView>,
+        overlap_snapshots: IndexMap<EntityId, ClipSnapshot>,
         overlap_temp_splits: Vec<EntityId>,
     },
     DraggingAutomationPoint {
@@ -136,14 +146,14 @@ pub(crate) enum DragState {
         clip_id: EntityId,
         is_left: bool,
         before: midi::MidiClip,
-        overlap_snapshots: IndexMap<EntityId, midi::MidiClip>,
+        overlap_snapshots: IndexMap<EntityId, ClipSnapshot>,
         overlap_temp_splits: Vec<EntityId>,
     },
     MovingMidiClip {
         clip_id: EntityId,
         offset: [f32; 2],
         before: midi::MidiClip,
-        overlap_snapshots: IndexMap<EntityId, midi::MidiClip>,
+        overlap_snapshots: IndexMap<EntityId, ClipSnapshot>,
         overlap_temp_splits: Vec<EntityId>,
     },
     MovingMidiNote {
