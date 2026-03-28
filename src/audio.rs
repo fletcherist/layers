@@ -576,6 +576,7 @@ impl AudioEngine {
         let mon_vol = monitor_volume_bits.clone();
         let mon_pan = monitor_pan_bits.clone();
         let mon_in_ch = monitor_input_channels.clone();
+        let mon_fx = monitor_effect_plugins.clone();
         let preview_c = preview_clip.clone();
         let preview_p = preview_playing.clone();
         let preview_pos = preview_position_bits.clone();
@@ -597,6 +598,8 @@ impl AudioEngine {
         let mut group_bus_r = vec![0.0f32; initial_mix_capacity];
         let mut chain_bus_l = vec![0.0f32; initial_mix_capacity];
         let mut chain_bus_r = vec![0.0f32; initial_mix_capacity];
+        let mut mon_mix_l = vec![0.0f32; initial_mix_capacity];
+        let mut mon_mix_r = vec![0.0f32; initial_mix_capacity];
         let mut kb_batch_buf: Vec<KeyboardPreviewEvent> = Vec::with_capacity(64);
         let mut silent_buf = vec![0.0f32; effect_block_size];
 
@@ -673,6 +676,8 @@ impl AudioEngine {
                         group_bus_r.resize(mix_capacity, 0.0f32);
                         chain_bus_l.resize(mix_capacity, 0.0f32);
                         chain_bus_r.resize(mix_capacity, 0.0f32);
+                        mon_mix_l.resize(mix_capacity, 0.0f32);
+                        mon_mix_r.resize(mix_capacity, 0.0f32);
                     }
                     dry_mix[..frames].fill([0.0, 0.0]);
 
@@ -1340,7 +1345,7 @@ impl AudioEngine {
                         }
                     }
 
-                    // Input monitoring: direct ring buffer → output, no processing.
+                    // Input monitoring: ring buffer → plugin chain → output.
                     if mon_active {
                         let in_ch = mon_in_ch.load(Ordering::Relaxed).max(1);
                         let samples_needed = frames * in_ch;
@@ -1353,10 +1358,53 @@ impl AudioEngine {
                         let pan_l = (2.0 * (1.0 - m_p)).min(1.0);
                         let pan_r = (2.0 * m_p).min(1.0);
 
+                        // Deinterleave mono input into stereo with volume + pan
                         for i in 0..got_frames {
                             let s = mon_raw[i * in_ch] * m_vol;
-                            dry_mix[i][0] += s * pan_l;
-                            dry_mix[i][1] += s * pan_r;
+                            mon_mix_l[i] = s * pan_l;
+                            mon_mix_r[i] = s * pan_r;
+                        }
+                        for i in got_frames..frames {
+                            mon_mix_l[i] = 0.0;
+                            mon_mix_r[i] = 0.0;
+                        }
+
+                        // Process through monitor group's effect chain
+                        if let Ok(plugins) = mon_fx.try_lock() {
+                            if !plugins.is_empty() {
+                                for block_start in (0..got_frames).step_by(effect_block_size) {
+                                    let block_end = (block_start + effect_block_size).min(got_frames);
+                                    let block_len = block_end - block_start;
+                                    fx_buf_l[..block_len].copy_from_slice(&mon_mix_l[block_start..block_end]);
+                                    fx_buf_r[..block_len].copy_from_slice(&mon_mix_r[block_start..block_end]);
+                                    #[allow(unused_mut)]
+                                    let (mut src_l, mut src_r, mut dst_l, mut dst_r) = (
+                                        &mut fx_buf_l, &mut fx_buf_r, &mut fx_out_l, &mut fx_out_r,
+                                    );
+                                    for plugin_arc in plugins.iter() {
+                                        dst_l[..block_len].copy_from_slice(&src_l[..block_len]);
+                                        dst_r[..block_len].copy_from_slice(&src_r[..block_len]);
+                                        if let Ok(guard) = plugin_arc.try_lock() {
+                                            if let Some(ref gui) = *guard {
+                                                let inputs: [&[f32]; 2] = [&src_l[..block_len], &src_r[..block_len]];
+                                                let mut outputs: [&mut [f32]; 2] = [&mut dst_l[..block_len], &mut dst_r[..block_len]];
+                                                gui.process(&inputs, &mut outputs, block_len);
+                                            }
+                                        }
+                                        std::mem::swap(src_l, dst_l);
+                                        std::mem::swap(src_r, dst_r);
+                                    }
+                                    for j in 0..block_len {
+                                        mon_mix_l[block_start + j] = src_l[j];
+                                        mon_mix_r[block_start + j] = src_r[j];
+                                    }
+                                }
+                            }
+                        }
+
+                        for i in 0..got_frames {
+                            dry_mix[i][0] += mon_mix_l[i];
+                            dry_mix[i][1] += mon_mix_r[i];
                         }
                     }
 

@@ -1,3 +1,5 @@
+- fix: monitoring audio now routed through recording group's plugin chain (reverb, etc.) (55.8k loc)
+- remove sidebar collapse button from search bar — collapse only via Cmd+B or palette (55.7k loc)
 - fix: monitoring throttling on re-enable — input stream stays alive across toggles, only mixer flag changes (55.8k loc)
 - fix: recording groups now persist across project save/load (55.8k loc)
 - fix: properly tear down old monitoring stream before rebuilding audio infrastructure on settings change (55.8k loc)
