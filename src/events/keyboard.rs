@@ -827,244 +827,114 @@ impl App {
 
             // --- text note editing input ---
             if self.editing_text_note.is_some() {
-                match &event.logical_key {
-                    Key::Named(NamedKey::Escape) => {
-                        // Cancel editing — revert to before_text
+                use crate::ui::text_input::TextInputAction;
+                let cmd = self.cmd_held();
+
+                // Handle Cmd+V paste
+                if cmd && matches!(&event.logical_key, Key::Character(ch) if ch.as_ref() == "v") {
+                    #[cfg(feature = "native")]
+                    if let Some(clip) = self.read_system_clipboard_text() {
+                        let edit = self.editing_text_note.as_mut().unwrap();
+                        edit.input.paste(&clip);
+                        if let Some(tn) = self.text_notes.get_mut(&edit.note_id) {
+                            tn.text = edit.input.text.clone();
+                        }
+                        self.render_generation += 1;
+                    }
+                    self.request_redraw();
+                    return;
+                }
+
+                let action = {
+                    let edit = self.editing_text_note.as_mut().unwrap();
+                    edit.input.handle_key(&event.logical_key, cmd)
+                };
+                match action {
+                    TextInputAction::Cancel => {
                         if let Some(edit) = self.editing_text_note.take() {
                             if let Some(tn) = self.text_notes.get_mut(&edit.note_id) {
                                 tn.text = edit.before_text;
                             }
                         }
                         self.render_generation += 1;
-                        self.request_redraw();
-                        return;
                     }
-                    Key::Named(NamedKey::Enter) => {
-                        if self.cmd_held() {
-                            // Cmd+Enter: commit edit
-                            self.commit_text_note_edit();
-                            self.request_redraw();
-                            return;
-                        }
-                        // Regular Enter: insert newline
-                        if let Some(ref mut edit) = self.editing_text_note {
-                            edit.text.insert(edit.cursor, '\n');
-                            edit.cursor += 1;
+                    TextInputAction::Submit => {
+                        self.commit_text_note_edit();
+                    }
+                    TextInputAction::Changed => {
+                        if let Some(ref edit) = self.editing_text_note {
                             if let Some(tn) = self.text_notes.get_mut(&edit.note_id) {
-                                tn.text = edit.text.clone();
+                                tn.text = edit.input.text.clone();
                             }
                         }
                         self.render_generation += 1;
-                        self.request_redraw();
-                        return;
                     }
-                    Key::Named(NamedKey::Backspace) => {
-                        if let Some(ref mut edit) = self.editing_text_note {
-                            if edit.cursor > 0 {
-                                let prev = edit.text[..edit.cursor]
-                                    .char_indices()
-                                    .next_back()
-                                    .map(|(i, _)| i)
-                                    .unwrap_or(0);
-                                edit.cursor = prev;
-                                edit.text.remove(edit.cursor);
-                                if let Some(tn) = self.text_notes.get_mut(&edit.note_id) {
-                                    tn.text = edit.text.clone();
-                                }
-                            }
-                        }
-                        self.render_generation += 1;
-                        self.request_redraw();
-                        return;
-                    }
-                    Key::Named(NamedKey::Delete) => {
-                        if let Some(ref mut edit) = self.editing_text_note {
-                            if edit.cursor < edit.text.len() {
-                                edit.text.remove(edit.cursor);
-                                if let Some(tn) = self.text_notes.get_mut(&edit.note_id) {
-                                    tn.text = edit.text.clone();
-                                }
-                            }
-                        }
-                        self.render_generation += 1;
-                        self.request_redraw();
-                        return;
-                    }
-                    Key::Named(NamedKey::ArrowLeft) => {
-                        if let Some(ref mut edit) = self.editing_text_note {
-                            if edit.cursor > 0 {
-                                edit.cursor = edit.text[..edit.cursor]
-                                    .char_indices()
-                                    .next_back()
-                                    .map(|(i, _)| i)
-                                    .unwrap_or(0);
-                            }
-                        }
-                        self.request_redraw();
-                        return;
-                    }
-                    Key::Named(NamedKey::ArrowRight) => {
-                        if let Some(ref mut edit) = self.editing_text_note {
-                            if edit.cursor < edit.text.len() {
-                                edit.cursor = edit.text[edit.cursor..]
-                                    .char_indices()
-                                    .nth(1)
-                                    .map(|(i, _)| edit.cursor + i)
-                                    .unwrap_or(edit.text.len());
-                            }
-                        }
-                        self.request_redraw();
-                        return;
-                    }
-                    Key::Named(NamedKey::ArrowUp) => {
-                        if let Some(ref mut edit) = self.editing_text_note {
-                            // Find start of current line and column offset
-                            let before = &edit.text[..edit.cursor];
-                            if let Some(cur_line_start) = before.rfind('\n') {
-                                let col = edit.cursor - cur_line_start - 1;
-                                // Find start of previous line
-                                let prev_line_start = before[..cur_line_start].rfind('\n')
-                                    .map(|p| p + 1).unwrap_or(0);
-                                let prev_line_len = cur_line_start - prev_line_start;
-                                edit.cursor = prev_line_start + col.min(prev_line_len);
-                            }
-                            // If on first line, do nothing
-                        }
-                        self.request_redraw();
-                        return;
-                    }
-                    Key::Named(NamedKey::ArrowDown) => {
-                        if let Some(ref mut edit) = self.editing_text_note {
-                            let before = &edit.text[..edit.cursor];
-                            let cur_line_start = before.rfind('\n')
-                                .map(|p| p + 1).unwrap_or(0);
-                            let col = edit.cursor - cur_line_start;
-                            // Find end of current line (next \n)
-                            if let Some(next_nl) = edit.text[edit.cursor..].find('\n') {
-                                let next_line_start = edit.cursor + next_nl + 1;
-                                let next_line_end = edit.text[next_line_start..].find('\n')
-                                    .map(|p| next_line_start + p)
-                                    .unwrap_or(edit.text.len());
-                                let next_line_len = next_line_end - next_line_start;
-                                edit.cursor = next_line_start + col.min(next_line_len);
-                            }
-                            // If on last line, do nothing
-                        }
-                        self.request_redraw();
-                        return;
-                    }
-                    Key::Named(NamedKey::Home) => {
-                        if let Some(ref mut edit) = self.editing_text_note {
-                            edit.cursor = 0;
-                        }
-                        self.request_redraw();
-                        return;
-                    }
-                    Key::Named(NamedKey::End) => {
-                        if let Some(ref mut edit) = self.editing_text_note {
-                            edit.cursor = edit.text.len();
-                        }
-                        self.request_redraw();
-                        return;
-                    }
-                    Key::Named(NamedKey::Space) => {
-                        if let Some(ref mut edit) = self.editing_text_note {
-                            edit.text.insert(edit.cursor, ' ');
-                            edit.cursor += 1;
-                            if let Some(tn) = self.text_notes.get_mut(&edit.note_id) {
-                                tn.text = edit.text.clone();
-                            }
-                        }
-                        self.render_generation += 1;
-                        self.request_redraw();
-                        return;
-                    }
-                    Key::Character(ch) if self.cmd_held() => {
-                        match ch.as_ref() {
-                            "a" => {
-                                // Select all (no-op for simple cursor model, just move to end)
-                                if let Some(ref mut edit) = self.editing_text_note {
-                                    edit.cursor = edit.text.len();
-                                }
-                                self.request_redraw();
-                                return;
-                            }
-                            _ => {}
-                        }
-                    }
-                    Key::Character(ch) if !self.cmd_held() => {
-                        if let Some(ref mut edit) = self.editing_text_note {
-                            for c in ch.chars() {
-                                edit.text.insert(edit.cursor, c);
-                                edit.cursor += c.len_utf8();
-                            }
-                            if let Some(tn) = self.text_notes.get_mut(&edit.note_id) {
-                                tn.text = edit.text.clone();
-                            }
-                        }
-                        self.render_generation += 1;
-                        self.request_redraw();
-                        return;
-                    }
-                    _ => {}
+                    TextInputAction::CursorMoved | TextInputAction::Ignored => {}
                 }
+                self.request_redraw();
+                return;
             }
 
             // --- browser search bar input ---
             if self.sample_browser.search_focused {
-                // Reset blink timer on every keystroke so cursor stays visible while typing.
-                self.sample_browser.cursor_blink_start = crate::TimeInstant::now();
-                self.sample_browser.cursor_blink_visible = true;
-                match &event.logical_key {
-                    Key::Named(NamedKey::Escape) => {
-                        self.sample_browser.search_query.clear();
+                use crate::ui::text_input::TextInputAction;
+                let cmd = self.cmd_held();
+
+                // Handle Cmd+V paste
+                if cmd && matches!(&event.logical_key, Key::Character(ch) if ch.as_ref() == "v") {
+                    #[cfg(feature = "native")]
+                    if let Some(clip) = self.read_system_clipboard_text() {
+                        self.sample_browser.search_input.paste(&clip);
+                        self.sample_browser.text_dirty = true;
+                        self.sample_browser.schedule_search_rebuild();
+                    }
+                    self.request_redraw();
+                    return;
+                }
+
+                let action = self.sample_browser.search_input.handle_key(&event.logical_key, cmd);
+                match action {
+                    TextInputAction::Changed => {
+                        self.sample_browser.text_dirty = true;
+                        self.sample_browser.schedule_search_rebuild();
+                    }
+                    TextInputAction::Cancel => {
+                        self.sample_browser.search_input.clear();
                         self.sample_browser.search_focused = false;
-                        // Escape clears immediately (no debounce needed).
                         self.sample_browser.rebuild_entries();
                         self.sample_browser.text_dirty = true;
-                        self.request_redraw();
-                        return;
-                    }
-                    Key::Named(NamedKey::Backspace) => {
-                        if self.cmd_held() {
-                            self.sample_browser.search_query.clear();
-                        } else {
-                            self.sample_browser.search_query.pop();
-                        }
-                        self.sample_browser.text_dirty = true;
-                        self.sample_browser.schedule_search_rebuild();
-                        self.request_redraw();
-                        return;
-                    }
-                    Key::Named(NamedKey::Space) => {
-                        self.sample_browser.search_query.push(' ');
-                        self.sample_browser.text_dirty = true;
-                        self.sample_browser.schedule_search_rebuild();
-                        self.request_redraw();
-                        return;
-                    }
-                    Key::Character(ch) if !self.cmd_held() => {
-                        self.sample_browser.search_query.push_str(ch.as_ref());
-                        self.sample_browser.text_dirty = true;
-                        self.sample_browser.schedule_search_rebuild();
-                        self.request_redraw();
-                        return;
                     }
                     _ => {}
                 }
+                self.request_redraw();
+                return;
             }
 
             // --- browser inline name editing input ---
             if self.sample_browser.editing_browser_name.is_some() {
-                match &event.logical_key {
-                    Key::Named(NamedKey::Escape) => {
-                        self.sample_browser.editing_browser_name = None;
-                        self.sample_browser.text_dirty = true;
-                        self.request_redraw();
-                        return;
+                use crate::ui::text_input::TextInputAction;
+                let cmd = self.cmd_held();
+
+                // Handle Cmd+V paste
+                if cmd && matches!(&event.logical_key, Key::Character(ch) if ch.as_ref() == "v") {
+                    #[cfg(feature = "native")]
+                    if let Some(clip) = self.read_system_clipboard_text() {
+                        let (_, _, ref mut input) = self.sample_browser.editing_browser_name.as_mut().unwrap();
+                        input.paste(&clip);
                     }
-                    Key::Named(NamedKey::Enter) => {
-                        if let Some((id, kind, text)) = self.sample_browser.editing_browser_name.take() {
+                    self.sample_browser.text_dirty = true;
+                    self.request_redraw();
+                    return;
+                }
+
+                let action = {
+                    let (_, _, ref mut input) = self.sample_browser.editing_browser_name.as_mut().unwrap();
+                    input.handle_key(&event.logical_key, cmd)
+                };
+                match action {
+                    TextInputAction::Submit => {
+                        if let Some((id, kind, input)) = self.sample_browser.editing_browser_name.take() {
+                            let text = input.into_text();
                             use crate::layers::LayerNodeKind;
                             match kind {
                                 LayerNodeKind::Waveform => {
@@ -1101,53 +971,38 @@ impl App {
                                 _ => {}
                             }
                         }
-                        self.sample_browser.text_dirty = true;
-                        self.request_redraw();
-                        return;
                     }
-                    Key::Named(NamedKey::Backspace) => {
-                        let cmd = self.cmd_held();
-                        if let Some((_, _, ref mut text)) = self.sample_browser.editing_browser_name {
-                            if cmd {
-                                text.clear();
-                            } else {
-                                text.pop();
-                            }
-                        }
-                        self.sample_browser.text_dirty = true;
-                        self.request_redraw();
-                        return;
-                    }
-                    Key::Named(NamedKey::Space) => {
-                        if let Some((_, _, ref mut text)) = self.sample_browser.editing_browser_name {
-                            text.push(' ');
-                        }
-                        self.sample_browser.text_dirty = true;
-                        self.request_redraw();
-                        return;
-                    }
-                    Key::Character(ch) if !self.cmd_held() => {
-                        if let Some((_, _, ref mut text)) = self.sample_browser.editing_browser_name {
-                            text.push_str(ch.as_ref());
-                        }
-                        self.sample_browser.text_dirty = true;
-                        self.request_redraw();
-                        return;
+                    TextInputAction::Cancel => {
+                        self.sample_browser.editing_browser_name = None;
                     }
                     _ => {}
                 }
+                self.sample_browser.text_dirty = true;
+                self.request_redraw();
+                return;
             }
 
             // --- waveform name editing input ---
             if self.editing_waveform_name.is_some() {
-                match &event.logical_key {
-                    Key::Named(NamedKey::Escape) => {
-                        self.editing_waveform_name = None;
-                        self.request_redraw();
-                        return;
+                let cmd = self.cmd_held();
+
+                // Handle Cmd+V paste
+                if cmd && matches!(&event.logical_key, Key::Character(ch) if ch.as_ref() == "v") {
+                    #[cfg(feature = "native")]
+                    if let Some(clip) = self.read_system_clipboard_text() {
+                        let (_, ref mut input) = self.editing_waveform_name.as_mut().unwrap();
+                        input.paste(&clip);
                     }
-                    Key::Named(NamedKey::Enter) => {
-                        if let Some((idx, text)) = self.editing_waveform_name.take() {
+                    self.request_redraw();
+                    return;
+                }
+
+                let (_, ref mut input) = self.editing_waveform_name.as_mut().unwrap();
+                let action = input.handle_key(&event.logical_key, cmd);
+                match action {
+                    crate::ui::text_input::TextInputAction::Submit => {
+                        if let Some((idx, input)) = self.editing_waveform_name.take() {
+                            let text = input.into_text();
                             if self.waveforms.contains_key(&idx) {
                                 let before = self.waveforms[&idx].clone();
                                 let wf = self.waveforms.get_mut(&idx).unwrap();
@@ -1164,37 +1019,14 @@ impl App {
                                 self.mark_dirty();
                             }
                         }
-                        self.request_redraw();
-                        return;
                     }
-                    Key::Named(NamedKey::Backspace) => {
-                        let cmd = self.cmd_held();
-                        if let Some((_, ref mut text)) = self.editing_waveform_name {
-                            if cmd {
-                                text.clear();
-                            } else {
-                                text.pop();
-                            }
-                        }
-                        self.request_redraw();
-                        return;
-                    }
-                    Key::Named(NamedKey::Space) => {
-                        if let Some((_, ref mut text)) = self.editing_waveform_name {
-                            text.push(' ');
-                        }
-                        self.request_redraw();
-                        return;
-                    }
-                    Key::Character(ch) if !self.cmd_held() => {
-                        if let Some((_, ref mut text)) = self.editing_waveform_name {
-                            text.push_str(ch.as_ref());
-                        }
-                        self.request_redraw();
-                        return;
+                    crate::ui::text_input::TextInputAction::Cancel => {
+                        self.editing_waveform_name = None;
                     }
                     _ => {}
                 }
+                self.request_redraw();
+                return;
             }
 
             // --- command palette input ---
@@ -1221,62 +1053,37 @@ impl App {
                 if matches!(fader_mode, Some(PaletteMode::ShareSession | PaletteMode::JoinSession)) {
                     let is_share = matches!(fader_mode, Some(PaletteMode::ShareSession));
                     let cmd = self.cmd_held();
-                    match &event.logical_key {
-                        Key::Named(NamedKey::Escape) => {
-                            self.command_palette = None;
-                        }
-                        Key::Named(NamedKey::Backspace) => {
+                    use crate::ui::text_input::TextInputAction;
+
+                    // Handle Cmd+V paste before delegating to TextInput
+                    if cmd && matches!(&event.logical_key, Key::Character(ch) if ch.as_ref() == "v") {
+                        #[cfg(feature = "native")]
+                        if let Some(text) = self.read_system_clipboard_text() {
                             if let Some(p) = &mut self.command_palette {
-                                if cmd {
-                                    p.session_input.clear();
-                                } else {
-                                    p.session_input.pop();
-                                }
-                                p.reset_cursor_blink();
+                                p.session_input.paste(&text);
                             }
                         }
-                        Key::Named(NamedKey::Enter) => {
+                        self.request_redraw();
+                        return;
+                    }
+
+                    let action = if let Some(p) = &mut self.command_palette {
+                        p.session_input.handle_key(&event.logical_key, cmd)
+                    } else {
+                        TextInputAction::Ignored
+                    };
+                    match action {
+                        TextInputAction::Submit => {
                             let text = self.command_palette.as_ref()
-                                .map(|p| p.session_input.trim().to_string())
+                                .map(|p| p.session_input.text().trim().to_string())
                                 .unwrap_or_default();
                             self.command_palette = None;
                             if !text.is_empty() {
                                 self.submit_session(is_share, &text);
                             }
                         }
-                        Key::Named(NamedKey::Space) => {
-                            // spaces not allowed in session names — ignore
-                        }
-                        Key::Character(ch) if cmd => {
-                            match ch.as_ref() {
-                                "v" => {
-                                    // Paste from system clipboard
-                                    #[cfg(feature = "native")]
-                                    if let Some(text) = self.read_system_clipboard_text() {
-                                        let cleaned: String = text.chars()
-                                            .filter(|c| !c.is_whitespace())
-                                            .collect();
-                                        if let Some(p) = &mut self.command_palette {
-                                            p.session_input.push_str(&cleaned);
-                                            p.reset_cursor_blink();
-                                        }
-                                    }
-                                }
-                                "a" => {
-                                    // Select all — clear for easy replacement
-                                    if let Some(p) = &mut self.command_palette {
-                                        p.session_input.clear();
-                                        p.reset_cursor_blink();
-                                    }
-                                }
-                                _ => {}
-                            }
-                        }
-                        Key::Character(ch) if !cmd => {
-                            if let Some(p) = &mut self.command_palette {
-                                p.session_input.push_str(ch.as_ref());
-                                p.reset_cursor_blink();
-                            }
+                        TextInputAction::Cancel => {
+                            self.command_palette = None;
                         }
                         _ => {}
                     }
@@ -1326,34 +1133,23 @@ impl App {
                             self.request_redraw();
                             return;
                         }
-                        Key::Named(NamedKey::Backspace) => {
-                            if let Some(p) = &mut self.command_palette {
-                                p.search_text.pop();
-                                p.update_filter(self.settings.dev_mode);
-                                p.reset_cursor_blink();
-                            }
-                            self.request_redraw();
-                            return;
-                        }
-                        Key::Named(NamedKey::Space) => {
-                            if let Some(p) = &mut self.command_palette {
-                                p.search_text.push(' ');
-                                p.update_filter(self.settings.dev_mode);
-                                p.reset_cursor_blink();
-                            }
-                            self.request_redraw();
-                            return;
-                        }
-                        Key::Character(ch) if !self.cmd_held() => {
-                            if let Some(p) = &mut self.command_palette {
-                                p.search_text.push_str(ch.as_ref());
-                                p.update_filter(self.settings.dev_mode);
-                                p.reset_cursor_blink();
-                            }
-                            self.request_redraw();
-                            return;
-                        }
                         _ => {
+                            // Handle Cmd+V paste or delegate text input to search_input
+                            let cmd = self.cmd_held();
+                            if cmd && matches!(&event.logical_key, Key::Character(ch) if ch.as_ref() == "v") {
+                                #[cfg(feature = "native")]
+                                if let Some(clip) = self.read_system_clipboard_text() {
+                                    if let Some(p) = &mut self.command_palette {
+                                        p.search_input.paste(&clip);
+                                        p.update_filter(self.settings.dev_mode);
+                                    }
+                                }
+                            } else if let Some(p) = &mut self.command_palette {
+                                let action = p.search_input.handle_key(&event.logical_key, cmd);
+                                if matches!(action, crate::ui::text_input::TextInputAction::Changed) {
+                                    p.update_filter(self.settings.dev_mode);
+                                }
+                            }
                             self.request_redraw();
                             return;
                         }
@@ -1418,34 +1214,26 @@ impl App {
                         self.request_redraw();
                         return;
                     }
-                    Key::Named(NamedKey::Backspace) => {
-                        if let Some(p) = &mut self.command_palette {
-                            p.search_text.pop();
-                            p.update_filter(self.settings.dev_mode);
-                            p.reset_cursor_blink();
+                    _ => {
+                        // Handle Cmd+V paste or delegate text input to search_input
+                        let cmd = self.cmd_held();
+                        if cmd && matches!(&event.logical_key, Key::Character(ch) if ch.as_ref() == "v") {
+                            #[cfg(feature = "native")]
+                            if let Some(clip) = self.read_system_clipboard_text() {
+                                if let Some(p) = &mut self.command_palette {
+                                    p.search_input.paste(&clip);
+                                    p.update_filter(self.settings.dev_mode);
+                                }
+                            }
+                        } else if let Some(p) = &mut self.command_palette {
+                            let action = p.search_input.handle_key(&event.logical_key, cmd);
+                            if matches!(action, crate::ui::text_input::TextInputAction::Changed) {
+                                p.update_filter(self.settings.dev_mode);
+                            }
                         }
                         self.request_redraw();
                         return;
                     }
-                    Key::Named(NamedKey::Space) => {
-                        if let Some(p) = &mut self.command_palette {
-                            p.search_text.push(' ');
-                            p.update_filter(self.settings.dev_mode);
-                            p.reset_cursor_blink();
-                        }
-                        self.request_redraw();
-                        return;
-                    }
-                    Key::Character(ch) if !self.cmd_held() => {
-                        if let Some(p) = &mut self.command_palette {
-                            p.search_text.push_str(ch.as_ref());
-                            p.update_filter(self.settings.dev_mode);
-                            p.reset_cursor_blink();
-                        }
-                        self.request_redraw();
-                        return;
-                    }
-                    _ => {}
                 }
             }
 
@@ -1811,8 +1599,7 @@ impl App {
                                     }
                                 }
                                 self.sample_browser.search_focused = true;
-                                self.sample_browser.cursor_blink_start = crate::TimeInstant::now();
-                                self.sample_browser.cursor_blink_visible = true;
+                                self.sample_browser.search_input.reset_cursor_blink();
                                 self.sample_browser.text_dirty = true;
                                 self.request_redraw();
                             }
@@ -1838,7 +1625,7 @@ impl App {
                                                 .unwrap_or_default(),
                                             _ => String::new(),
                                         };
-                                        self.sample_browser.editing_browser_name = Some((id, kind, initial_text));
+                                        self.sample_browser.editing_browser_name = Some((id, kind, crate::ui::text_input::TextInput::with_text(initial_text, crate::ui::text_input::TextInputConfig::default())));
                                         self.sample_browser.text_dirty = true;
                                     }
                                 } else {

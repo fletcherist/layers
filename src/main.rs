@@ -361,7 +361,7 @@ struct App {
     cmd_velocity_hover_note: Option<(EntityId, usize)>,
     editing_component: Option<EntityId>,
     editing_group: Option<EntityId>,
-    editing_waveform_name: Option<(EntityId, String)>,
+    editing_waveform_name: Option<(EntityId, ui::text_input::TextInput)>,
     bpm: f32,
     editing_bpm: ui::value_entry::ValueEntry,
     dragging_bpm: Option<(f32, f32)>,
@@ -2899,12 +2899,13 @@ impl App {
         self.commit_text_note_edit();
         if let Some(tn) = self.text_notes.get(&note_id) {
             let text = tn.text.clone();
-            let cursor = text.len();
             self.editing_text_note = Some(text_note::TextNoteEditState {
                 note_id,
-                text: text.clone(),
+                input: crate::ui::text_input::TextInput::with_text(text.clone(), crate::ui::text_input::TextInputConfig {
+                    multiline: true,
+                    ..Default::default()
+                }),
                 before_text: text,
-                cursor,
             });
             self.render_generation += 1;
             self.request_redraw();

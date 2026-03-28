@@ -207,7 +207,7 @@ fn rename_group_via_browser_inline_edit() {
     app.sample_browser.editing_browser_name = Some((
         group_id,
         crate::layers::LayerNodeKind::Group,
-        "My Custom Group".to_string(),
+        crate::ui::text_input::TextInput::with_text("My Custom Group".to_string(), crate::ui::text_input::TextInputConfig::default()),
     ));
 
     // Commit by directly applying the same logic as Enter key handler

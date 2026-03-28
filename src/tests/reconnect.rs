@@ -126,7 +126,7 @@ fn test_clear_entity_state_clears_editing_state() {
     app.editing_midi_clip = Some(id);
     app.editing_component = Some(id);
     app.editing_group = Some(id);
-    app.editing_waveform_name = Some((id, "test".to_string()));
+    app.editing_waveform_name = Some((id, crate::ui::text_input::TextInput::with_text("test".to_string(), crate::ui::text_input::TextInputConfig::default())));
     app.solo_ids.insert(id);
     app.following_user = Some(uuid::Uuid::new_v4());
 

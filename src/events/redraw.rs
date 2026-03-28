@@ -252,7 +252,7 @@ impl App {
                 &self.waveforms,
                 self.editing_waveform_name
                     .as_ref()
-                    .map(|(idx, s)| (*idx, s.as_str())),
+                    .map(|(idx, input)| (*idx, input.display_text())),
                 self.export_window.as_ref(),
                 self.share_window.as_ref(),
                 self.share_button_hovered,
@@ -318,7 +318,7 @@ impl App {
                 },
                 effect_chain_drag,
                 &self.text_notes,
-                self.editing_text_note.as_ref().map(|e| (e.note_id, e.cursor)),
+                self.editing_text_note.as_ref().map(|e| (e.note_id, e.input.cursor)),
                 &selected_entity_ids,
                 &self.groups,
                 &hidden_take_children,

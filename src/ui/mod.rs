@@ -15,3 +15,4 @@ pub(crate) mod right_window;
 pub(crate) mod waveform;
 pub(crate) mod value_entry;
 pub(crate) mod solo_mute;
+pub(crate) mod text_input;

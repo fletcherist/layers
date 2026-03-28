@@ -431,7 +431,7 @@ pub enum PaletteRow {
 }
 
 pub struct CommandPalette {
-    pub search_text: String,
+    pub search_input: crate::ui::text_input::TextInput,
     pub rows: Vec<PaletteRow>,
     pub command_count: usize,
     pub selected_index: usize,
@@ -447,16 +447,13 @@ pub struct CommandPalette {
     pub plugin_selected_index: usize,
     pub plugin_scroll_offset: f32,
     // Session share/join text input
-    pub session_input: String,
-    // Cursor blink state for search input
-    pub cursor_blink_start: TimeInstant,
-    pub cursor_blink_visible: bool,
+    pub session_input: crate::ui::text_input::TextInput,
 }
 
 impl CommandPalette {
     pub fn new(dev_mode: bool) -> Self {
         let mut p = Self {
-            search_text: String::new(),
+            search_input: crate::ui::text_input::TextInput::new(crate::ui::text_input::TextInputConfig::default()),
             rows: Vec::new(),
             command_count: 0,
             selected_index: 0,
@@ -470,39 +467,17 @@ impl CommandPalette {
             filtered_plugin_indices: Vec::new(),
             plugin_selected_index: 0,
             plugin_scroll_offset: 0.0,
-            session_input: String::new(),
-            cursor_blink_start: TimeInstant::now(),
-            cursor_blink_visible: true,
+            session_input: crate::ui::text_input::TextInput::new(crate::ui::text_input::TextInputConfig {
+                allow_spaces: false,
+                ..Default::default()
+            }),
         };
         p.rebuild_rows(dev_mode);
         p
     }
 
-    pub fn reset_cursor_blink(&mut self) {
-        self.cursor_blink_start = TimeInstant::now();
-        self.cursor_blink_visible = true;
-    }
-
-    pub fn tick_cursor_blink(&mut self) -> bool {
-        let visible = self.cursor_blink_start.elapsed().as_millis() % 1000 < 500;
-        if visible != self.cursor_blink_visible {
-            self.cursor_blink_visible = visible;
-            true
-        } else {
-            false
-        }
-    }
-
-    /// Returns the instant when the cursor blink will next toggle visibility.
-    pub fn next_cursor_blink_toggle(&self) -> TimeInstant {
-        let elapsed_ms = self.cursor_blink_start.elapsed().as_millis();
-        let phase = elapsed_ms % 1000;
-        let remaining = if phase < 500 { 500 - phase } else { 1000 - phase };
-        TimeInstant::now() + std::time::Duration::from_millis(remaining as u64)
-    }
-
     fn rebuild_rows(&mut self, dev_mode: bool) {
-        let query = self.search_text.to_lowercase();
+        let query = self.search_input.text.to_lowercase();
         let is_searching = !query.is_empty();
 
         let matched: Vec<usize> = COMMANDS
@@ -599,7 +574,7 @@ impl CommandPalette {
     }
 
     fn rebuild_plugin_filter(&mut self) {
-        let query = self.search_text.to_lowercase();
+        let query = self.search_input.text.to_lowercase();
         self.filtered_plugin_indices = self
             .plugin_entries
             .iter()
@@ -1253,20 +1228,16 @@ impl CommandPalette {
             PaletteMode::VolumeFader => ("Master Volume".to_string(), crate::theme::RuntimeTheme::text_u8(theme.text_primary, 255)),
             PaletteMode::ShareSession => ("Share Session".to_string(), crate::theme::RuntimeTheme::text_u8(theme.text_primary, 255)),
             PaletteMode::JoinSession => ("Join Session".to_string(), crate::theme::RuntimeTheme::text_u8(theme.text_primary, 255)),
-            PaletteMode::PluginPicker | PaletteMode::InstrumentPicker if self.search_text.is_empty() => {
-                let placeholder = if self.cursor_blink_visible { "Search plugins...|" } else { "Search plugins..." };
+            PaletteMode::PluginPicker | PaletteMode::InstrumentPicker if self.search_input.text.is_empty() => {
+                let placeholder = if self.search_input.cursor_blink_visible() { "Search plugins...|" } else { "Search plugins..." };
                 (placeholder.to_string(), crate::theme::RuntimeTheme::text_u8(theme.text_dim, 160))
             }
-            _ if self.search_text.is_empty() => {
-                let placeholder = if self.cursor_blink_visible { "Search|" } else { "Search" };
+            _ if self.search_input.text.is_empty() => {
+                let placeholder = if self.search_input.cursor_blink_visible() { "Search|" } else { "Search" };
                 (placeholder.to_string(), crate::theme::RuntimeTheme::text_u8(theme.text_dim, 160))
             }
             _ => {
-                let text = if self.cursor_blink_visible {
-                    format!("{}|", self.search_text)
-                } else {
-                    self.search_text.clone()
-                };
+                let text = self.search_input.display_text();
                 (text, crate::theme::RuntimeTheme::text_u8(theme.text_primary, 255))
             }
         };
@@ -1514,20 +1485,15 @@ impl CommandPalette {
                     } else {
                         "e.g. https://layers.audio/projects/..."
                     };
-                    let display = if self.cursor_blink_visible {
+                    let display = if self.session_input.cursor_blink_visible() {
                         format!("{}|", placeholder)
                     } else {
                         placeholder.to_string()
                     };
                     (display, crate::theme::RuntimeTheme::text_u8(theme.text_dim, 120))
                 } else {
-                    let display = if self.cursor_blink_visible {
-                        format!("{}|", self.session_input)
-                    } else {
-                        self.session_input.clone()
-                    };
                     (
-                        display,
+                        self.session_input.display_text(),
                         crate::theme::RuntimeTheme::text_u8(theme.text_primary, 255),
                     )
                 };

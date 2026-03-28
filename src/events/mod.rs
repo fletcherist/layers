@@ -169,19 +169,21 @@ impl ApplicationHandler for App {
 
         // Blink cursor in search bar while focused.
         if self.sample_browser.visible && self.sample_browser.search_focused {
-            if self.sample_browser.tick_cursor_blink() {
+            if self.sample_browser.search_input.tick_cursor_blink() {
                 self.sample_browser.cursor_text_dirty = true;
                 self.request_redraw();
             }
-            let wake = self.sample_browser.next_cursor_blink_toggle();
+            let wake = self.sample_browser.search_input.next_cursor_blink_toggle();
             event_loop.set_control_flow(ControlFlow::WaitUntil(wake));
         }
 
         // Blink cursor in palette search bar while open.
         let (palette_toggled, palette_wake) = match self.command_palette {
             Some(ref mut palette) => {
-                let t = palette.tick_cursor_blink();
-                let w = palette.next_cursor_blink_toggle();
+                let t = palette.search_input.tick_cursor_blink();
+                // Also tick session input blink
+                let _ = palette.session_input.tick_cursor_blink();
+                let w = palette.search_input.next_cursor_blink_toggle();
                 (t, Some(w))
             }
             None => (false, None),

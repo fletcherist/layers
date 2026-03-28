@@ -34,7 +34,6 @@ impl TextNote {
 /// Transient editing state — not serialized.
 pub struct TextNoteEditState {
     pub note_id: EntityId,
-    pub text: String,
+    pub input: crate::ui::text_input::TextInput,
     pub before_text: String,
-    pub cursor: usize,
 }

@@ -80,7 +80,7 @@ impl App {
                         .audio_engine
                         .as_ref()
                         .map_or(1.0, |e| e.master_volume());
-                    p.search_text.clear();
+                    p.search_input.clear();
                 }
                 self.request_redraw();
                 return;
@@ -115,7 +115,7 @@ impl App {
                 if let Some(wf_id) = selected_wf {
                     if let Some(wf) = self.waveforms.get(&wf_id) {
                         let current = wf.audio.filename.clone();
-                        self.editing_waveform_name = Some((wf_id, current));
+                        self.editing_waveform_name = Some((wf_id, crate::ui::text_input::TextInput::with_text(current, crate::ui::text_input::TextInputConfig::default())));
                     }
                 }
             }
@@ -328,7 +328,7 @@ impl App {
                         .collect();
                     if let Some(p) = &mut self.command_palette {
                         p.mode = PaletteMode::InstrumentPicker;
-                        p.search_text.clear();
+                        p.search_input.clear();
                         p.set_plugin_entries(entries);
                     }
                     self.request_redraw();
@@ -352,7 +352,7 @@ impl App {
                         .collect();
                     if let Some(p) = &mut self.command_palette {
                         p.mode = PaletteMode::PluginPicker;
-                        p.search_text.clear();
+                        p.search_input.clear();
                         p.set_plugin_entries(entries);
                     }
                     self.request_redraw();
@@ -572,7 +572,7 @@ impl App {
                 if let Some(p) = &mut self.command_palette {
                     p.mode = PaletteMode::ShareSession;
                     p.session_input.clear();
-                    p.search_text.clear();
+                    p.search_input.clear();
                 }
                 self.request_redraw();
                 return;
@@ -581,7 +581,7 @@ impl App {
                 if let Some(p) = &mut self.command_palette {
                     p.mode = PaletteMode::JoinSession;
                     p.session_input.clear();
-                    p.search_text.clear();
+                    p.search_input.clear();
                 }
                 self.request_redraw();
                 return;

@@ -144,9 +144,9 @@ pub struct SampleBrowser {
     /// Flattened layer tree rows for the Layers tab.
     pub layer_rows: Vec<FlatLayerRow>,
     /// Inline rename state for a layer row: (entity_id, kind, current_text).
-    pub editing_browser_name: Option<(crate::entity_id::EntityId, LayerNodeKind, String)>,
-    /// Current search query string.
-    pub search_query: String,
+    pub editing_browser_name: Option<(crate::entity_id::EntityId, LayerNodeKind, crate::ui::text_input::TextInput)>,
+    /// Search bar input state.
+    pub search_input: crate::ui::text_input::TextInput,
     /// Whether the search bar is focused (accepting keyboard input).
     pub search_focused: bool,
     /// Cached flat file index for fast sample search.
@@ -183,10 +183,6 @@ pub struct SampleBrowser {
     pub selected_entry: Option<usize>,
     /// Whether the Master ("Main") entry is currently selected.
     pub master_selected: bool,
-    /// When the cursor blink timer was last reset (focus gain or keystroke).
-    pub cursor_blink_start: TimeInstant,
-    /// Whether the blinking cursor is currently visible (cached for dirty check).
-    pub cursor_blink_visible: bool,
 }
 
 impl SampleBrowser {
@@ -220,7 +216,7 @@ impl SampleBrowser {
             hovered_sidebar: None,
             layer_rows: Vec::new(),
             editing_browser_name: None,
-            search_query: String::new(),
+            search_input: crate::ui::text_input::TextInput::new(crate::ui::text_input::TextInputConfig::default()),
             search_focused: false,
             file_index: Vec::new(),
             file_index_dirty: true,
@@ -228,8 +224,6 @@ impl SampleBrowser {
             file_index_building: false,
             search_debounce_deadline: None,
             search_clear_hovered: false,
-            cursor_blink_start: TimeInstant::now(),
-            cursor_blink_visible: true,
             layer_drop_indicator: None,
             toggle_hovered: false,
             selected_place: 0,
@@ -310,7 +304,7 @@ impl SampleBrowser {
                 self.file_index_building = false;
                 self.file_index_receiver = None;
                 // Re-run search with the new index.
-                if !self.search_query.is_empty() {
+                if !self.search_input.text.is_empty() {
                     self.rebuild_entries();
                 }
                 return true;
@@ -381,7 +375,7 @@ impl SampleBrowser {
 
     pub fn rebuild_entries(&mut self) {
         self.entries.clear();
-        let query = self.search_query.clone();
+        let query = self.search_input.text.clone();
         let searching = !query.is_empty();
         let query_lower = query.to_lowercase();
         match self.active_category {
@@ -633,28 +627,6 @@ impl SampleBrowser {
         self.search_debounce_deadline.is_some()
     }
 
-    /// Tick the cursor blink timer. Returns true if visibility toggled (needs redraw).
-    pub fn tick_cursor_blink(&mut self) -> bool {
-        if !self.search_focused {
-            return false;
-        }
-        let visible = self.cursor_blink_start.elapsed().as_millis() % 1000 < 500;
-        if visible != self.cursor_blink_visible {
-            self.cursor_blink_visible = visible;
-            true
-        } else {
-            false
-        }
-    }
-
-    /// Returns the instant when the cursor blink will next toggle visibility.
-    pub fn next_cursor_blink_toggle(&self) -> TimeInstant {
-        let elapsed_ms = self.cursor_blink_start.elapsed().as_millis();
-        let phase = elapsed_ms % 1000;
-        let remaining = if phase < 500 { 500 - phase } else { 1000 - phase };
-        TimeInstant::now() + std::time::Duration::from_millis(remaining as u64)
-    }
-
     /// Advance smooth scroll animation. Returns true if still animating.
     pub fn tick_scroll(&mut self) -> bool {
         if self.scroll_velocity.abs() < 0.5 {
@@ -742,7 +714,7 @@ impl SampleBrowser {
     }
 
     pub fn hit_clear_button(&self, pos: [f32; 2], scale: f32) -> bool {
-        if self.search_query.is_empty() {
+        if self.search_input.text.is_empty() {
             return false;
         }
         let (bp, bs) = self.clear_button_rect(scale);
@@ -801,7 +773,7 @@ impl SampleBrowser {
     }
 
     pub fn get_search_clear_icon_entry(&self, theme: &crate::theme::RuntimeTheme, scale: f32) -> Option<crate::gpu::IconEntry> {
-        if self.search_query.is_empty() {
+        if self.search_input.text.is_empty() {
             return None;
         }
         let (bp, bs) = self.clear_button_rect(scale);
@@ -1118,7 +1090,7 @@ impl SampleBrowser {
 
 
             // Search clear (X) button hover highlight
-            if !self.search_query.is_empty() && self.search_clear_hovered {
+            if !self.search_input.text.is_empty() && self.search_clear_hovered {
                 let (cp, cs) = self.clear_button_rect(scale);
                 out.push(InstanceRaw {
                     position: cp,
@@ -1683,12 +1655,11 @@ impl SampleBrowser {
         let line_h = 14.0 * scale;
         let text_x = sb_x + 8.0 * scale;
         let text_y = row_y + (search_bar_h - line_h) * 0.5;
-        let show_cursor = self.search_focused && self.cursor_blink_visible;
-        let (text, color) = if self.search_focused || !self.search_query.is_empty() {
-            let display = if show_cursor {
-                format!("{}|", self.search_query)
+        let (text, color) = if self.search_focused || !self.search_input.text.is_empty() {
+            let display = if self.search_focused {
+                self.search_input.display_text()
             } else {
-                self.search_query.clone()
+                self.search_input.text.clone()
             };
             (display, crate::theme::RuntimeTheme::text_u8(theme.text_primary, 255))
         } else {
@@ -1700,7 +1671,7 @@ impl SampleBrowser {
             y: text_y,
             font_size: font_sz,
             line_height: line_h,
-            max_width: sb_w_inner - if self.search_query.is_empty() { 16.0 } else { 32.0 } * scale,
+            max_width: sb_w_inner - if self.search_input.text.is_empty() { 16.0 } else { 32.0 } * scale,
             color,
             weight: 400,
             bounds: Some([sb_x, row_y, sb_x + sb_w_inner, row_y + search_bar_h]),
@@ -1903,8 +1874,8 @@ impl SampleBrowser {
                         _ => None,
                     };
                     let (display_text, display_color) = match (entry_id, &self.editing_browser_name) {
-                        (Some(eid), Some((edit_id, _, text))) if eid == *edit_id => {
-                            (format!("{}|", text), [255u8, 255, 255, 255])
+                        (Some(eid), Some((edit_id, _, input))) if eid == *edit_id => {
+                            (input.display_text(), [255u8, 255, 255, 255])
                         }
                         _ => (entry.name.clone(), color),
                     };

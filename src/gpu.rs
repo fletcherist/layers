@@ -748,7 +748,7 @@ impl Gpu {
         loop_regions: &indexmap::IndexMap<crate::entity_id::EntityId, crate::regions::LoopRegion>,
         _editing_effect_name: Option<(crate::entity_id::EntityId, &str)>,
         waveforms: &indexmap::IndexMap<crate::entity_id::EntityId, waveform::WaveformView>,
-        editing_waveform_name: Option<(crate::entity_id::EntityId, &str)>,
+        editing_waveform_name: Option<(crate::entity_id::EntityId, String)>,
         export_window: Option<&crate::ui::export_window::ExportWindow>,
         share_window: Option<&crate::ui::share_window::ShareWindow>,
         share_button_hovered: bool,
@@ -1458,7 +1458,7 @@ impl Gpu {
 
             let display_name = if let Some((idx, ref text)) = editing_waveform_name {
                 if idx == *wf_idx {
-                    format!("{}|", text)
+                    text.clone()
                 } else if !wf.audio.filename.is_empty() {
                     wf.audio.filename.clone()
                 } else {
@@ -1516,7 +1516,7 @@ impl Gpu {
                 new_wf_cache.push((key, buf));
             }
 
-            let is_editing = editing_waveform_name.map_or(false, |(idx, _)| idx == *wf_idx);
+            let is_editing = editing_waveform_name.as_ref().map_or(false, |(idx, _)| idx == wf_idx);
             let alpha = if is_editing { 255 } else { 180 };
             wf_label_meta.push((
                 name_screen_x,

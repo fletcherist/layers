@@ -299,7 +299,7 @@ impl App {
                 {
                     let (_, _, scale) = self.screen_info();
                     if self.sample_browser.visible && self.sample_browser.hit_clear_button(self.mouse_pos, scale) {
-                        self.sample_browser.search_query.clear();
+                        self.sample_browser.search_input.text.clear();
                         self.sample_browser.search_focused = false;
                         self.sample_browser.rebuild_entries();
                         self.sample_browser.text_dirty = true;
@@ -314,8 +314,7 @@ impl App {
                         if hit != self.sample_browser.search_focused {
                             self.sample_browser.search_focused = hit;
                             if hit {
-                                self.sample_browser.cursor_blink_start = crate::TimeInstant::now();
-                                self.sample_browser.cursor_blink_visible = true;
+                                self.sample_browser.search_input.reset_cursor_blink();
                             }
                             self.sample_browser.text_dirty = true;
                             self.request_redraw();
@@ -345,9 +344,10 @@ impl App {
                     }
                 }
                 // Cancel canvas waveform name editing if clicking outside that waveform
-                if let Some((id, _)) = &self.editing_waveform_name.clone() {
+                if let Some((id, _)) = &self.editing_waveform_name {
+                    let id = *id;
                     let world = self.camera.screen_to_world(self.mouse_pos);
-                    let still_on = self.waveforms.get(id).map_or(false, |wf| {
+                    let still_on = self.waveforms.get(&id).map_or(false, |wf| {
                         world[0] >= wf.position[0] && world[0] <= wf.position[0] + wf.size[0]
                             && world[1] >= wf.position[1] && world[1] <= wf.position[1] + wf.size[1]
                     });
@@ -1411,7 +1411,7 @@ impl App {
                                 self.sample_browser.active_category = cat;
                                 self.sample_browser.scroll_offset = 0.0;
                                 self.sample_browser.scroll_velocity = 0.0;
-                                self.sample_browser.search_query.clear();
+                                self.sample_browser.search_input.text.clear();
                                 self.sample_browser.search_focused = false;
                                 if cat == ui::browser::BrowserCategory::Layers {
                                     self.refresh_project_browser_entries();
@@ -1594,7 +1594,7 @@ impl App {
                                             _ => String::new(),
                                         };
                                         if matches!(kind, LayerNodeKind::Waveform | LayerNodeKind::Group) {
-                                            self.sample_browser.editing_browser_name = Some((*id, *kind, initial_text));
+                                            self.sample_browser.editing_browser_name = Some((*id, *kind, crate::ui::text_input::TextInput::with_text(initial_text, crate::ui::text_input::TextInputConfig::default())));
                                             self.sample_browser.text_dirty = true;
                                             self.request_redraw();
                                             return;

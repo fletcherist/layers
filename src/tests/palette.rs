@@ -28,7 +28,7 @@ fn make_palette_with_plugins() -> CommandPalette {
 #[test]
 fn test_palette_plugin_search_shows_matching_plugins() {
     let mut p = make_palette_with_plugins();
-    p.search_text = "ser".to_string();
+    p.search_input.text ="ser".to_string();
     p.update_filter(false);
 
     // Should have command matches + a "Plugins" section + 2 Serum entries
@@ -39,7 +39,7 @@ fn test_palette_plugin_search_shows_matching_plugins() {
 #[test]
 fn test_palette_plugin_search_by_manufacturer() {
     let mut p = make_palette_with_plugins();
-    p.search_text = "fabfilter".to_string();
+    p.search_input.text ="fabfilter".to_string();
     p.update_filter(false);
 
     let plugin_rows: Vec<_> = p.rows.iter().filter(|r| matches!(r, PaletteRow::Plugin(_))).collect();
@@ -49,7 +49,7 @@ fn test_palette_plugin_search_by_manufacturer() {
 #[test]
 fn test_palette_search_by_label_instrument() {
     let mut p = make_palette_with_plugins();
-    p.search_text = "instrument".to_string();
+    p.search_input.text ="instrument".to_string();
     p.update_filter(false);
 
     let plugin_rows: Vec<_> = p.rows.iter().filter(|r| matches!(r, PaletteRow::Plugin(_))).collect();
@@ -59,7 +59,7 @@ fn test_palette_search_by_label_instrument() {
 #[test]
 fn test_palette_search_by_label_effect() {
     let mut p = make_palette_with_plugins();
-    p.search_text = "effect".to_string();
+    p.search_input.text ="effect".to_string();
     p.update_filter(false);
 
     let plugin_rows: Vec<_> = p.rows.iter().filter(|r| matches!(r, PaletteRow::Plugin(_))).collect();
@@ -69,7 +69,7 @@ fn test_palette_search_by_label_effect() {
 #[test]
 fn test_palette_empty_search_shows_all_plugins() {
     let mut p = make_palette_with_plugins();
-    p.search_text.clear();
+    p.search_input.clear();
     p.update_filter(false);
 
     let plugin_rows: Vec<_> = p.rows.iter().filter(|r| matches!(r, PaletteRow::Plugin(_))).collect();
@@ -79,7 +79,7 @@ fn test_palette_empty_search_shows_all_plugins() {
 #[test]
 fn test_palette_selected_inline_plugin() {
     let mut p = make_palette_with_plugins();
-    p.search_text = "serum".to_string();
+    p.search_input.text ="serum".to_string();
     p.update_filter(false);
 
     // Find the index of the first Plugin row
@@ -111,7 +111,7 @@ fn test_palette_selected_inline_plugin() {
 #[test]
 fn test_palette_selected_action_none_for_plugin_row() {
     let mut p = make_palette_with_plugins();
-    p.search_text = "serum".to_string();
+    p.search_input.text ="serum".to_string();
     p.update_filter(false);
 
     // Navigate to a Plugin row

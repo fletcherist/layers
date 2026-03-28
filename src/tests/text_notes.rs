@@ -48,8 +48,8 @@ fn update_text_note_via_edit() {
 
     // Modify the text directly (simulating keyboard input)
     if let Some(ref mut edit) = app.editing_text_note {
-        edit.text = "Hello world".to_string();
-        edit.cursor = 11;
+        edit.input.text = "Hello world".to_string();
+        edit.input.cursor = 11;
     }
     app.text_notes.get_mut(&id).unwrap().text = "Hello world".to_string();
 
@@ -77,58 +77,39 @@ fn text_note_cursor_arrow_up_down() {
     app.text_notes.get_mut(&id).unwrap().text = text.clone();
     app.editing_text_note = Some(TextNoteEditState {
         note_id: id,
-        text: text.clone(),
+        input: {
+            let mut input = crate::ui::text_input::TextInput::with_text(text.clone(), crate::ui::text_input::TextInputConfig {
+                multiline: true,
+                ..Default::default()
+            });
+            input.cursor = 5; // on 'e' in second line
+            input
+        },
         before_text: String::new(),
-        cursor: 5, // on 'e' in second line (index: a=0,b=1,c=2,\n=3,d=4,e=5)
     });
 
-    // Simulate ArrowUp: cursor at col 1 of line 1 -> should go to col 1 of line 0 = index 1 ('b')
-    {
-        let edit = app.editing_text_note.as_mut().unwrap();
-        let before = &edit.text[..edit.cursor];
-        if let Some(cur_line_start) = before.rfind('\n') {
-            let col = edit.cursor - cur_line_start - 1;
-            let prev_line_start = before[..cur_line_start].rfind('\n')
-                .map(|p| p + 1).unwrap_or(0);
-            let prev_line_len = cur_line_start - prev_line_start;
-            edit.cursor = prev_line_start + col.min(prev_line_len);
-        }
-    }
-    assert_eq!(app.editing_text_note.as_ref().unwrap().cursor, 1); // 'b'
+    use winit::keyboard::{Key, NamedKey};
 
-    // Simulate ArrowDown from cursor=1 (col 1 line 0) -> col 1 line 1 = index 5 ('e')
+    // ArrowUp: cursor at col 1 of line 1 -> col 1 of line 0 = index 1 ('b')
     {
         let edit = app.editing_text_note.as_mut().unwrap();
-        let before = &edit.text[..edit.cursor];
-        let cur_line_start = before.rfind('\n').map(|p| p + 1).unwrap_or(0);
-        let col = edit.cursor - cur_line_start;
-        if let Some(next_nl) = edit.text[edit.cursor..].find('\n') {
-            let next_line_start = edit.cursor + next_nl + 1;
-            let next_line_end = edit.text[next_line_start..].find('\n')
-                .map(|p| next_line_start + p)
-                .unwrap_or(edit.text.len());
-            let next_line_len = next_line_end - next_line_start;
-            edit.cursor = next_line_start + col.min(next_line_len);
-        }
+        edit.input.handle_key(&Key::Named(NamedKey::ArrowUp), false);
     }
-    assert_eq!(app.editing_text_note.as_ref().unwrap().cursor, 5); // 'e'
+    assert_eq!(app.editing_text_note.as_ref().unwrap().input.cursor, 1); // 'b'
 
-    // ArrowDown again from cursor=5 (col 1 line 1) -> col 1 line 2 = index 9 ('h')
+    // ArrowDown: col 1 line 0 -> col 1 line 1 = index 5 ('e')
     {
         let edit = app.editing_text_note.as_mut().unwrap();
-        let before = &edit.text[..edit.cursor];
-        let cur_line_start = before.rfind('\n').map(|p| p + 1).unwrap_or(0);
-        let col = edit.cursor - cur_line_start;
-        if let Some(next_nl) = edit.text[edit.cursor..].find('\n') {
-            let next_line_start = edit.cursor + next_nl + 1;
-            let next_line_end = edit.text[next_line_start..].find('\n')
-                .map(|p| next_line_start + p)
-                .unwrap_or(edit.text.len());
-            let next_line_len = next_line_end - next_line_start;
-            edit.cursor = next_line_start + col.min(next_line_len);
-        }
+        edit.input.handle_key(&Key::Named(NamedKey::ArrowDown), false);
     }
-    assert_eq!(app.editing_text_note.as_ref().unwrap().cursor, 9); // 'h'
+    assert_eq!(app.editing_text_note.as_ref().unwrap().input.cursor, 5); // 'e'
+
+    // ArrowDown again: col 1 line 1 -> col 1 line 2 = index 9 ('h')
+    {
+        let edit = app.editing_text_note.as_mut().unwrap();
+        edit.input.handle_key(&Key::Named(NamedKey::ArrowDown), false);
+    }
+    assert_eq!(app.editing_text_note.as_ref().unwrap().input.cursor, 9); // 'h'
 }
 
 #[test]
