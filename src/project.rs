@@ -40,126 +40,187 @@ pub(crate) struct PendingRemoteAudioFetch {
 // ---------------------------------------------------------------------------
 
 impl App {
+    /// Build a ProjectState snapshot from current app state (no I/O).
+    pub(crate) fn build_project_state(&self) -> ProjectState {
+        let stored_components: Vec<storage::StoredComponent> = self
+            .components
+            .iter()
+            .map(|(id, c)| storage::StoredComponent {
+                id: id.to_string(),
+                name: c.name.clone(),
+                position: c.position,
+                size: c.size,
+                waveform_ids: c.waveform_ids.iter().map(|wid| wid.to_string()).collect(),
+            })
+            .collect();
+        let stored_instances: Vec<storage::StoredComponentInstance> = self
+            .component_instances
+            .iter()
+            .map(|(id, inst)| storage::StoredComponentInstance {
+                id: id.to_string(),
+                component_id: inst.component_id.to_string(),
+                position: inst.position,
+            })
+            .collect();
+
+        let stored_waveforms: Vec<storage::StoredWaveform> = self
+            .waveforms
+            .iter()
+            .map(|(id, wf)| storage::StoredWaveform {
+                id: id.to_string(),
+                position: wf.position,
+                size: wf.size,
+                color: wf.color,
+                border_radius: wf.border_radius,
+                filename: wf.audio.filename.clone(),
+                fade_in_px: wf.fade_in_px,
+                fade_out_px: wf.fade_out_px,
+                fade_in_curve: wf.fade_in_curve,
+                fade_out_curve: wf.fade_out_curve,
+                sample_rate: wf.audio.sample_rate,
+                volume: wf.volume,
+                pan: wf.pan,
+                disabled: wf.disabled,
+                sample_offset_px: wf.sample_offset_px,
+                automation_volume: wf.automation.volume_lane().points.iter().map(|p| [p.t, p.value]).collect(),
+                automation_pan: wf.automation.pan_lane().points.iter().map(|p| [p.t, p.value]).collect(),
+                take_group_json: wf.take_group.as_ref()
+                    .map(|tg| serde_json::to_string(tg).unwrap_or_default())
+                    .unwrap_or_default(),
+                warp_mode: match wf.warp_mode {
+                    ui::waveform::WarpMode::Off => 0,
+                    ui::waveform::WarpMode::RePitch => 1,
+                    ui::waveform::WarpMode::Semitone => 2,
+                    ui::waveform::WarpMode::PaulStretch => 3,
+                    ui::waveform::WarpMode::Complex => 4,
+                },
+                sample_bpm: wf.sample_bpm,
+                pitch_semitones: wf.pitch_semitones,
+                paulstretch_factor: wf.paulstretch_factor,
+            })
+            .collect();
+
+        ProjectState {
+            version: 2,
+            name: self.current_project_name.clone(),
+            camera_position: self.camera.position,
+            camera_zoom: self.camera.zoom,
+            objects: storage::objects_to_stored(&self.objects),
+            waveforms: stored_waveforms,
+            browser_folders: Vec::new(),
+            browser_width: self.sample_browser.width,
+            browser_visible: self.sample_browser.visible,
+            browser_expanded: self
+                .sample_browser
+                .expanded
+                .iter()
+                .map(|p| p.to_string_lossy().to_string())
+                .collect(),
+            effect_regions: Vec::new(),
+            loop_regions: self
+                .loop_regions
+                .iter()
+                .map(|(id, lr)| storage::StoredLoopRegion {
+                    id: id.to_string(),
+                    position: lr.position,
+                    size: lr.size,
+                    enabled: lr.enabled,
+                })
+                .collect(),
+            components: stored_components,
+            component_instances: stored_instances,
+            bpm: self.bpm,
+            midi_clips: self.midi_clips.iter().map(|(id, mc)| {
+                let (grid_tag, grid_val) = storage::grid_mode_to_stored(mc.grid_mode);
+                storage::StoredMidiClip {
+                    id: id.to_string(),
+                    position: mc.position,
+                    size: mc.size,
+                    color: mc.color,
+                    notes: mc.notes.iter().map(|n| storage::StoredMidiNote {
+                        pitch: n.pitch as u32,
+                        start_px: n.start_px,
+                        duration_px: n.duration_px,
+                        velocity: n.velocity as u32,
+                    }).collect(),
+                    pitch_low: mc.pitch_range.0 as u32,
+                    pitch_high: mc.pitch_range.1 as u32,
+                    grid_mode_tag: grid_tag,
+                    grid_mode_value: grid_val,
+                    triplet_grid: mc.triplet_grid,
+                    instrument_id: mc.instrument_id.map(|id| id.to_string()).unwrap_or_default(),
+                }
+            }).collect(),
+            layer_tree: layers::tree_to_stored(&self.layer_tree),
+            text_notes: storage::text_notes_to_stored(&self.text_notes),
+            groups: storage::groups_to_stored(&self.groups),
+            master_volume: self.master.volume,
+            master_pan: self.master.pan,
+            master_effect_chain_id: self.master.effect_chain_id
+                .map(|id| id.to_string())
+                .unwrap_or_default(),
+        }
+    }
+
+    /// Save all audio data and peaks to the given store.
+    fn save_audio_and_peaks_to(&self, store: &dyn storage::ProjectStore) {
+        store.clear_audio_and_peaks();
+        for (wf_id, wf) in self.waveforms.iter() {
+            let id_str = wf_id.to_string();
+            if let Some((file_bytes, ext)) = self.source_audio_files.get(wf_id) {
+                store.save_audio(&id_str, file_bytes, ext);
+            } else {
+                let wav_bytes = crate::audio::encode_wav_bytes(
+                    &wf.audio.left_samples,
+                    &wf.audio.right_samples,
+                    wf.audio.sample_rate,
+                );
+                store.save_audio(&id_str, &wav_bytes, "wav");
+            }
+            store.save_peaks(
+                &id_str,
+                wf.audio.left_peaks.block_size as u64,
+                &wf.audio.left_peaks.peaks,
+                &wf.audio.right_peaks.peaks,
+            );
+        }
+    }
+
     pub(crate) fn save_project_state(&mut self) {
         if let Some(storage) = &self.storage {
-            let stored_components: Vec<storage::StoredComponent> = self
-                .components
-                .iter()
-                .map(|(id, c)| storage::StoredComponent {
-                    id: id.to_string(),
-                    name: c.name.clone(),
-                    position: c.position,
-                    size: c.size,
-                    waveform_ids: c.waveform_ids.iter().map(|wid| wid.to_string()).collect(),
-                })
-                .collect();
-            let stored_instances: Vec<storage::StoredComponentInstance> = self
-                .component_instances
-                .iter()
-                .map(|(id, inst)| storage::StoredComponentInstance {
-                    id: id.to_string(),
-                    component_id: inst.component_id.to_string(),
-                    position: inst.position,
-                })
-                .collect();
+            let state = self.build_project_state();
 
-            let stored_waveforms: Vec<storage::StoredWaveform> = self
-                .waveforms
-                .iter()
-                .map(|(id, wf)| storage::StoredWaveform {
-                    id: id.to_string(),
-                    position: wf.position,
-                    size: wf.size,
-                    color: wf.color,
-                    border_radius: wf.border_radius,
-                    filename: wf.audio.filename.clone(),
-                    fade_in_px: wf.fade_in_px,
-                    fade_out_px: wf.fade_out_px,
-                    fade_in_curve: wf.fade_in_curve,
-                    fade_out_curve: wf.fade_out_curve,
-                    sample_rate: wf.audio.sample_rate,
-                    volume: wf.volume,
-                    pan: wf.pan,
-                    disabled: wf.disabled,
-                    sample_offset_px: wf.sample_offset_px,
-                    automation_volume: wf.automation.volume_lane().points.iter().map(|p| [p.t, p.value]).collect(),
-                    automation_pan: wf.automation.pan_lane().points.iter().map(|p| [p.t, p.value]).collect(),
-                    take_group_json: wf.take_group.as_ref()
-                        .map(|tg| serde_json::to_string(tg).unwrap_or_default())
-                        .unwrap_or_default(),
-                    warp_mode: match wf.warp_mode {
-                        ui::waveform::WarpMode::Off => 0,
-                        ui::waveform::WarpMode::RePitch => 1,
-                        ui::waveform::WarpMode::Semitone => 2,
-                        ui::waveform::WarpMode::PaulStretch => 3,
-                        ui::waveform::WarpMode::Complex => 4,
-                    },
-                    sample_bpm: wf.sample_bpm,
-                    pitch_semitones: wf.pitch_semitones,
-                    paulstretch_factor: wf.paulstretch_factor,
-                })
-                .collect();
+            // Delta sync to remote: push ProjectState + only changed waveforms
+            if let Some(rs) = &self.remote_storage {
+                rs.save_project_state(state.clone());
 
-            let state = ProjectState {
-                version: 2,
-                name: self.current_project_name.clone(),
-                camera_position: self.camera.position,
-                camera_zoom: self.camera.zoom,
-                objects: storage::objects_to_stored(&self.objects),
-                waveforms: stored_waveforms,
-                browser_folders: Vec::new(),
-                browser_width: self.sample_browser.width,
-                browser_visible: self.sample_browser.visible,
-                browser_expanded: self
-                    .sample_browser
-                    .expanded
-                    .iter()
-                    .map(|p| p.to_string_lossy().to_string())
-                    .collect(),
-                effect_regions: Vec::new(),
-                loop_regions: self
-                    .loop_regions
-                    .iter()
-                    .map(|(id, lr)| storage::StoredLoopRegion {
-                        id: id.to_string(),
-                        position: lr.position,
-                        size: lr.size,
-                        enabled: lr.enabled,
-                    })
-                    .collect(),
-                components: stored_components,
-                component_instances: stored_instances,
-                bpm: self.bpm,
-                midi_clips: self.midi_clips.iter().map(|(id, mc)| {
-                    let (grid_tag, grid_val) = storage::grid_mode_to_stored(mc.grid_mode);
-                    storage::StoredMidiClip {
-                        id: id.to_string(),
-                        position: mc.position,
-                        size: mc.size,
-                        color: mc.color,
-                        notes: mc.notes.iter().map(|n| storage::StoredMidiNote {
-                            pitch: n.pitch as u32,
-                            start_px: n.start_px,
-                            duration_px: n.duration_px,
-                            velocity: n.velocity as u32,
-                        }).collect(),
-                        pitch_low: mc.pitch_range.0 as u32,
-                        pitch_high: mc.pitch_range.1 as u32,
-                        grid_mode_tag: grid_tag,
-                        grid_mode_value: grid_val,
-                        triplet_grid: mc.triplet_grid,
-                        instrument_id: mc.instrument_id.map(|id| id.to_string()).unwrap_or_default(),
+                for wf_id in self.remote_dirty_waveforms.drain() {
+                    let id_str = wf_id.to_string();
+                    if let Some(wf) = self.waveforms.get(&wf_id) {
+                        if let Some((file_bytes, ext)) = self.source_audio_files.get(&wf_id) {
+                            rs.save_audio(&id_str, file_bytes, ext);
+                        } else {
+                            let wav_bytes = crate::audio::encode_wav_bytes(
+                                &wf.audio.left_samples,
+                                &wf.audio.right_samples,
+                                wf.audio.sample_rate,
+                            );
+                            rs.save_audio(&id_str, &wav_bytes, "wav");
+                        }
+                        rs.save_peaks(
+                            &id_str,
+                            wf.audio.left_peaks.block_size as u64,
+                            &wf.audio.left_peaks.peaks,
+                            &wf.audio.right_peaks.peaks,
+                        );
+                    } else {
+                        // Waveform was deleted — remove from remote
+                        rs.delete_audio(&id_str);
+                        rs.delete_peaks(&id_str);
                     }
-                }).collect(),
-                layer_tree: layers::tree_to_stored(&self.layer_tree),
-                text_notes: storage::text_notes_to_stored(&self.text_notes),
-                groups: storage::groups_to_stored(&self.groups),
-                master_volume: self.master.volume,
-                master_pan: self.master.pan,
-                master_effect_chain_id: self.master.effect_chain_id
-                    .map(|id| id.to_string())
-                    .unwrap_or_default(),
-            };
+                }
+            }
+
             storage.save_and_index_project(state);
 
             // Update project name in index
@@ -169,29 +230,7 @@ impl App {
             }
 
             // Save audio data and peaks for each waveform
-            storage.clear_audio_and_peaks();
-            for (wf_id, wf) in self.waveforms.iter() {
-                let id_str = wf_id.to_string();
-                // Save original encoded audio file
-                if let Some((file_bytes, ext)) = self.source_audio_files.get(wf_id) {
-                    storage.save_audio(&id_str, file_bytes, ext);
-                } else {
-                    // No source file cached — encode as WAV from PCM
-                    let wav_bytes = crate::audio::encode_wav_bytes(
-                        &wf.audio.left_samples,
-                        &wf.audio.right_samples,
-                        wf.audio.sample_rate,
-                    );
-                    storage.save_audio(&id_str, &wav_bytes, "wav");
-                }
-                // Save peaks (quantized to u8 by storage layer)
-                storage.save_peaks(
-                    &id_str,
-                    wf.audio.left_peaks.block_size as u64,
-                    &wf.audio.left_peaks.peaks,
-                    &wf.audio.right_peaks.peaks,
-                );
-            }
+            self.save_audio_and_peaks_to(storage);
 
             self.project_dirty = false;
             println!("Project '{}' saved", self.current_project_name);
@@ -342,46 +381,17 @@ impl App {
         println!("New project created");
     }
 
-    pub(crate) fn load_project(&mut self, project_path: &str) {
-        // Check if same project
-        if let Some(s) = &self.storage {
-            if let Some(cur) = s.current_project_path() {
-                if cur.to_string_lossy() == project_path {
-                    return;
-                }
-            }
-        }
-        self.save_project_state();
-
-        // Open the project DB
-        let path = PathBuf::from(project_path);
-        if let Some(s) = &mut self.storage {
-            if !s.open_project(&path) {
-                println!("Failed to open project at '{project_path}'");
-                return;
-            }
-        }
-
-        let state = match self.storage.as_ref().and_then(|s| s.load_project_state()) {
-            Some(s) => s,
-            None => {
-                println!("Failed to load project state from '{project_path}'");
-                return;
-            }
-        };
-
+    /// Apply a ProjectState snapshot and load audio/peaks from the given store.
+    /// Used by both `load_project()` (local) and `load_project_from_remote()`.
+    pub(crate) fn apply_project_state(&mut self, state: ProjectState, store: &dyn storage::ProjectStore) {
         println!(
-            "Loading project '{}' ({} objects, {} waveforms)",
+            "Applying project state '{}' ({} objects, {} waveforms)",
             state.name,
             state.objects.len(),
             state.waveforms.len(),
         );
 
-        self.current_project_name = if let Some(meta) = storage::Storage::read_project_json(&path) {
-            meta.name
-        } else {
-            state.name.clone()
-        };
+        self.current_project_name = state.name.clone();
         self.camera = Camera {
             position: state.camera_position,
             zoom: state.camera_zoom,
@@ -433,10 +443,10 @@ impl App {
             }))
             .collect();
 
-        // Restore audio data and peaks from DB
+        // Restore audio data and peaks from the store
         self.audio_clips.clear();
         self.source_audio_files.clear();
-        if let Some(s) = &self.storage {
+        {
             let wf_ids: Vec<EntityId> = self.waveforms.keys().cloned().collect();
             for wf_id in &wf_ids {
                 let id_str = wf_id.to_string();
@@ -447,8 +457,7 @@ impl App {
                 let mut left_peaks = wf.audio.left_peaks.clone();
                 let mut right_peaks = wf.audio.right_peaks.clone();
 
-                if let Some((file_bytes, ext)) = s.load_audio(&id_str) {
-                    // Decode audio from original file bytes
+                if let Some((file_bytes, ext)) = store.load_audio(&id_str) {
                     if let Some(loaded) = crate::audio::load_audio_from_bytes(&file_bytes, &ext) {
                         left_samples = loaded.left_samples;
                         right_samples = loaded.right_samples;
@@ -465,7 +474,6 @@ impl App {
                             duration_secs: 0.0,
                         });
                     }
-                    // Cache source file bytes for future saves
                     self.source_audio_files.insert(*wf_id, (file_bytes, ext));
                 } else {
                     self.audio_clips.insert(*wf_id, AudioClipData {
@@ -474,7 +482,7 @@ impl App {
                         duration_secs: 0.0,
                     });
                 }
-                if let Some((block_size, lp, rp)) = s.load_peaks(&id_str) {
+                if let Some((block_size, lp, rp)) = store.load_peaks(&id_str) {
                     left_peaks = Arc::new(WaveformPeaks::from_raw(block_size as usize, lp));
                     right_peaks = Arc::new(WaveformPeaks::from_raw(block_size as usize, rp));
                 }
@@ -524,7 +532,6 @@ impl App {
 
         self.sample_browser = {
             let settings = crate::settings::Settings::load();
-            // Migration: if settings has no folders but project file had some, migrate them.
             let mut settings = settings;
             if settings.sample_library_folders.is_empty() && !state.browser_folders.is_empty() {
                 settings.sample_library_folders = state.browser_folders.clone();
@@ -581,7 +588,6 @@ impl App {
 
         // Restore Main Layer
         self.master.volume = if state.master_volume == 0.0 && state.master_pan == 0.0 && state.master_effect_chain_id.is_empty() {
-            // Likely an older project that doesn't have main layer data — use defaults
             1.0
         } else {
             state.master_volume
@@ -629,6 +635,44 @@ impl App {
 
         self.sync_audio_clips();
         println!("Project '{}' loaded", self.current_project_name);
+    }
+
+    pub(crate) fn load_project(&mut self, project_path: &str) {
+        // Check if same project
+        if let Some(s) = &self.storage {
+            if let Some(cur) = s.current_project_path() {
+                if cur.to_string_lossy() == project_path {
+                    return;
+                }
+            }
+        }
+        self.save_project_state();
+
+        // Open the project DB
+        let path = PathBuf::from(project_path);
+        if let Some(s) = &mut self.storage {
+            if !s.open_project(&path) {
+                println!("Failed to open project at '{project_path}'");
+                return;
+            }
+        }
+
+        let state = match self.storage.as_ref().and_then(|s| s.load_project_state()) {
+            Some(s) => s,
+            None => {
+                println!("Failed to load project state from '{project_path}'");
+                return;
+            }
+        };
+
+        // Temporarily take storage out to avoid borrow conflict with &mut self
+        let storage = self.storage.take().unwrap();
+        let name_override = storage::Storage::read_project_json(&path).map(|m| m.name);
+        self.apply_project_state(state, &storage);
+        self.storage = Some(storage);
+        if let Some(name) = name_override {
+            self.current_project_name = name;
+        }
     }
 
     pub(crate) fn refresh_open_project_menu(&mut self) {

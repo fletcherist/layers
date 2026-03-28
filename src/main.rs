@@ -171,6 +171,7 @@ pub(crate) use crate::theme::WAVEFORM_COLORS;
 const AUDIO_EXTENSIONS: &[&str] = &["wav", "mp3", "ogg", "flac", "aac", "m4a", "mp4"];
 const SESSION_DB_WS_URL: &str = "ws://db.layers.audio";
 const SESSION_DB_HOST: &str = "db.layers.audio";
+const DEFAULT_DB_PASSWORD: &str = "layerslayerslayers";
 
 /// Strip known URL prefixes from a session address, return the bare project ID.
 pub(crate) fn parse_session_id(input: &str) -> String {
@@ -273,6 +274,19 @@ struct PaulStretchCache {
     original_clip: ui::waveform::AudioClipData,
     original_width: f32,
     factor: f32,
+}
+
+/// Progress updates from the background share-upload thread.
+pub(crate) enum ShareUploadStatus {
+    Progress { current: usize, total: usize, label: String },
+    Done,
+    Failed(String),
+}
+
+/// Result from the background join-download thread.
+pub(crate) enum JoinDownloadResult {
+    Ready(Box<storage::MemoryStore>),
+    Failed(String),
 }
 
 struct App {
@@ -411,6 +425,14 @@ struct App {
     pending_sync_complete: Option<NativeSyncCompleteReceiver>,
     reconnect_attempt: u32,
     last_reconnect_time: Option<TimeInstant>,
+    /// When true, skip `clear_entity_state()` on welcome — state was loaded from snapshot.
+    joined_via_snapshot: bool,
+    /// Waveform IDs that changed since last remote sync (for delta save).
+    remote_dirty_waveforms: std::collections::HashSet<EntityId>,
+    /// Background share upload progress channel.
+    share_upload_rx: Option<mpsc::Receiver<ShareUploadStatus>>,
+    /// Background join download result channel.
+    join_download_rx: Option<mpsc::Receiver<JoinDownloadResult>>,
     cached_instances: Vec<InstanceRaw>,
     cached_wf_verts: Vec<WaveformVertex>,
     cached_preview_wf_verts: Vec<WaveformVertex>,
@@ -609,6 +631,10 @@ impl App {
             pending_sync_complete: None,
             reconnect_attempt: 0,
             last_reconnect_time: None,
+            joined_via_snapshot: false,
+            remote_dirty_waveforms: std::collections::HashSet::new(),
+            share_upload_rx: None,
+            join_download_rx: None,
             cached_instances: Vec::new(),
             cached_wf_verts: Vec::new(),
             cached_preview_wf_verts: Vec::new(),
@@ -1409,6 +1435,10 @@ impl App {
             pending_sync_complete: None,
             reconnect_attempt: 0,
             last_reconnect_time: None,
+            joined_via_snapshot: false,
+            remote_dirty_waveforms: std::collections::HashSet::new(),
+            share_upload_rx: None,
+            join_download_rx: None,
             cached_instances: Vec::with_capacity(2048),
             cached_wf_verts: Vec::with_capacity(32768),
             cached_preview_wf_verts: Vec::new(),
@@ -1610,29 +1640,159 @@ impl App {
         self.mark_dirty();
     }
 
+    /// Connect RemoteStorage to the remote DB for a project (no op sync yet).
     #[cfg(feature = "native")]
-    fn connect_remote_session(&mut self, project_id: &str) {
+    fn connect_remote_storage(&mut self, project_id: &str) {
         let url = SESSION_DB_WS_URL;
-
-        // RemoteStorage needs its own Arc<Runtime> for audio assets
         let rs_rt = std::sync::Arc::new(
             tokio::runtime::Builder::new_multi_thread()
                 .enable_all()
                 .build()
                 .expect("tokio rt for remote storage"),
         );
-        let default_password = "layerslayerslayers";
-        if let Some(rs) = storage::RemoteStorage::connect(url, Some(default_password), rs_rt) {
+        if let Some(rs) = storage::RemoteStorage::connect(url, Some(DEFAULT_DB_PASSWORD), rs_rt) {
             rs.use_project(project_id);
             self.remote_storage = Some(std::sync::Arc::new(rs));
         }
+    }
 
-        // Real-time op sync
-        self.connect_to_server(url, project_id, Some(default_password));
+    /// Share flow: connect RemoteStorage, push local project to remote (background), start op sync.
+    #[cfg(feature = "native")]
+    fn share_session(&mut self, project_id: &str) {
+        self.connect_remote_storage(project_id);
+        self.push_project_to_remote();
+        self.connect_to_server(SESSION_DB_WS_URL, project_id, Some(DEFAULT_DB_PASSWORD));
 
         self.toast_manager.push(
-            format!("Connecting to {SESSION_DB_HOST}/{project_id}…"),
+            format!("Sharing to {SESSION_DB_HOST}/{project_id}…"),
             ui::toast::ToastKind::Info,
+        );
+    }
+
+    /// Join flow: connect RemoteStorage, download project snapshot, then start op sync.
+    #[cfg(feature = "native")]
+    fn join_session(&mut self, project_id: &str) {
+        self.connect_remote_storage(project_id);
+        self.load_project_from_remote();
+        self.connect_to_server(SESSION_DB_WS_URL, project_id, Some(DEFAULT_DB_PASSWORD));
+
+        self.toast_manager.push(
+            format!("Joining {SESSION_DB_HOST}/{project_id}…"),
+            ui::toast::ToastKind::Info,
+        );
+    }
+
+    /// Push entire local project to remote on a background thread.
+    /// Clears remote data first (ops, state, audio, peaks) then uploads everything.
+    #[cfg(feature = "native")]
+    fn push_project_to_remote(&mut self) {
+        let rs = match &self.remote_storage {
+            Some(rs) => rs.clone(),
+            None => return,
+        };
+
+        // Build state and collect audio data on main thread (fast, no network I/O)
+        let state = self.build_project_state();
+        let mut audio_data: Vec<(String, Vec<u8>, String)> = Vec::new();
+        let mut peaks_data: Vec<(String, u64, Vec<f32>, Vec<f32>)> = Vec::new();
+
+        for (wf_id, wf) in self.waveforms.iter() {
+            let id_str = wf_id.to_string();
+            if let Some((file_bytes, ext)) = self.source_audio_files.get(wf_id) {
+                audio_data.push((id_str.clone(), file_bytes.clone(), ext.clone()));
+            } else {
+                let wav_bytes = crate::audio::encode_wav_bytes(
+                    &wf.audio.left_samples,
+                    &wf.audio.right_samples,
+                    wf.audio.sample_rate,
+                );
+                audio_data.push((id_str.clone(), wav_bytes, "wav".to_string()));
+            }
+            peaks_data.push((
+                id_str,
+                wf.audio.left_peaks.block_size as u64,
+                wf.audio.left_peaks.peaks.clone(),
+                wf.audio.right_peaks.peaks.clone(),
+            ));
+        }
+
+        let (tx, rx) = mpsc::channel::<ShareUploadStatus>();
+        self.share_upload_rx = Some(rx);
+
+        let total = audio_data.len();
+        std::thread::spawn(move || {
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                // Wipe remote for a clean slate
+                rs.clear_project_data();
+
+                // Push project state snapshot
+                rs.save_project_state(state);
+
+                // Push audio + peaks
+                for (i, ((wf_id, file_bytes, ext), (peaks_id, block_size, left, right)))
+                    in audio_data.into_iter().zip(peaks_data.into_iter()).enumerate()
+                {
+                    let _ = tx.send(ShareUploadStatus::Progress {
+                        current: i + 1,
+                        total,
+                        label: wf_id.clone(),
+                    });
+                    rs.save_audio(&wf_id, &file_bytes, &ext);
+                    rs.save_peaks(&peaks_id, block_size, &left, &right);
+                }
+            }));
+            match result {
+                Ok(()) => { let _ = tx.send(ShareUploadStatus::Done); }
+                Err(_) => { let _ = tx.send(ShareUploadStatus::Failed("Upload thread panicked".into())); }
+            }
+        });
+    }
+
+    /// Start downloading project from remote on a background thread.
+    /// The result is polled in the event loop via `join_download_rx`.
+    #[cfg(feature = "native")]
+    fn load_project_from_remote(&mut self) {
+        let rs = match &self.remote_storage {
+            Some(rs) => rs.clone(),
+            None => return,
+        };
+
+        let (tx, rx) = mpsc::channel::<JoinDownloadResult>();
+        self.join_download_rx = Some(rx);
+
+        self.toast_manager.push_persistent(
+            "join-download",
+            "Downloading project…",
+            ui::toast::ToastKind::Info,
+        );
+
+        std::thread::spawn(move || {
+            match storage::MemoryStore::fetch_from(rs.as_ref()) {
+                Some(store) => { let _ = tx.send(JoinDownloadResult::Ready(Box::new(store))); }
+                None => { let _ = tx.send(JoinDownloadResult::Failed("No project found on remote".into())); }
+            }
+        });
+    }
+
+    /// Apply a completed join download to local state. Called from the event loop.
+    #[cfg(feature = "native")]
+    fn apply_join_download(&mut self, store: storage::MemoryStore) {
+        let state = match store.state.clone() {
+            Some(s) => s,
+            None => return,
+        };
+
+        if let Some(local_storage) = &mut self.storage {
+            local_storage.create_temp_project();
+        }
+
+        self.apply_project_state(state, &store);
+        self.save_project_state();
+        self.joined_via_snapshot = true;
+
+        self.toast_manager.push(
+            "Project downloaded from remote",
+            ui::toast::ToastKind::Success,
         );
     }
 
@@ -1643,9 +1803,9 @@ impl App {
             return;
         }
 
-        self.connect_remote_session(&project_id);
-
         if is_share {
+            self.share_session(&project_id);
+
             let url = format!("{SESSION_DB_HOST}/{project_id}");
             #[cfg(target_os = "macos")]
             {
@@ -1664,11 +1824,13 @@ impl App {
                 format!("Session link copied: {url}"),
                 ui::toast::ToastKind::Success,
             );
+        } else {
+            self.join_session(&project_id);
         }
     }
 
     #[cfg(not(feature = "native"))]
-    fn connect_remote_session(&mut self, _project_id: &str) {}
+    fn connect_remote_storage(&mut self, _project_id: &str) {}
 
     #[cfg(not(feature = "native"))]
     fn submit_session(&mut self, _is_share: bool, _input: &str) {}
@@ -1680,10 +1842,10 @@ impl App {
         }
         let id = self.share_id.as_ref().unwrap().clone();
 
-        // Auto-connect to the session if not already connected to it
+        // Auto-connect and push to remote if not already connected
         #[cfg(feature = "native")]
         if self.connect_project_id.as_deref() != Some(id.as_str()) {
-            self.connect_remote_session(&id);
+            self.share_session(&id);
         }
 
         let url = format!("https://layers.audio/projects/{id}");
@@ -1732,6 +1894,9 @@ impl App {
         self.applied_remote_seqs.clear();
         self.following_user = None;
         self.remote_storage = None;
+        self.joined_via_snapshot = false;
+        self.remote_dirty_waveforms.clear();
+        self.share_upload_rx = None;
 
         // Drop tokio runtime — cleans up all spawned async tasks
         self.ws_runtime = None;
@@ -4776,7 +4941,7 @@ fn main() {
     let db_password = std::env::args()
         .position(|a| a == "--db-password")
         .and_then(|i| std::env::args().nth(i + 1))
-        .or_else(|| Some("layerslayerslayers".to_string()));
+        .or_else(|| Some(DEFAULT_DB_PASSWORD.to_string()));
 
     let event_loop = EventLoop::new().unwrap();
 

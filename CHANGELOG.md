@@ -1,3 +1,5 @@
+- fix: share/join session — non-blocking join download, deduplicated password const, single build_project_state call, upload panic handling (54.9k loc)
+- feat: share session pushes local project to remote (background upload); join session downloads full project from remote; save dual-writes to remote with delta-only audio sync (54.8k loc)
 - fix: recording group no longer has extra padding — uses same zero-padding bounds as Cmd+G grouping (54.5k loc)
 - refactor: unified TextInput component — all 6 text inputs (search, palette, session, rename, waveform, text notes) share one struct with cursor positioning, arrow keys, Cmd+V paste (54.5k loc)
 - fix: Join Session input — Cmd+V paste from system clipboard, cursor blink, Cmd+A/Cmd+Backspace (54.3k loc)

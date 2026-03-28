@@ -67,6 +67,51 @@ impl RemoteStorage {
             log::info!("[RemoteStorage] Using project DB: project_{project_id}");
         }
     }
+
+    /// Wipe all project data from remote: state, audio, peaks, and ops.
+    /// Used when sharing to ensure a clean slate before pushing the local snapshot.
+    pub fn clear_project_data(&self) {
+        let db = self.db.clone();
+        let result = run_on_rt(&self.rt, async move {
+            let _: Vec<ProjectState> = db.delete("state").await?;
+            let _: Vec<StoredAudioData> = db.delete("audio").await?;
+            let _: Vec<StoredPeaks> = db.delete("peaks").await?;
+            // Clear ops table (raw query — no typed struct for ops)
+            db.query("DELETE FROM ops").await?;
+            Ok::<(), surrealdb::Error>(())
+        });
+        if let Err(e) = result {
+            log::error!("[RemoteStorage] Failed to clear project data: {e}");
+        } else {
+            log::info!("[RemoteStorage] Cleared all remote project data");
+        }
+    }
+
+    /// Delete audio for a single waveform (used by delta sync on save).
+    pub fn delete_audio(&self, waveform_id: &str) {
+        let db = self.db.clone();
+        let wf_id = waveform_id.to_string();
+        let result = run_on_rt(&self.rt, async move {
+            let _: Option<StoredAudioData> = db.delete(("audio", &*wf_id)).await?;
+            Ok::<(), surrealdb::Error>(())
+        });
+        if let Err(e) = result {
+            log::error!("[RemoteStorage] Failed to delete audio for {waveform_id}: {e}");
+        }
+    }
+
+    /// Delete peaks for a single waveform (used by delta sync on save).
+    pub fn delete_peaks(&self, waveform_id: &str) {
+        let db = self.db.clone();
+        let wf_id = waveform_id.to_string();
+        let result = run_on_rt(&self.rt, async move {
+            let _: Option<StoredPeaks> = db.delete(("peaks", &*wf_id)).await?;
+            Ok::<(), surrealdb::Error>(())
+        });
+        if let Err(e) = result {
+            log::error!("[RemoteStorage] Failed to delete peaks for {waveform_id}: {e}");
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------

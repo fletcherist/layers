@@ -244,7 +244,12 @@ impl ApplicationHandler for App {
                     self.toast_manager.push("Connected", crate::ui::toast::ToastKind::Success);
 
                     // Clean-slate: clear all entities before ops replay
-                    self.clear_entity_state();
+                    // Skip if we joined via snapshot — state is already loaded
+                    if self.joined_via_snapshot {
+                        self.joined_via_snapshot = false;
+                    } else {
+                        self.clear_entity_state();
+                    }
                 }
             }
 
@@ -263,6 +268,57 @@ impl ApplicationHandler for App {
                     }
                     Err(tokio::sync::oneshot::error::TryRecvError::Empty) => {
                         // Not ready yet, keep polling
+                    }
+                }
+            }
+
+            // --- Poll share upload progress (non-blocking) ---
+            if let Some(rx) = &self.share_upload_rx {
+                let mut done = false;
+                while let Ok(status) = rx.try_recv() {
+                    match status {
+                        crate::ShareUploadStatus::Progress { current, total, .. } => {
+                            self.toast_manager.push_persistent(
+                                "share-upload",
+                                format!("Uploading audio {current}/{total}…"),
+                                crate::ui::toast::ToastKind::Info,
+                            );
+                        }
+                        crate::ShareUploadStatus::Done => {
+                            self.toast_manager.dismiss_by_id("share-upload");
+                            self.toast_manager.push("Project shared", crate::ui::toast::ToastKind::Success);
+                            done = true;
+                        }
+                        crate::ShareUploadStatus::Failed(msg) => {
+                            self.toast_manager.dismiss_by_id("share-upload");
+                            self.toast_manager.push(
+                                format!("Share failed: {msg}"),
+                                crate::ui::toast::ToastKind::Error,
+                            );
+                            done = true;
+                        }
+                    }
+                }
+                if done {
+                    self.share_upload_rx = None;
+                }
+            }
+
+            // --- Poll join download result (non-blocking) ---
+            if let Some(rx) = &self.join_download_rx {
+                if let Ok(result) = rx.try_recv() {
+                    self.join_download_rx = None;
+                    self.toast_manager.dismiss_by_id("join-download");
+                    match result {
+                        crate::JoinDownloadResult::Ready(store) => {
+                            self.apply_join_download(*store);
+                        }
+                        crate::JoinDownloadResult::Failed(msg) => {
+                            self.toast_manager.push(
+                                format!("Join failed: {msg}"),
+                                crate::ui::toast::ToastKind::Error,
+                            );
+                        }
                     }
                 }
             }
