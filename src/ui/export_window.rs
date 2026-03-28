@@ -251,7 +251,7 @@ impl ExportWindow {
             position: [0.0, 0.0],
             size: [screen_w, screen_h],
             color: t.shadow_strong,
-            border_radius: 0.0,
+            border_radius: 0.0, shadow_blur: 0.0,
         });
 
         // Shadow
@@ -260,7 +260,7 @@ impl ExportWindow {
             position: [wp[0] + so, wp[1] + so],
             size: [ws[0] + 2.0 * scale, ws[1] + 2.0 * scale],
             color: t.shadow,
-            border_radius: br,
+            border_radius: br, shadow_blur: 0.0,
         });
 
         // Window background
@@ -268,7 +268,7 @@ impl ExportWindow {
             position: wp,
             size: ws,
             color: t.bg_base,
-            border_radius: br,
+            border_radius: br, shadow_blur: 0.0,
         });
 
         match self.state {
@@ -320,7 +320,7 @@ impl ExportWindow {
             position: ebp,
             size: ebs,
             color: btn_color,
-            border_radius: 6.0 * scale,
+            border_radius: 6.0 * scale, shadow_blur: 0.0,
         });
     }
 
@@ -345,7 +345,7 @@ impl ExportWindow {
             position: [bar_x, bar_y],
             size: [bar_w, bar_h],
             color: crate::theme::with_alpha(t.bg_elevated, 0.8),
-            border_radius: bar_h * 0.5,
+            border_radius: bar_h * 0.5, shadow_blur: 0.0,
         });
 
         // Progress bar fill
@@ -355,7 +355,7 @@ impl ExportWindow {
                 position: [bar_x, bar_y],
                 size: [fill_w, bar_h],
                 color: t.accent,
-                border_radius: bar_h * 0.5,
+                border_radius: bar_h * 0.5, shadow_blur: 0.0,
             });
         }
     }

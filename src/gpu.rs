@@ -44,6 +44,7 @@ struct VertexOutput {
     @location(1) local_pos: vec2<f32>,
     @location(2) rect_size: vec2<f32>,
     @location(3) border_radius: f32,
+    @location(4) shadow_blur: f32,
 }
 
 @vertex
@@ -53,6 +54,7 @@ fn vs_main(
     @location(2) obj_size: vec2<f32>,
     @location(3) obj_color: vec4<f32>,
     @location(4) radius: f32,
+    @location(5) shadow_blur: f32,
 ) -> VertexOutput {
     var out: VertexOutput;
     let world_pos = obj_pos + position * obj_size;
@@ -61,6 +63,7 @@ fn vs_main(
     out.local_pos = position * obj_size;
     out.rect_size = obj_size;
     out.border_radius = radius;
+    out.shadow_blur = shadow_blur;
     return out;
 }
 
@@ -75,6 +78,10 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let center = in.rect_size * 0.5;
     let p = in.local_pos - center;
     let d = rounded_box_sdf(p, center, r);
+    if (in.shadow_blur > 0.0) {
+        let alpha = 1.0 - smoothstep(-in.shadow_blur, 0.0, d);
+        return vec4<f32>(in.color.rgb, in.color.a * alpha);
+    }
     let fw = fwidth(d);
     if (r < 0.01) {
         return in.color;
@@ -151,6 +158,7 @@ pub struct InstanceRaw {
     pub size: [f32; 2],
     pub color: [f32; 4],
     pub border_radius: f32,
+    pub shadow_blur: f32,
 }
 
 #[repr(C)]
@@ -237,25 +245,25 @@ pub(crate) fn push_border(
         position: pos,
         size: [size[0], bw],
         color,
-        border_radius: 0.0,
+        border_radius: 0.0, shadow_blur: 0.0,
     });
     out.push(InstanceRaw {
         position: [pos[0], pos[1] + size[1] - bw],
         size: [size[0], bw],
         color,
-        border_radius: 0.0,
+        border_radius: 0.0, shadow_blur: 0.0,
     });
     out.push(InstanceRaw {
         position: pos,
         size: [bw, size[1]],
         color,
-        border_radius: 0.0,
+        border_radius: 0.0, shadow_blur: 0.0,
     });
     out.push(InstanceRaw {
         position: [pos[0] + size[0] - bw, pos[1]],
         size: [bw, size[1]],
         color,
-        border_radius: 0.0,
+        border_radius: 0.0, shadow_blur: 0.0,
     });
 }
 
@@ -520,6 +528,11 @@ impl Gpu {
                 wgpu::VertexAttribute {
                     offset: 32,
                     shader_location: 4,
+                    format: wgpu::VertexFormat::Float32,
+                },
+                wgpu::VertexAttribute {
+                    offset: 36,
+                    shader_location: 5,
                     format: wgpu::VertexFormat::Float32,
                 },
             ],
@@ -855,7 +868,7 @@ impl Gpu {
                 position: [pos[0] - 4.0, pos[1] - 4.0],
                 size: [160.0 * self.scale_factor, 24.0 * self.scale_factor],
                 color: settings.theme.tooltip_bg,
-                border_radius: 4.0 * self.scale_factor,
+                border_radius: 4.0 * self.scale_factor, shadow_blur: 0.0,
             });
         }
 
@@ -896,7 +909,7 @@ impl Gpu {
                 position: sbp,
                 size: sbs,
                 color: btn_color,
-                border_radius: sbs[1] * 0.5,
+                border_radius: sbs[1] * 0.5, shadow_blur: 0.0,
             });
         }
 
@@ -928,7 +941,7 @@ impl Gpu {
                     position: [pill_x, pill_y],
                     size: [pill_w, pill_h],
                     color: settings.theme.tooltip_bg,
-                    border_radius: 4.0 * s,
+                    border_radius: 4.0 * s, shadow_blur: 0.0,
                 });
             }
             }
@@ -1747,7 +1760,7 @@ impl Gpu {
                             position: [cursor_x, cursor_y],
                             size: [cursor_w, line_height],
                             color: [tc[0], tc[1], tc[2], 0.9],
-                            border_radius: 0.0,
+                            border_radius: 0.0, shadow_blur: 0.0,
                         });
                     }
                 }

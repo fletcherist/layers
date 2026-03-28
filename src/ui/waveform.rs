@@ -228,7 +228,7 @@ pub fn build_waveform_instances(
         position: wf.position,
         size: wf.size,
         color: bg_color,
-        border_radius: br,
+        border_radius: br, shadow_blur: 0.0,
     });
 
     if is_hovered && !is_selected {
@@ -245,7 +245,7 @@ pub fn build_waveform_instances(
         ],
         size: [wf.size[0], center_line_h],
         color: [1.0, 1.0, 1.0, 0.08 * alpha_mul],
-        border_radius: 0.0,
+        border_radius: 0.0, shadow_blur: 0.0,
     });
 
     // Fade dark overlays and curve lines are rendered as triangles via build_fade_curve_triangles()
@@ -261,7 +261,7 @@ pub fn build_waveform_instances(
             position: [fi_hx, fi_hy],
             size: [handle_sz, handle_sz],
             color: handle_color,
-            border_radius: handle_br,
+            border_radius: handle_br, shadow_blur: 0.0,
         });
 
         let fo_hx = wf.position[0] + wf.size[0] - wf.fade_out_px - handle_sz * 0.5;
@@ -270,7 +270,7 @@ pub fn build_waveform_instances(
             position: [fo_hx, fo_hy],
             size: [handle_sz, handle_sz],
             color: handle_color,
-            border_radius: handle_br,
+            border_radius: handle_br, shadow_blur: 0.0,
         });
 
         // Fade curve midpoint dots (diamond handles)
@@ -284,7 +284,7 @@ pub fn build_waveform_instances(
                 position: [dx - dot_sz * 0.5, dy - dot_sz * 0.5],
                 size: [dot_sz, dot_sz],
                 color: dot_color,
-                border_radius: dot_br,
+                border_radius: dot_br, shadow_blur: 0.0,
             });
         }
 
@@ -294,7 +294,7 @@ pub fn build_waveform_instances(
                 position: [dx - dot_sz * 0.5, dy - dot_sz * 0.5],
                 size: [dot_sz, dot_sz],
                 color: dot_color,
-                border_radius: dot_br,
+                border_radius: dot_br, shadow_blur: 0.0,
             });
         }
     }
@@ -947,7 +947,7 @@ pub fn build_automation_dot_instances(
             position: [x - dot_sz * 0.5, y - dot_sz * 0.5],
             size: [dot_sz, dot_sz],
             color: dot_color,
-            border_radius: dot_br,
+            border_radius: dot_br, shadow_blur: 0.0,
         });
     }
 

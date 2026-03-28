@@ -9,7 +9,7 @@ pub fn push_instance(
     color: [f32; 4],
     border_radius: f32,
 ) {
-    out.push(InstanceRaw { position: pos, size, color, border_radius });
+    out.push(InstanceRaw { position: pos, size, color, border_radius, shadow_blur: 0.0 });
 }
 
 /// Push a centered button label.

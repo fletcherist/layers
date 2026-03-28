@@ -973,21 +973,21 @@ impl SampleBrowser {
                 position: [0.0, 0.0],
                 size: [w, screen_h],
                 color: settings.theme.bg_surface,
-                border_radius: 0.0,
+                border_radius: 0.0, shadow_blur: 0.0,
             });
             if self.toggle_hovered {
                 out.push(InstanceRaw {
                     position: [0.0, 0.0],
                     size: [w, screen_h],
                     color: [1.0, 1.0, 1.0, 0.06],
-                    border_radius: 0.0,
+                    border_radius: 0.0, shadow_blur: 0.0,
                 });
             }
             out.push(InstanceRaw {
                 position: [w - 1.0 * scale, 0.0],
                 size: [1.0 * scale, screen_h],
                 color: [1.0, 1.0, 1.0, 0.07],
-                border_radius: 0.0,
+                border_radius: 0.0, shadow_blur: 0.0,
             });
             return out;
         }
@@ -1005,7 +1005,7 @@ impl SampleBrowser {
             position: [0.0, 0.0],
             size: [w, screen_h],
             color: settings.theme.bg_base,
-            border_radius: 0.0,
+            border_radius: 0.0, shadow_blur: 0.0,
         });
 
         // --- Header ---
@@ -1013,14 +1013,14 @@ impl SampleBrowser {
             position: [0.0, 0.0],
             size: [w, header_h],
             color: settings.theme.bg_base,
-            border_radius: 0.0,
+            border_radius: 0.0, shadow_blur: 0.0,
         });
         // Separator under header
         out.push(InstanceRaw {
             position: [0.0, header_h - 1.0 * scale],
             size: [w, 1.0 * scale],
             color: [1.0, 1.0, 1.0, 0.07],
-            border_radius: 0.0,
+            border_radius: 0.0, shadow_blur: 0.0,
         });
         // --- Search bar row (below header) ---
         {
@@ -1031,14 +1031,14 @@ impl SampleBrowser {
                 position: [0.0, row_y],
                 size: [w, search_bar_h],
                 color: settings.theme.bg_base,
-                border_radius: 0.0,
+                border_radius: 0.0, shadow_blur: 0.0,
             });
             // Separator under search bar row
             out.push(InstanceRaw {
                 position: [0.0, row_y + search_bar_h - 1.0 * scale],
                 size: [w, 1.0 * scale],
                 color: [1.0, 1.0, 1.0, 0.07],
-                border_radius: 0.0,
+                border_radius: 0.0, shadow_blur: 0.0,
             });
             let margin = 6.0 * scale;
             let sb_x = margin;
@@ -1050,7 +1050,7 @@ impl SampleBrowser {
                 position: [sb_x, sb_y],
                 size: [sb_w_inner, sb_h],
                 color: bar_color,
-                border_radius: 6.0 * scale,
+                border_radius: 6.0 * scale, shadow_blur: 0.0,
             });
 
 
@@ -1061,7 +1061,7 @@ impl SampleBrowser {
                     position: cp,
                     size: cs,
                     color: settings.theme.item_hover,
-                    border_radius: cs[0] * 0.5,
+                    border_radius: cs[0] * 0.5, shadow_blur: 0.0,
                 });
             }
         }
@@ -1072,7 +1072,7 @@ impl SampleBrowser {
             position: [0.0, ct],
             size: [sb_w, screen_h - ct],
             color: settings.theme.bg_base,
-            border_radius: 0.0,
+            border_radius: 0.0, shadow_blur: 0.0,
         });
 
         // --- Sidebar items (category tabs) ---
@@ -1092,21 +1092,21 @@ impl SampleBrowser {
                         settings.theme.accent[2],
                         0.12,
                     ],
-                    border_radius: 0.0,
+                    border_radius: 0.0, shadow_blur: 0.0,
                 });
                 // Left accent bar
                 out.push(InstanceRaw {
                     position: [0.0, y],
                     size: [2.5 * scale, sb_item_h],
                     color: settings.theme.accent,
-                    border_radius: 0.0,
+                    border_radius: 0.0, shadow_blur: 0.0,
                 });
             } else if self.hovered_sidebar == Some(i) {
                 out.push(InstanceRaw {
                     position: [0.0, y],
                     size: [sb_w, sb_item_h],
                     color: settings.theme.item_hover,
-                    border_radius: 0.0,
+                    border_radius: 0.0, shadow_blur: 0.0,
                 });
             }
         }
@@ -1122,7 +1122,7 @@ impl SampleBrowser {
                 position: [8.0 * scale, places_y - 5.0 * scale],
                 size: [sb_w - 16.0 * scale, 1.0 * scale],
                 color: [1.0, 1.0, 1.0, 0.07],
-                border_radius: 0.0,
+                border_radius: 0.0, shadow_blur: 0.0,
             });
 
             for (i, _) in self.root_folders.iter().enumerate() {
@@ -1137,20 +1137,20 @@ impl SampleBrowser {
                             settings.theme.accent[2],
                             0.12,
                         ],
-                        border_radius: 0.0,
+                        border_radius: 0.0, shadow_blur: 0.0,
                     });
                     out.push(InstanceRaw {
                         position: [0.0, row_y],
                         size: [2.5 * scale, row_h],
                         color: settings.theme.accent,
-                        border_radius: 0.0,
+                        border_radius: 0.0, shadow_blur: 0.0,
                     });
                 } else if self.hovered_place == Some(i) {
                     out.push(InstanceRaw {
                         position: [0.0, row_y],
                         size: [sb_w, row_h],
                         color: settings.theme.item_hover,
-                        border_radius: 0.0,
+                        border_radius: 0.0, shadow_blur: 0.0,
                     });
                 }
             }
@@ -1162,7 +1162,7 @@ impl SampleBrowser {
                     position: [0.0, add_row_y],
                     size: [sb_w, row_h],
                     color: settings.theme.item_hover,
-                    border_radius: 0.0,
+                    border_radius: 0.0, shadow_blur: 0.0,
                 });
             }
         }
@@ -1172,7 +1172,7 @@ impl SampleBrowser {
             position: [sb_w - 1.0 * scale, ct],
             size: [1.0 * scale, screen_h - ct],
             color: [1.0, 1.0, 1.0, 0.07],
-            border_radius: 0.0,
+            border_radius: 0.0, shadow_blur: 0.0,
         });
 
         // --- Content area items ---
@@ -1200,14 +1200,14 @@ impl SampleBrowser {
                         position: [cx, clip_y],
                         size: [content_w, 1.0 * scale],
                         color: [1.0, 1.0, 1.0, 0.07],
-                        border_radius: 0.0,
+                        border_radius: 0.0, shadow_blur: 0.0,
                     });
                     // Section header background
                     out.push(InstanceRaw {
                         position: [cx, clip_y],
                         size: [content_w, clip_h],
                         color: settings.theme.bg_base,
-                        border_radius: 0.0,
+                        border_radius: 0.0, shadow_blur: 0.0,
                     });
                     // Badge
                     let badge_w = 18.0 * scale;
@@ -1219,7 +1219,7 @@ impl SampleBrowser {
                             position: [badge_x, badge_y],
                             size: [badge_w, badge_h],
                             color: settings.theme.accent_muted,
-                            border_radius: 2.0 * scale,
+                            border_radius: 2.0 * scale, shadow_blur: 0.0,
                         });
                     }
                     // Hover
@@ -1228,7 +1228,7 @@ impl SampleBrowser {
                             position: [cx, clip_y],
                             size: [content_w, clip_h],
                             color: settings.theme.item_hover,
-                            border_radius: 0.0,
+                            border_radius: 0.0, shadow_blur: 0.0,
                         });
                     }
                 }
@@ -1238,7 +1238,7 @@ impl SampleBrowser {
                         position: [cx, clip_y],
                         size: [content_w, clip_h],
                         color: settings.theme.bg_base,
-                        border_radius: 0.0,
+                        border_radius: 0.0, shadow_blur: 0.0,
                     });
                     // Hover
                     if self.hovered_entry == Some(i) {
@@ -1246,7 +1246,7 @@ impl SampleBrowser {
                             position: [cx, clip_y],
                             size: [content_w, clip_h],
                             color: settings.theme.item_hover,
-                            border_radius: 0.0,
+                            border_radius: 0.0, shadow_blur: 0.0,
                         });
                     }
                 }
@@ -1257,7 +1257,7 @@ impl SampleBrowser {
                         position: [cx, clip_y],
                         size: [content_w, clip_h],
                         color: settings.theme.bg_base,
-                        border_radius: 0.0,
+                        border_radius: 0.0, shadow_blur: 0.0,
                     });
                     let entry_entity_id = match &entry.kind {
                         EntryKind::LayerNode { id, .. } => Some(*id),
@@ -1272,7 +1272,7 @@ impl SampleBrowser {
                             position: [cx, clip_y],
                             size: [content_w, clip_h],
                             color: [a[0], a[1], a[2], 0.22],
-                            border_radius: 0.0,
+                            border_radius: 0.0, shadow_blur: 0.0,
                         });
                     }
                     if self.hovered_entry == Some(i) {
@@ -1280,7 +1280,7 @@ impl SampleBrowser {
                             position: [cx, clip_y],
                             size: [content_w, clip_h],
                             color: settings.theme.item_hover,
-                            border_radius: 0.0,
+                            border_radius: 0.0, shadow_blur: 0.0,
                         });
                     }
                     // Chevron for expandable nodes (not instruments — always expanded)
@@ -1297,13 +1297,13 @@ impl SampleBrowser {
                                 position: [chev_x - bar_w * 0.5, cy_mid - bar_h],
                                 size: [bar_w, bar_h],
                                 color: crate::theme::with_alpha(settings.theme.text_primary, 0.40),
-                                border_radius: 0.0,
+                                border_radius: 0.0, shadow_blur: 0.0,
                             });
                             out.push(InstanceRaw {
                                 position: [chev_x - bar_w * 0.25, cy_mid],
                                 size: [bar_w * 0.5, bar_h],
                                 color: crate::theme::with_alpha(settings.theme.text_primary, 0.40),
-                                border_radius: 0.0,
+                                border_radius: 0.0, shadow_blur: 0.0,
                             });
                         } else {
                             let bar_w = 1.5 * scale;
@@ -1312,13 +1312,13 @@ impl SampleBrowser {
                                 position: [chev_x - bar_w, cy_mid - bar_h * 0.5],
                                 size: [bar_w, bar_h],
                                 color: crate::theme::with_alpha(settings.theme.text_primary, 0.40),
-                                border_radius: 0.0,
+                                border_radius: 0.0, shadow_blur: 0.0,
                             });
                             out.push(InstanceRaw {
                                 position: [chev_x, cy_mid - bar_h * 0.25],
                                 size: [bar_w, bar_h * 0.5],
                                 color: crate::theme::with_alpha(settings.theme.text_primary, 0.40),
-                                border_radius: 0.0,
+                                border_radius: 0.0, shadow_blur: 0.0,
                             });
                         }
                         }
@@ -1334,17 +1334,17 @@ impl SampleBrowser {
                             let dash = icon_sz * 0.4;
                             let col = crate::theme::with_alpha(settings.theme.text_primary, 0.50);
                             // Top-left corner
-                            out.push(InstanceRaw { position: [icon_x, icon_y], size: [dash, bar_t], color: col, border_radius: 0.0 });
-                            out.push(InstanceRaw { position: [icon_x, icon_y], size: [bar_t, dash], color: col, border_radius: 0.0 });
+                            out.push(InstanceRaw { position: [icon_x, icon_y], size: [dash, bar_t], color: col, border_radius: 0.0 , shadow_blur: 0.0 });
+                            out.push(InstanceRaw { position: [icon_x, icon_y], size: [bar_t, dash], color: col, border_radius: 0.0 , shadow_blur: 0.0 });
                             // Top-right corner
-                            out.push(InstanceRaw { position: [icon_x + icon_sz - dash, icon_y], size: [dash, bar_t], color: col, border_radius: 0.0 });
-                            out.push(InstanceRaw { position: [icon_x + icon_sz - bar_t, icon_y], size: [bar_t, dash], color: col, border_radius: 0.0 });
+                            out.push(InstanceRaw { position: [icon_x + icon_sz - dash, icon_y], size: [dash, bar_t], color: col, border_radius: 0.0 , shadow_blur: 0.0 });
+                            out.push(InstanceRaw { position: [icon_x + icon_sz - bar_t, icon_y], size: [bar_t, dash], color: col, border_radius: 0.0 , shadow_blur: 0.0 });
                             // Bottom-left corner
-                            out.push(InstanceRaw { position: [icon_x, icon_y + icon_sz - bar_t], size: [dash, bar_t], color: col, border_radius: 0.0 });
-                            out.push(InstanceRaw { position: [icon_x, icon_y + icon_sz - dash], size: [bar_t, dash], color: col, border_radius: 0.0 });
+                            out.push(InstanceRaw { position: [icon_x, icon_y + icon_sz - bar_t], size: [dash, bar_t], color: col, border_radius: 0.0 , shadow_blur: 0.0 });
+                            out.push(InstanceRaw { position: [icon_x, icon_y + icon_sz - dash], size: [bar_t, dash], color: col, border_radius: 0.0 , shadow_blur: 0.0 });
                             // Bottom-right corner
-                            out.push(InstanceRaw { position: [icon_x + icon_sz - dash, icon_y + icon_sz - bar_t], size: [dash, bar_t], color: col, border_radius: 0.0 });
-                            out.push(InstanceRaw { position: [icon_x + icon_sz - bar_t, icon_y + icon_sz - dash], size: [bar_t, dash], color: col, border_radius: 0.0 });
+                            out.push(InstanceRaw { position: [icon_x + icon_sz - dash, icon_y + icon_sz - bar_t], size: [dash, bar_t], color: col, border_radius: 0.0 , shadow_blur: 0.0 });
+                            out.push(InstanceRaw { position: [icon_x + icon_sz - bar_t, icon_y + icon_sz - dash], size: [bar_t, dash], color: col, border_radius: 0.0 , shadow_blur: 0.0 });
                         }
                     }
                     // Solo/Mute buttons (right-aligned) — only for Waveform, Instrument, Group
@@ -1368,7 +1368,7 @@ impl SampleBrowser {
                             position: [cx, y],
                             size: [content_w, item_h],
                             color: [a[0], a[1], a[2], 0.22],
-                            border_radius: 0.0,
+                            border_radius: 0.0, shadow_blur: 0.0,
                         });
                     }
                     // Hover
@@ -1377,7 +1377,7 @@ impl SampleBrowser {
                             position: [cx, clip_y],
                             size: [content_w, clip_h],
                             color: settings.theme.item_hover,
-                            border_radius: 0.0,
+                            border_radius: 0.0, shadow_blur: 0.0,
                         });
                     }
 
@@ -1397,13 +1397,13 @@ impl SampleBrowser {
                                 position: [chev_x - bar_w * 0.5, cy - bar_h],
                                 size: [bar_w, bar_h],
                                 color: crate::theme::with_alpha(settings.theme.text_primary, 0.40),
-                                border_radius: 0.0,
+                                border_radius: 0.0, shadow_blur: 0.0,
                             });
                             out.push(InstanceRaw {
                                 position: [chev_x - bar_w * 0.25, cy],
                                 size: [bar_w * 0.5, bar_h],
                                 color: crate::theme::with_alpha(settings.theme.text_primary, 0.40),
-                                border_radius: 0.0,
+                                border_radius: 0.0, shadow_blur: 0.0,
                             });
                         } else {
                             let bar_w = 1.5 * scale;
@@ -1412,13 +1412,13 @@ impl SampleBrowser {
                                 position: [chev_x - bar_w, cy - bar_h * 0.5],
                                 size: [bar_w, bar_h],
                                 color: crate::theme::with_alpha(settings.theme.text_primary, 0.40),
-                                border_radius: 0.0,
+                                border_radius: 0.0, shadow_blur: 0.0,
                             });
                             out.push(InstanceRaw {
                                 position: [chev_x, cy - bar_h * 0.25],
                                 size: [bar_w, bar_h * 0.5],
                                 color: crate::theme::with_alpha(settings.theme.text_primary, 0.40),
-                                border_radius: 0.0,
+                                border_radius: 0.0, shadow_blur: 0.0,
                             });
                         }
                         }
@@ -1438,7 +1438,7 @@ impl SampleBrowser {
                         position: [cx + indent, row_y],
                         size: [content_w - indent, item_h],
                         color: [settings.theme.accent[0], settings.theme.accent[1], settings.theme.accent[2], 0.15],
-                        border_radius: 2.0 * scale,
+                        border_radius: 2.0 * scale, shadow_blur: 0.0,
                     });
                 }
             } else {
@@ -1450,7 +1450,7 @@ impl SampleBrowser {
                         position: [cx + indent, line_y - line_h * 0.5],
                         size: [content_w - indent, line_h],
                         color: settings.theme.accent,
-                        border_radius: 1.0 * scale,
+                        border_radius: 1.0 * scale, shadow_blur: 0.0,
                     });
                     // Small dot at left end
                     let dot = 6.0 * scale;
@@ -1458,7 +1458,7 @@ impl SampleBrowser {
                         position: [cx + indent - dot * 0.5, line_y - dot * 0.5],
                         size: [dot, dot],
                         color: settings.theme.accent,
-                        border_radius: dot * 0.5,
+                        border_radius: dot * 0.5, shadow_blur: 0.0,
                     });
                 }
             }
@@ -1474,7 +1474,7 @@ impl SampleBrowser {
                 position: [sb_x, ct],
                 size: [SCROLLBAR_WIDTH * scale, sb_track_h],
                 color: crate::theme::with_alpha(settings.theme.text_primary, 0.08),
-                border_radius: 3.0 * scale,
+                border_radius: 3.0 * scale, shadow_blur: 0.0,
             });
 
             let ratio = visible_h / content_h;
@@ -1490,7 +1490,7 @@ impl SampleBrowser {
                 position: [sb_x, thumb_y],
                 size: [SCROLLBAR_WIDTH * scale, thumb_h],
                 color: crate::theme::with_alpha(settings.theme.text_primary, 0.20),
-                border_radius: 3.0 * scale,
+                border_radius: 3.0 * scale, shadow_blur: 0.0,
             });
         }
 
@@ -1503,7 +1503,7 @@ impl SampleBrowser {
                 position: [strip_x, strip_y],
                 size: [strip_w, strip_h],
                 color: settings.theme.bg_base,
-                border_radius: 0.0,
+                border_radius: 0.0, shadow_blur: 0.0,
             });
 
             // Separator line above strip
@@ -1511,7 +1511,7 @@ impl SampleBrowser {
                 position: [strip_x, strip_y],
                 size: [strip_w, 1.0 * scale],
                 color: crate::theme::with_alpha(settings.theme.text_primary, 0.07),
-                border_radius: 0.0,
+                border_radius: 0.0, shadow_blur: 0.0,
             });
 
             // Headphones toggle button (left side)
@@ -1528,14 +1528,14 @@ impl SampleBrowser {
                 position: [btn_x, btn_y],
                 size: [btn_size, btn_size],
                 color: btn_color,
-                border_radius: btn_radius,
+                border_radius: btn_radius, shadow_blur: 0.0,
             });
             if self.preview_toggle_hovered {
                 out.push(InstanceRaw {
                     position: [btn_x, btn_y],
                     size: [btn_size, btn_size],
                     color: [1.0, 1.0, 1.0, 0.08],
-                    border_radius: btn_radius,
+                    border_radius: btn_radius, shadow_blur: 0.0,
                 });
             }
 
@@ -1548,7 +1548,7 @@ impl SampleBrowser {
                 position: [wf_x, wf_y],
                 size: [wf_w, wf_h],
                 color: [0.0, 0.0, 0.0, 0.3],
-                border_radius: 2.0 * scale,
+                border_radius: 2.0 * scale, shadow_blur: 0.0,
             });
         }
 
@@ -1557,7 +1557,7 @@ impl SampleBrowser {
             position: [w - 1.0 * scale, 0.0],
             size: [1.0 * scale, screen_h],
             color: [1.0, 1.0, 1.0, 0.07],
-            border_radius: 0.0,
+            border_radius: 0.0, shadow_blur: 0.0,
         });
 
         out

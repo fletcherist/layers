@@ -44,7 +44,7 @@ pub fn build_component_def_instances(
         position: def.position,
         size: def.size,
         color: fill,
-        border_radius: 6.0 / camera.zoom,
+        border_radius: 6.0 / camera.zoom, shadow_blur: 0.0,
     });
 
     let bw = if is_selected { 2.5 } else { 1.5 } / camera.zoom;
@@ -66,7 +66,7 @@ pub fn build_component_def_instances(
             position: [x, y],
             size: [w, dash_h],
             color: crate::theme::with_alpha(theme.component_border_color, 0.40),
-            border_radius: 1.0 / camera.zoom,
+            border_radius: 1.0 / camera.zoom, shadow_blur: 0.0,
         });
         x += dash_w + gap;
     }
@@ -81,7 +81,7 @@ pub fn build_component_def_instances(
         ],
         size: [badge_w, badge_h],
         color: theme.component_badge_color,
-        border_radius: 3.0 / camera.zoom,
+        border_radius: 3.0 / camera.zoom, shadow_blur: 0.0,
     });
 
     // Filled diamond inside badge (4 small triangles approximated as a rotated square)
@@ -92,7 +92,7 @@ pub fn build_component_def_instances(
         position: [cx, cy],
         size: [diamond_sz, diamond_sz],
         color: [1.0, 1.0, 1.0, 0.90],
-        border_radius: diamond_sz * 0.15,
+        border_radius: diamond_sz * 0.15, shadow_blur: 0.0,
     });
 
     // Resize handles at corners
@@ -111,7 +111,7 @@ pub fn build_component_def_instances(
                     position: [hx, hy],
                     size: [handle_sz, handle_sz],
                     color: handle_color,
-                    border_radius: 2.0 / camera.zoom,
+                    border_radius: 2.0 / camera.zoom, shadow_blur: 0.0,
                 });
             }
         }
@@ -147,7 +147,7 @@ pub fn build_component_instance_instances(
         position: inst.position,
         size,
         color: fill,
-        border_radius: 6.0 / camera.zoom,
+        border_radius: 6.0 / camera.zoom, shadow_blur: 0.0,
     });
 
     // Instance border (dashed style via segments)
@@ -185,7 +185,7 @@ pub fn build_component_instance_instances(
             position: ghost_pos,
             size: wf.size,
             color: bg_color,
-            border_radius: wf.border_radius,
+            border_radius: wf.border_radius, shadow_blur: 0.0,
         });
 
         // Waveform bars (simplified ghost rendering from samples)
@@ -227,7 +227,7 @@ pub fn build_component_instance_instances(
                 position: [bx, by],
                 size: [bar_world, bar_h.max(1.0 / camera.zoom)],
                 color: ghost_color,
-                border_radius: bar_world * 0.3,
+                border_radius: bar_world * 0.3, shadow_blur: 0.0,
             });
         }
     }
@@ -245,7 +245,7 @@ pub fn build_component_instance_instances(
         position: [lock_x, body_y],
         size: [body_w, body_h],
         color: theme.lock_icon_color,
-        border_radius: 2.0 / camera.zoom,
+        border_radius: 2.0 / camera.zoom, shadow_blur: 0.0,
     });
 
     // Lock shackle (top arc approximated as a smaller rect)
@@ -256,7 +256,7 @@ pub fn build_component_instance_instances(
         position: [shackle_x, lock_y],
         size: [shackle_w, shackle_h],
         color: theme.lock_icon_color,
-        border_radius: shackle_w * 0.5,
+        border_radius: shackle_w * 0.5, shadow_blur: 0.0,
     });
     // Hollow center of shackle
     let inner_w = shackle_w * 0.5;
@@ -267,7 +267,7 @@ pub fn build_component_instance_instances(
         position: [inner_x, inner_y],
         size: [inner_w, inner_h],
         color: theme.instance_fill_color,
-        border_radius: inner_w * 0.5,
+        border_radius: inner_w * 0.5, shadow_blur: 0.0,
     });
 
     out

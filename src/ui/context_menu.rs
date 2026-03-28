@@ -728,14 +728,14 @@ impl ContextMenu {
             position: [pos[0] + so, pos[1] + so],
             size: [size[0] + 2.0 * scale, size[1] + 2.0 * scale],
             color: settings.theme.shadow,
-            border_radius: CTX_MENU_BORDER_RADIUS * scale,
+            border_radius: CTX_MENU_BORDER_RADIUS * scale, shadow_blur: 0.0,
         });
 
         out.push(InstanceRaw {
             position: pos,
             size,
             color: settings.theme.bg_base,
-            border_radius: CTX_MENU_BORDER_RADIUS * scale,
+            border_radius: CTX_MENU_BORDER_RADIUS * scale, shadow_blur: 0.0,
         });
 
         let mut y = pos[1] + pad;
@@ -749,7 +749,7 @@ impl ContextMenu {
                             position: [pos[0] + pad, y],
                             size: [size[0] - pad * 2.0, CTX_MENU_ITEM_HEIGHT * scale],
                             color: settings.theme.option_highlight,
-                            border_radius: 5.0 * scale,
+                            border_radius: 5.0 * scale, shadow_blur: 0.0,
                         });
                     }
                     if item.checked {
@@ -760,7 +760,7 @@ impl ContextMenu {
                             position: [cx, cy],
                             size: [check_sz, check_sz],
                             color: crate::theme::with_alpha(settings.theme.text_primary, 0.9),
-                            border_radius: check_sz * 0.5,
+                            border_radius: check_sz * 0.5, shadow_blur: 0.0,
                         });
                     }
                     item_i += 1;
@@ -771,7 +771,7 @@ impl ContextMenu {
                         position: [pos[0] + pad + 4.0 * scale, sep_y],
                         size: [size[0] - (pad + 4.0 * scale) * 2.0, 1.0 * scale],
                         color: SCROLLBAR_BG,
-                        border_radius: 0.0,
+                        border_radius: 0.0, shadow_blur: 0.0,
                     });
                 }
                 ContextMenuEntry::SectionHeader(_) => {}
@@ -788,14 +788,14 @@ impl ContextMenu {
                                 position: [px, pill_y],
                                 size: [pw, pill_h],
                                 color: crate::theme::with_alpha(settings.theme.pill_active, 0.95),
-                                border_radius: pill_r,
+                                border_radius: pill_r, shadow_blur: 0.0,
                             });
                         } else if is_hovered {
                             out.push(InstanceRaw {
                                 position: [px, pill_y],
                                 size: [pw, pill_h],
                                 color: crate::theme::with_alpha(settings.theme.pill_inactive, 0.7),
-                                border_radius: pill_r,
+                                border_radius: pill_r, shadow_blur: 0.0,
                             });
                         }
                         px += pw + INLINE_PILL_GAP * scale;
@@ -815,14 +815,14 @@ impl ContextMenu {
                                 position: [px - ring, swatch_y - ring],
                                 size: [sz + ring * 2.0, sz + ring * 2.0],
                                 color: [1.0, 1.0, 1.0, if swatch.active { 0.9 } else { 0.4 }],
-                                border_radius: r + ring,
+                                border_radius: r + ring, shadow_blur: 0.0,
                             });
                         }
                         out.push(InstanceRaw {
                             position: [px, swatch_y],
                             size: [sz, sz],
                             color: swatch.color,
-                            border_radius: r,
+                            border_radius: r, shadow_blur: 0.0,
                         });
                         px += sz + COLOR_SWATCH_GAP * scale;
                     }

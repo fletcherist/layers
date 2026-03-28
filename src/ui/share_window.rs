@@ -153,7 +153,7 @@ impl ShareWindow {
             position: [0.0, 0.0],
             size: [screen_w, screen_h],
             color: t.shadow_strong,
-            border_radius: 0.0,
+            border_radius: 0.0, shadow_blur: 0.0,
         });
 
         // Shadow
@@ -162,7 +162,7 @@ impl ShareWindow {
             position: [wp[0] + so, wp[1] + so],
             size: [ws[0] + 2.0 * scale, ws[1] + 2.0 * scale],
             color: t.shadow,
-            border_radius: br,
+            border_radius: br, shadow_blur: 0.0,
         });
 
         // Window background
@@ -170,7 +170,7 @@ impl ShareWindow {
             position: wp,
             size: ws,
             color: t.bg_base,
-            border_radius: br,
+            border_radius: br, shadow_blur: 0.0,
         });
 
         // URL box background
@@ -179,7 +179,7 @@ impl ShareWindow {
             position: ubp,
             size: ubs,
             color: t.bg_input,
-            border_radius: 6.0 * scale,
+            border_radius: 6.0 * scale, shadow_blur: 0.0,
         });
 
         // Progress bar (only during upload)
@@ -191,7 +191,7 @@ impl ShareWindow {
                 position: bp,
                 size: bs,
                 color: crate::theme::with_alpha(t.bg_elevated, 0.8),
-                border_radius: bs[1] * 0.5,
+                border_radius: bs[1] * 0.5, shadow_blur: 0.0,
             });
 
             // Bar fill
@@ -201,7 +201,7 @@ impl ShareWindow {
                     position: bp,
                     size: [fill_w, bs[1]],
                     color: t.accent,
-                    border_radius: bs[1] * 0.5,
+                    border_radius: bs[1] * 0.5, shadow_blur: 0.0,
                 });
             }
         }
@@ -219,7 +219,7 @@ impl ShareWindow {
             position: cbp,
             size: cbs,
             color: btn_color,
-            border_radius: 6.0 * scale,
+            border_radius: 6.0 * scale, shadow_blur: 0.0,
         });
 
         out

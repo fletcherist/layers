@@ -335,7 +335,7 @@ pub fn build_midi_clip_instances(
         position: clip.position,
         size: clip.size,
         color: bg_color,
-        border_radius: 4.0 / camera.zoom,
+        border_radius: 4.0 / camera.zoom, shadow_blur: 0.0,
     });
 
     // Border
@@ -357,7 +357,7 @@ pub fn build_midi_clip_instances(
                 position: [clip.position[0], y],
                 size: [clip.size[0], nh],
                 color: [0.0, 0.0, 0.0, 0.10],
-                border_radius: 0.0,
+                border_radius: 0.0, shadow_blur: 0.0,
             });
         }
         if pitch % 12 == 0 {
@@ -366,7 +366,7 @@ pub fn build_midi_clip_instances(
                 position: [clip.position[0], y + nh - line_h * 0.5],
                 size: [clip.size[0], line_h],
                 color: [1.0, 1.0, 1.0, 0.12],
-                border_radius: 0.0,
+                border_radius: 0.0, shadow_blur: 0.0,
             });
         }
     }
@@ -401,7 +401,7 @@ pub fn build_midi_note_instances(
             position: [nx, ny],
             size: [nw, nh.max(2.0 / camera.zoom)],
             color: note_color,
-            border_radius: 2.0 / camera.zoom,
+            border_radius: 2.0 / camera.zoom, shadow_blur: 0.0,
         });
 
         let border_bw = 1.0 / camera.zoom;
@@ -433,7 +433,7 @@ pub fn build_velocity_lane_instances(
         position: [clip_x, lane_top],
         size: [clip_w, lane_height],
         color: [0.0, 0.0, 0.0, 0.20],
-        border_radius: 0.0,
+        border_radius: 0.0, shadow_blur: 0.0,
     });
 
     // Divider line between note area and velocity lane
@@ -442,7 +442,7 @@ pub fn build_velocity_lane_instances(
         position: [clip_x, lane_top - div_h * 0.5],
         size: [clip_w, div_h],
         color: [1.0, 1.0, 1.0, 0.25],
-        border_radius: 0.0,
+        border_radius: 0.0, shadow_blur: 0.0,
     });
 
     let stem_w = 2.0 / camera.zoom;
@@ -470,7 +470,7 @@ pub fn build_velocity_lane_instances(
             position: [note_cx - stem_w * 0.5, stem_top],
             size: [stem_w, stem_height],
             color,
-            border_radius: 0.0,
+            border_radius: 0.0, shadow_blur: 0.0,
         });
 
         // Circle at top of stem
@@ -479,7 +479,7 @@ pub fn build_velocity_lane_instances(
             position: [note_cx - dot_radius, stem_top - dot_radius],
             size: [dot_size, dot_size],
             color,
-            border_radius: dot_radius,
+            border_radius: dot_radius, shadow_blur: 0.0,
         });
 
         if is_selected {

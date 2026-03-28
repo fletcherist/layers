@@ -204,7 +204,7 @@ pub(crate) fn build_group_instances(
         position: group.position,
         size: group.size,
         color: fill,
-        border_radius: 4.0 / camera.zoom,
+        border_radius: 4.0 / camera.zoom, shadow_blur: 0.0,
     });
 
     // Border — skip when selected since the global selection overlay draws

@@ -33,13 +33,13 @@ pub(crate) fn render_button(
         position: [dp[0] - 1.0, dp[1] - 1.0],
         size: [ds[0] + 2.0, ds[1] + 2.0],
         color: t.bg_window_header,
-        border_radius: dd_br + 1.0,
+        border_radius: dd_br + 1.0, shadow_blur: 0.0,
     });
     out.push(InstanceRaw {
         position: dp,
         size: ds,
         color: t.bg_input,
-        border_radius: dd_br,
+        border_radius: dd_br, shadow_blur: 0.0,
     });
 }
 
@@ -64,21 +64,21 @@ pub(crate) fn render_popup(
         position: [dp[0] + 4.0 * scale, popup_y + 4.0 * scale],
         size: [ds[0], popup_h],
         color: t.shadow_strong,
-        border_radius: popup_br,
+        border_radius: popup_br, shadow_blur: 0.0,
     });
     // Border
     out.push(InstanceRaw {
         position: [dp[0] - 1.0, popup_y - 1.0],
         size: [ds[0] + 2.0, popup_h + 2.0],
         color: t.bg_window_header,
-        border_radius: popup_br + 1.0,
+        border_radius: popup_br + 1.0, shadow_blur: 0.0,
     });
     // Background
     out.push(InstanceRaw {
         position: [dp[0], popup_y],
         size: [ds[0], popup_h],
         color: t.bg_menu,
-        border_radius: popup_br,
+        border_radius: popup_br, shadow_blur: 0.0,
     });
     // Item highlights
     for j in 0..item_count {
@@ -88,14 +88,14 @@ pub(crate) fn render_popup(
                 position: [dp[0] + 4.0 * scale, iy + 2.0 * scale],
                 size: [ds[0] - 8.0 * scale, item_h - 4.0 * scale],
                 color: t.option_highlight,
-                border_radius: 4.0 * scale,
+                border_radius: 4.0 * scale, shadow_blur: 0.0,
             });
         } else if hovered_item == Some(j) {
             out.push(InstanceRaw {
                 position: [dp[0] + 4.0 * scale, iy + 2.0 * scale],
                 size: [ds[0] - 8.0 * scale, item_h - 4.0 * scale],
                 color: t.item_hover,
-                border_radius: 4.0 * scale,
+                border_radius: 4.0 * scale, shadow_blur: 0.0,
             });
         }
     }

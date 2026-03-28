@@ -116,7 +116,7 @@ pub(crate) fn build_instances(out: &mut Vec<InstanceRaw>, ctx: &RenderContext) {
                 position: [x - w * 0.5, world_top],
                 size: [w, world_bottom - world_top],
                 color: c,
-                border_radius: 0.0,
+                border_radius: 0.0, shadow_blur: 0.0,
             });
         }
 
@@ -131,7 +131,7 @@ pub(crate) fn build_instances(out: &mut Vec<InstanceRaw>, ctx: &RenderContext) {
                 position: [world_left, y - w * 0.5],
                 size: [world_right - world_left, w],
                 color: c,
-                border_radius: 0.0,
+                border_radius: 0.0, shadow_blur: 0.0,
             });
         }
     }
@@ -187,7 +187,7 @@ pub(crate) fn build_instances(out: &mut Vec<InstanceRaw>, ctx: &RenderContext) {
             position: p,
             size: s,
             color: ctx.settings.theme.export_fill_color,
-            border_radius: 6.0 / camera.zoom,
+            border_radius: 6.0 / camera.zoom, shadow_blur: 0.0,
         });
 
         let bw = if is_sel {
@@ -210,7 +210,7 @@ pub(crate) fn build_instances(out: &mut Vec<InstanceRaw>, ctx: &RenderContext) {
                 position: [dx, dy],
                 size: [w, dash_h],
                 color: ctx.settings.theme.export_border_color,
-                border_radius: 1.0 / camera.zoom,
+                border_radius: 1.0 / camera.zoom, shadow_blur: 0.0,
             });
             dx += dash_w + gap;
         }
@@ -223,7 +223,7 @@ pub(crate) fn build_instances(out: &mut Vec<InstanceRaw>, ctx: &RenderContext) {
             position: [pill_x, pill_y],
             size: [pill_w, pill_h],
             color: ctx.settings.theme.export_render_pill_color,
-            border_radius: pill_h * 0.5,
+            border_radius: pill_h * 0.5, shadow_blur: 0.0,
         });
 
         if is_sel {
@@ -234,7 +234,7 @@ pub(crate) fn build_instances(out: &mut Vec<InstanceRaw>, ctx: &RenderContext) {
                         position: [hx, hy],
                         size: [handle_sz, handle_sz],
                         color: ctx.settings.theme.playhead,
-                        border_radius: 2.0 / camera.zoom,
+                        border_radius: 2.0 / camera.zoom, shadow_blur: 0.0,
                     });
                 }
             }
@@ -268,7 +268,7 @@ pub(crate) fn build_instances(out: &mut Vec<InstanceRaw>, ctx: &RenderContext) {
             position: p,
             size: s,
             color: fill,
-            border_radius: 0.0,
+            border_radius: 0.0, shadow_blur: 0.0,
         });
 
         let bw = if is_sel {
@@ -279,8 +279,8 @@ pub(crate) fn build_instances(out: &mut Vec<InstanceRaw>, ctx: &RenderContext) {
             1.5
         } / camera.zoom;
         // Left and right borders only (full viewport height)
-        out.push(InstanceRaw { position: p, size: [bw, s[1]], color: border, border_radius: 0.0 });
-        out.push(InstanceRaw { position: [p[0] + s[0] - bw, p[1]], size: [bw, s[1]], color: border, border_radius: 0.0 });
+        out.push(InstanceRaw { position: p, size: [bw, s[1]], color: border, border_radius: 0.0 , shadow_blur: 0.0 });
+        out.push(InstanceRaw { position: [p[0] + s[0] - bw, p[1]], size: [bw, s[1]], color: border, border_radius: 0.0 , shadow_blur: 0.0 });
 
         if is_sel {
             let handle_sz = 8.0 / camera.zoom;
@@ -290,13 +290,13 @@ pub(crate) fn build_instances(out: &mut Vec<InstanceRaw>, ctx: &RenderContext) {
                 position: [p[0] - handle_sz * 0.5, mid_y - handle_sz * 0.5],
                 size: [handle_sz, handle_sz],
                 color: crate::theme::with_alpha(ctx.settings.theme.accent, 0.9 * alpha_mul),
-                border_radius: 2.0 / camera.zoom,
+                border_radius: 2.0 / camera.zoom, shadow_blur: 0.0,
             });
             out.push(InstanceRaw {
                 position: [lr_right - handle_sz * 0.5, mid_y - handle_sz * 0.5],
                 size: [handle_sz, handle_sz],
                 color: crate::theme::with_alpha(ctx.settings.theme.accent, 0.9 * alpha_mul),
-                border_radius: 2.0 / camera.zoom,
+                border_radius: 2.0 / camera.zoom, shadow_blur: 0.0,
             });
         }
     }
@@ -335,7 +335,7 @@ pub(crate) fn build_instances(out: &mut Vec<InstanceRaw>, ctx: &RenderContext) {
             position: obj.position,
             size: obj.size,
             color,
-            border_radius: obj.border_radius,
+            border_radius: obj.border_radius, shadow_blur: 0.0,
         });
     }
 
@@ -362,7 +362,7 @@ pub(crate) fn build_instances(out: &mut Vec<InstanceRaw>, ctx: &RenderContext) {
             position: tn.position,
             size: tn.size,
             color,
-            border_radius: tn.border_radius,
+            border_radius: tn.border_radius, shadow_blur: 0.0,
         });
     }
 
@@ -484,7 +484,7 @@ pub(crate) fn build_instances(out: &mut Vec<InstanceRaw>, ctx: &RenderContext) {
                 position: group.position,
                 size: group.size,
                 color: [ctx.settings.theme.bg_base[0], ctx.settings.theme.bg_base[1], ctx.settings.theme.bg_base[2], 0.65],
-                border_radius: 4.0 / camera.zoom,
+                border_radius: 4.0 / camera.zoom, shadow_blur: 0.0,
             });
         }
     }
@@ -499,7 +499,7 @@ pub(crate) fn build_instances(out: &mut Vec<InstanceRaw>, ctx: &RenderContext) {
                 position: [world_left, world_top],
                 size: [world_right - world_left, def.position[1] - world_top],
                 color: dim_color,
-                border_radius: 0.0,
+                border_radius: 0.0, shadow_blur: 0.0,
             });
             // Bottom strip
             let bot_y = def.position[1] + def.size[1];
@@ -507,14 +507,14 @@ pub(crate) fn build_instances(out: &mut Vec<InstanceRaw>, ctx: &RenderContext) {
                 position: [world_left, bot_y],
                 size: [world_right - world_left, world_bottom - bot_y],
                 color: dim_color,
-                border_radius: 0.0,
+                border_radius: 0.0, shadow_blur: 0.0,
             });
             // Left strip
             out.push(InstanceRaw {
                 position: [world_left, def.position[1]],
                 size: [def.position[0] - world_left, def.size[1]],
                 color: dim_color,
-                border_radius: 0.0,
+                border_radius: 0.0, shadow_blur: 0.0,
             });
             // Right strip
             let right_x = def.position[0] + def.size[0];
@@ -522,7 +522,7 @@ pub(crate) fn build_instances(out: &mut Vec<InstanceRaw>, ctx: &RenderContext) {
                 position: [right_x, def.position[1]],
                 size: [world_right - right_x, def.size[1]],
                 color: dim_color,
-                border_radius: 0.0,
+                border_radius: 0.0, shadow_blur: 0.0,
             });
         }
     }
@@ -553,7 +553,7 @@ pub(crate) fn build_instances(out: &mut Vec<InstanceRaw>, ctx: &RenderContext) {
                     position: [hx, hy],
                     size: [handle_sz, handle_sz],
                     color: [1.0, 1.0, 1.0, 1.0],
-                    border_radius: 2.0 / camera.zoom,
+                    border_radius: 2.0 / camera.zoom, shadow_blur: 0.0,
                 });
             }
         }
@@ -566,7 +566,7 @@ pub(crate) fn build_instances(out: &mut Vec<InstanceRaw>, ctx: &RenderContext) {
             position: rp,
             size: rs,
             color: ctx.settings.theme.select_rect_fill,
-            border_radius: 0.0,
+            border_radius: 0.0, shadow_blur: 0.0,
         });
         let bw = 1.0 / camera.zoom;
         push_border(out, rp, rs, bw, ctx.settings.theme.select_rect_border);
@@ -577,14 +577,14 @@ pub(crate) fn build_instances(out: &mut Vec<InstanceRaw>, ctx: &RenderContext) {
                 position: sa.position,
                 size: sa.size,
                 color: ctx.settings.theme.select_outline,
-                border_radius: 0.0,
+                border_radius: 0.0, shadow_blur: 0.0,
             });
         } else {
             out.push(InstanceRaw {
                 position: sa.position,
                 size: sa.size,
                 color: ctx.settings.theme.select_rect_fill,
-                border_radius: 0.0,
+                border_radius: 0.0, shadow_blur: 0.0,
             });
             let bw = 1.0 / camera.zoom;
             push_border(out, sa.position, sa.size, bw, ctx.settings.theme.select_rect_border);
@@ -598,7 +598,7 @@ pub(crate) fn build_instances(out: &mut Vec<InstanceRaw>, ctx: &RenderContext) {
                 position: [rx, ry],
                 size: [rw, rh],
                 color: crate::theme::with_alpha(ctx.settings.theme.select_rect_fill, 0.15),
-                border_radius: 0.0,
+                border_radius: 0.0, shadow_blur: 0.0,
             });
             let bw = 1.0 / camera.zoom;
             push_border(out, [rx, ry], [rw, rh], bw, crate::theme::with_alpha(ctx.settings.theme.select_rect_border, 0.6));
@@ -612,14 +612,14 @@ pub(crate) fn build_instances(out: &mut Vec<InstanceRaw>, ctx: &RenderContext) {
             position: [px - line_w * 0.5, world_top],
             size: [line_w, world_bottom - world_top],
             color: crate::theme::with_alpha(ctx.settings.theme.text_primary, 0.85),
-            border_radius: 0.0,
+            border_radius: 0.0, shadow_blur: 0.0,
         });
         let head_sz = 10.0 / camera.zoom;
         out.push(InstanceRaw {
             position: [px - head_sz * 0.5, world_top],
             size: [head_sz, head_sz],
             color: crate::theme::with_alpha(ctx.settings.theme.text_primary, 0.95),
-            border_radius: 2.0 / camera.zoom,
+            border_radius: 2.0 / camera.zoom, shadow_blur: 0.0,
         });
     }
 
@@ -638,21 +638,21 @@ pub(crate) fn build_instances(out: &mut Vec<InstanceRaw>, ctx: &RenderContext) {
                 position: [pos[0], pos[1]],
                 size: [3.0 * s, 18.0 * s],
                 color: c,
-                border_radius: 0.5 * s,
+                border_radius: 0.5 * s, shadow_blur: 0.0,
             });
             // Right wing: short rect extending right, offset down
             out.push(InstanceRaw {
                 position: [pos[0] + 2.0 * s, pos[1] + 12.0 * s],
                 size: [10.0 * s, 3.0 * s],
                 color: c,
-                border_radius: 0.5 * s,
+                border_radius: 0.5 * s, shadow_blur: 0.0,
             });
             // Diagonal fill: small rect bridging body and wing
             out.push(InstanceRaw {
                 position: [pos[0] + 1.0 * s, pos[1] + 10.0 * s],
                 size: [5.0 * s, 5.0 * s],
                 color: c,
-                border_radius: 0.5 * s,
+                border_radius: 0.5 * s, shadow_blur: 0.0,
             });
 
         }
@@ -665,7 +665,7 @@ pub(crate) fn build_instances(out: &mut Vec<InstanceRaw>, ctx: &RenderContext) {
                         position: *new_position,
                         size: *new_size,
                         color: ghost_color,
-                        border_radius: 4.0 / camera.zoom,
+                        border_radius: 4.0 / camera.zoom, shadow_blur: 0.0,
                     });
                 }
                 crate::user::DragPreview::MovingEntities { targets } => {
@@ -674,7 +674,7 @@ pub(crate) fn build_instances(out: &mut Vec<InstanceRaw>, ctx: &RenderContext) {
                             position: *pos,
                             size: *size,
                             color: ghost_color,
-                            border_radius: 4.0 / camera.zoom,
+                            border_radius: 4.0 / camera.zoom, shadow_blur: 0.0,
                         });
                     }
                 }
@@ -706,7 +706,7 @@ pub(crate) fn build_instances(out: &mut Vec<InstanceRaw>, ctx: &RenderContext) {
                     position: [x - ring_r, y - ring_r],
                     size: [ring_r * 2.0, ring_r * 2.0],
                     color: [remote.user.color[0], remote.user.color[1], remote.user.color[2], 0.4],
-                    border_radius: ring_r,
+                    border_radius: ring_r, shadow_blur: 0.0,
                 });
             }
             // Avatar circle
@@ -714,7 +714,7 @@ pub(crate) fn build_instances(out: &mut Vec<InstanceRaw>, ctx: &RenderContext) {
                 position: [x - r, y - r],
                 size: [r * 2.0, r * 2.0],
                 color: remote.user.color,
-                border_radius: r,
+                border_radius: r, shadow_blur: 0.0,
             });
             x -= r * 2.0 + gap;
         }
@@ -733,7 +733,7 @@ pub(crate) fn build_instances(out: &mut Vec<InstanceRaw>, ctx: &RenderContext) {
                 position: [x - dot_sz, world_top + margin + titlebar_offset + r - dot_sz * 0.5],
                 size: [dot_sz, dot_sz],
                 color,
-                border_radius: dot_sz / 2.0,
+                border_radius: dot_sz / 2.0, shadow_blur: 0.0,
             });
         }
     }
@@ -764,7 +764,7 @@ pub(crate) fn build_instances(out: &mut Vec<InstanceRaw>, ctx: &RenderContext) {
             position: [world_left, world_top],
             size: [world_right - world_left, world_bottom - world_top],
             color: ctx.settings.theme.drop_zone_fill,
-            border_radius: 0.0,
+            border_radius: 0.0, shadow_blur: 0.0,
         });
         let bw = 3.0 / camera.zoom;
         push_border(

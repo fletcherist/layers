@@ -111,7 +111,7 @@ pub fn build_instances(
         position: layout.s_pos,
         size: layout.s_size,
         color: s_bg,
-        border_radius: br,
+        border_radius: br, shadow_blur: 0.0,
     });
 
     // M button background
@@ -124,7 +124,7 @@ pub fn build_instances(
         position: layout.m_pos,
         size: layout.m_size,
         color: m_bg,
-        border_radius: br,
+        border_radius: br, shadow_blur: 0.0,
     });
 
     // Monitor button background (only for groups)
@@ -138,7 +138,7 @@ pub fn build_instances(
             position: layout.mon_pos,
             size: layout.mon_size,
             color: mon_bg,
-            border_radius: br,
+            border_radius: br, shadow_blur: 0.0,
         });
     }
 

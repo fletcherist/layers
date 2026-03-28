@@ -123,7 +123,7 @@ impl ToastManager {
                 position: [x, y],
                 size: [w, h],
                 color: bg_color,
-                border_radius: radius,
+                border_radius: radius, shadow_blur: 0.0,
             });
 
             // Left accent bar
@@ -131,7 +131,7 @@ impl ToastManager {
                 position: [x, y],
                 size: [accent_w, h],
                 color: accent_color,
-                border_radius: radius,
+                border_radius: radius, shadow_blur: 0.0,
             });
         }
 

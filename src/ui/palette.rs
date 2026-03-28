@@ -945,7 +945,7 @@ impl CommandPalette {
             position: [0.0, 0.0],
             size: [screen_w, screen_h],
             color: settings.theme.shadow,
-            border_radius: 0.0,
+            border_radius: 0.0, shadow_blur: 0.0,
         });
 
         // Shadow
@@ -954,7 +954,7 @@ impl CommandPalette {
             position: [pos[0] + so, pos[1] + so],
             size: [size[0] + 2.0 * scale, size[1] + 2.0 * scale],
             color: settings.theme.shadow,
-            border_radius: PALETTE_BORDER_RADIUS * scale,
+            border_radius: PALETTE_BORDER_RADIUS * scale, shadow_blur: 0.0,
         });
 
         // Main background
@@ -962,7 +962,7 @@ impl CommandPalette {
             position: pos,
             size,
             color: settings.theme.bg_base,
-            border_radius: PALETTE_BORDER_RADIUS * scale,
+            border_radius: PALETTE_BORDER_RADIUS * scale, shadow_blur: 0.0,
         });
 
         // Search field background
@@ -974,7 +974,7 @@ impl CommandPalette {
                 PALETTE_INPUT_HEIGHT * scale - sf_margin * 2.0,
             ],
             color: settings.theme.bg_input,
-            border_radius: 8.0 * scale,
+            border_radius: 8.0 * scale, shadow_blur: 0.0,
         });
 
         // Search icon (small circle to hint at magnifying glass)
@@ -986,7 +986,7 @@ impl CommandPalette {
             ],
             size: [icon_r * 2.0, icon_r * 2.0],
             color: crate::theme::with_alpha(settings.theme.text_dim, 0.7),
-            border_radius: icon_r,
+            border_radius: icon_r, shadow_blur: 0.0,
         });
         // Inner circle cutout
         let inner_r = 4.5 * scale;
@@ -997,7 +997,7 @@ impl CommandPalette {
             ],
             size: [inner_r * 2.0, inner_r * 2.0],
             color: settings.theme.bg_input,
-            border_radius: inner_r,
+            border_radius: inner_r, shadow_blur: 0.0,
         });
 
         let list_top = pos[1] + PALETTE_INPUT_HEIGHT * scale;
@@ -1007,7 +1007,7 @@ impl CommandPalette {
             position: [pos[0] + margin, list_top],
             size: [size[0] - margin * 2.0, 1.0 * scale],
             color: settings.theme.divider,
-            border_radius: 0.0,
+            border_radius: 0.0, shadow_blur: 0.0,
         });
 
         match self.mode {
@@ -1026,7 +1026,7 @@ impl CommandPalette {
                                     position: [pos[0] + margin, y],
                                     size: [size[0] - margin * 2.0, PALETTE_ITEM_HEIGHT * scale],
                                     color: settings.theme.option_highlight,
-                                    border_radius: 6.0 * scale,
+                                    border_radius: 6.0 * scale, shadow_blur: 0.0,
                                 });
                             }
                             // Label pill for plugin rows
@@ -1042,7 +1042,7 @@ impl CommandPalette {
                                     position: [pill_x, pill_y],
                                     size: [pill_w * scale, pill_h],
                                     color: border_color,
-                                    border_radius: 4.0 * scale,
+                                    border_radius: 4.0 * scale, shadow_blur: 0.0,
                                 });
                             }
                             cmd_i += 1;
@@ -1064,7 +1064,7 @@ impl CommandPalette {
                         position: [sb_x, track_top],
                         size: [sb_w, track_h],
                         color: SCROLLBAR_BG,
-                        border_radius: 3.0 * scale,
+                        border_radius: 3.0 * scale, shadow_blur: 0.0,
                     });
 
                     let ratio = visible_h / total_h;
@@ -1081,7 +1081,7 @@ impl CommandPalette {
                         position: [sb_x, thumb_y],
                         size: [sb_w, thumb_h],
                         color: SCROLLBAR_THUMB,
-                        border_radius: 3.0 * scale,
+                        border_radius: 3.0 * scale, shadow_blur: 0.0,
                     });
                 }
             }
@@ -1092,7 +1092,7 @@ impl CommandPalette {
                     position: tp,
                     size: ts,
                     color: settings.theme.bg_surface,
-                    border_radius: ts[1] * 0.5,
+                    border_radius: ts[1] * 0.5, shadow_blur: 0.0,
                 });
 
                 let fill_w = self.fader_value * ts[0];
@@ -1101,7 +1101,7 @@ impl CommandPalette {
                         position: tp,
                         size: [fill_w, ts[1]],
                         color: settings.theme.slider_fill,
-                        border_radius: ts[1] * 0.5,
+                        border_radius: ts[1] * 0.5, shadow_blur: 0.0,
                     });
                 }
 
@@ -1112,7 +1112,7 @@ impl CommandPalette {
                     position: [thumb_x, thumb_cy],
                     size: [thumb_r * 2.0, thumb_r * 2.0],
                     color: crate::theme::with_alpha(settings.theme.text_primary, 0.95),
-                    border_radius: thumb_r,
+                    border_radius: thumb_r, shadow_blur: 0.0,
                 });
 
                 let rms_y = tp[1] + ts[1] + RMS_MARGIN_TOP * scale;
@@ -1121,7 +1121,7 @@ impl CommandPalette {
                     position: [tp[0], rms_y],
                     size: [ts[0], rms_h],
                     color: settings.theme.bg_input,
-                    border_radius: rms_h * 0.5,
+                    border_radius: rms_h * 0.5, shadow_blur: 0.0,
                 });
 
                 let rms_w = (self.fader_rms.clamp(0.0, 1.0) * ts[0]).max(0.0);
@@ -1137,7 +1137,7 @@ impl CommandPalette {
                         position: [tp[0], rms_y],
                         size: [rms_w, rms_h],
                         color: rms_color,
-                        border_radius: rms_h * 0.5,
+                        border_radius: rms_h * 0.5, shadow_blur: 0.0,
                     });
                 }
             }
@@ -1158,7 +1158,7 @@ impl CommandPalette {
                             position: [pos[0] + margin, y],
                             size: [size[0] - margin * 2.0, item_h],
                             color: settings.theme.option_highlight,
-                            border_radius: 6.0 * scale,
+                            border_radius: 6.0 * scale, shadow_blur: 0.0,
                         });
                     }
                     y += item_h;
@@ -1178,7 +1178,7 @@ impl CommandPalette {
                         position: [sb_x, track_top],
                         size: [sb_w, track_h],
                         color: SCROLLBAR_BG,
-                        border_radius: 3.0 * scale,
+                        border_radius: 3.0 * scale, shadow_blur: 0.0,
                     });
 
                     // Thumb
@@ -1196,7 +1196,7 @@ impl CommandPalette {
                         position: [sb_x, thumb_y],
                         size: [sb_w, thumb_h],
                         color: SCROLLBAR_THUMB,
-                        border_radius: 3.0 * scale,
+                        border_radius: 3.0 * scale, shadow_blur: 0.0,
                     });
                 }
             }
@@ -1209,7 +1209,7 @@ impl CommandPalette {
                     position: [pos[0] + pad, input_y],
                     size: [input_w, input_h],
                     color: settings.theme.bg_input,
-                    border_radius: 8.0 * scale,
+                    border_radius: 8.0 * scale, shadow_blur: 0.0,
                 });
             }
         }

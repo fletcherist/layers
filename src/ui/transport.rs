@@ -57,12 +57,23 @@ impl TransportPanel {
         let mut out = Vec::new();
         let (pos, size) = Self::panel_rect(screen_w, screen_h, scale);
 
+        // macOS-style blurred shadow
+        let blur = 16.0 * scale;
+        let expand = blur * 0.5;
+        out.push(InstanceRaw {
+            position: [pos[0] - expand, pos[1] - expand + 4.0 * scale],
+            size: [size[0] + expand * 2.0, size[1] + expand * 2.0],
+            color: settings.theme.shadow,
+            border_radius: (size[1] + expand * 2.0) * 0.5,
+            shadow_blur: blur,
+        });
+
         // background pill
         out.push(InstanceRaw {
             position: pos,
             size,
             color: settings.theme.bg_base,
-            border_radius: size[1] * 0.5,
+            border_radius: size[1] * 0.5, shadow_blur: 0.0,
         });
 
         // record button: red circle / stop square (keep as geometry for semantic color)
@@ -79,14 +90,14 @@ impl TransportPanel {
                 position: [sq_x, sq_y],
                 size: [sq, sq],
                 color: RECORD_ACTIVE,
-                border_radius: 2.0 * scale,
+                border_radius: 2.0 * scale, shadow_blur: 0.0,
             });
         } else {
             out.push(InstanceRaw {
                 position: [dot_x, dot_y],
                 size: [dot_diameter, dot_diameter],
                 color: RECORD_DIM,
-                border_radius: dot_diameter * 0.5,
+                border_radius: dot_diameter * 0.5, shadow_blur: 0.0,
             });
         }
 

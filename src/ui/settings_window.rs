@@ -259,7 +259,7 @@ impl SettingsWindow {
             position: [content_x + 16.0 * scale, y - 0.5 * scale],
             size: [content_w - 32.0 * scale, 1.0 * scale],
             color: crate::theme::with_alpha(t.divider, t.divider[3] * 0.67),
-            border_radius: 0.0,
+            border_radius: 0.0, shadow_blur: 0.0,
         });
     }
 
@@ -820,7 +820,7 @@ impl SettingsWindow {
             position: [0.0, 0.0],
             size: [screen_w, screen_h],
             color: t.shadow_strong,
-            border_radius: 0.0,
+            border_radius: 0.0, shadow_blur: 0.0,
         });
 
         // Shadow
@@ -829,7 +829,7 @@ impl SettingsWindow {
             position: [wp[0] + so, wp[1] + so],
             size: [ws[0] + 2.0 * scale, ws[1] + 2.0 * scale],
             color: t.shadow,
-            border_radius: br,
+            border_radius: br, shadow_blur: 0.0,
         });
 
         // Window background
@@ -837,7 +837,7 @@ impl SettingsWindow {
             position: wp,
             size: ws,
             color: t.bg_base,
-            border_radius: br,
+            border_radius: br, shadow_blur: 0.0,
         });
 
         // Sidebar background
@@ -845,14 +845,14 @@ impl SettingsWindow {
             position: wp,
             size: [SIDEBAR_WIDTH * scale, ws[1]],
             color: t.bg_sidebar,
-            border_radius: br,
+            border_radius: br, shadow_blur: 0.0,
         });
         // Fill right side of sidebar (cover rounded corner at top-right of sidebar)
         out.push(InstanceRaw {
             position: [wp[0] + SIDEBAR_WIDTH * scale - br, wp[1]],
             size: [br, ws[1]],
             color: t.bg_sidebar,
-            border_radius: 0.0,
+            border_radius: 0.0, shadow_blur: 0.0,
         });
 
         // Sidebar divider
@@ -860,7 +860,7 @@ impl SettingsWindow {
             position: [wp[0] + SIDEBAR_WIDTH * scale, wp[1] + 8.0 * scale],
             size: [1.0 * scale, ws[1] - 16.0 * scale],
             color: t.divider,
-            border_radius: 0.0,
+            border_radius: 0.0, shadow_blur: 0.0,
         });
 
         // Sidebar category items
@@ -875,14 +875,14 @@ impl SettingsWindow {
                     position: [wp[0] + 6.0 * scale, y],
                     size: [SIDEBAR_WIDTH * scale - 12.0 * scale, item_h],
                     color: t.bg_elevated,
-                    border_radius: 6.0 * scale,
+                    border_radius: 6.0 * scale, shadow_blur: 0.0,
                 });
             } else if is_hovered {
                 out.push(InstanceRaw {
                     position: [wp[0] + 6.0 * scale, y],
                     size: [SIDEBAR_WIDTH * scale - 12.0 * scale, item_h],
                     color: t.item_hover,
-                    border_radius: 6.0 * scale,
+                    border_radius: 6.0 * scale, shadow_blur: 0.0,
                 });
             }
         }
@@ -897,7 +897,7 @@ impl SettingsWindow {
             position: [content_x + 16.0 * scale, header_y - 1.0 * scale],
             size: [content_w - 32.0 * scale, 1.0 * scale],
             color: t.divider,
-            border_radius: 0.0,
+            border_radius: 0.0, shadow_blur: 0.0,
         });
 
         match self.active_category {
@@ -958,7 +958,7 @@ impl SettingsWindow {
                     position: [swatch_x, swatch_y],
                     size: [swatch_sz, swatch_sz],
                     color: t.accent,
-                    border_radius: swatch_sz * 0.5,
+                    border_radius: swatch_sz * 0.5, shadow_blur: 0.0,
                 });
             }
 
@@ -966,7 +966,7 @@ impl SettingsWindow {
                 position: tp,
                 size: ts,
                 color: t.knob_inactive,
-                border_radius: ts[1] * 0.5,
+                border_radius: ts[1] * 0.5, shadow_blur: 0.0,
             });
 
             let fill_w = norm * ts[0];
@@ -975,7 +975,7 @@ impl SettingsWindow {
                     position: tp,
                     size: [fill_w, ts[1]],
                     color: t.slider_fill,
-                    border_radius: ts[1] * 0.5,
+                    border_radius: ts[1] * 0.5, shadow_blur: 0.0,
                 });
             }
 
@@ -986,7 +986,7 @@ impl SettingsWindow {
                 position: [thumb_x, thumb_cy],
                 size: [thumb_r * 2.0, thumb_r * 2.0],
                 color: crate::theme::with_alpha(t.text_primary, 0.95),
-                border_radius: thumb_r,
+                border_radius: thumb_r, shadow_blur: 0.0,
             });
 
             let row_bottom =

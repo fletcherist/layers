@@ -75,7 +75,7 @@ impl TooltipState {
             position: [pill_x, pill_y],
             size: [pill_w, pill_h],
             color: theme.tooltip_bg,
-            border_radius: TOOLTIP_BORDER_RADIUS * scale,
+            border_radius: TOOLTIP_BORDER_RADIUS * scale, shadow_blur: 0.0,
         }]
     }
 

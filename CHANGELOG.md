@@ -1,3 +1,4 @@
+- feat: add SDF-based blurred shadow to transport control, macOS-style (v0.2.19, 56.7k loc)
 - feat: extend computer MIDI keyboard with L (D5), I (C#5), O (Eb5) keys (v0.2.18, 56.6k loc)
 - feat: drop audio/instrument from browser onto a group to add it inside, with accent border highlight on hover (v0.2.17, 56.7k loc)
 - fix: browser right edge border now renders on top of layer rows (v0.2.16, 56.6k loc)

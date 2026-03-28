@@ -530,7 +530,7 @@ impl RightWindow {
             position: [cx - kr, cy - kr],
             size: [kr * 2.0, kr * 2.0],
             color: theme.bg_elevated,
-            border_radius: kr,
+            border_radius: kr, shadow_blur: 0.0,
         });
 
         // Arc dots
@@ -551,7 +551,7 @@ impl RightWindow {
                 position: [cx + dx - dot_r, cy + dy - dot_r],
                 size: [dot_r * 2.0, dot_r * 2.0],
                 color,
-                border_radius: dot_r,
+                border_radius: dot_r, shadow_blur: 0.0,
             });
         }
 
@@ -564,7 +564,7 @@ impl RightWindow {
             position: [cx + idx - ind_r, cy + idy - ind_r],
             size: [ind_r * 2.0, ind_r * 2.0],
             color: crate::theme::with_alpha(theme.text_primary, 0.95),
-            border_radius: ind_r,
+            border_radius: ind_r, shadow_blur: 0.0,
         });
     }
 
@@ -577,7 +577,7 @@ impl RightWindow {
             position: [pp[0], pp[1]],
             size: [1.0 * scale, ps[1]],
             color: settings.theme.border_subtle,
-            border_radius: 0.0,
+            border_radius: 0.0, shadow_blur: 0.0,
         });
 
         // Panel background
@@ -585,7 +585,7 @@ impl RightWindow {
             position: [pp[0] + 1.0 * scale, pp[1]],
             size: [ps[0] - 1.0 * scale, ps[1]],
             color: settings.theme.bg_base,
-            border_radius: 0.0,
+            border_radius: 0.0, shadow_blur: 0.0,
         });
 
         // Header background
@@ -593,7 +593,7 @@ impl RightWindow {
             position: [pp[0] + 1.0 * scale, pp[1]],
             size: [ps[0] - 1.0 * scale, HEADER_HEIGHT * scale],
             color: settings.theme.bg_surface,
-            border_radius: 0.0,
+            border_radius: 0.0, shadow_blur: 0.0,
         });
 
         // Header divider
@@ -601,7 +601,7 @@ impl RightWindow {
             position: [pp[0] + 1.0 * scale, pp[1] + HEADER_HEIGHT * scale],
             size: [ps[0] - 1.0 * scale, 1.0 * scale],
             color: settings.theme.border_subtle,
-            border_radius: 0.0,
+            border_radius: 0.0, shadow_blur: 0.0,
         });
 
         // Group/MainLayer target: render export button (fall through to vol/pan below)
@@ -615,7 +615,7 @@ impl RightWindow {
                 } else {
                     crate::theme::with_alpha(settings.theme.bg_elevated, 0.85)
                 },
-                border_radius: 4.0 * scale,
+                border_radius: 4.0 * scale, shadow_blur: 0.0,
             });
         }
 
@@ -632,7 +632,7 @@ impl RightWindow {
             position: track_pos,
             size: track_size,
             color: settings.theme.bg_elevated,
-            border_radius: FADER_TRACK_W * 0.5 * scale,
+            border_radius: FADER_TRACK_W * 0.5 * scale, shadow_blur: 0.0,
         });
 
         // RMS meter fill inside fader track (rendered behind gain fill)
@@ -654,7 +654,7 @@ impl RightWindow {
                     position: [track_pos[0], green_top],
                     size: [track_size[0], green_h],
                     color: crate::theme::with_alpha(RMS_LOW, 0.5),
-                    border_radius: br,
+                    border_radius: br, shadow_blur: 0.0,
                 });
             }
 
@@ -667,7 +667,7 @@ impl RightWindow {
                         position: [track_pos[0], yellow_top],
                         size: [track_size[0], yellow_h],
                         color: crate::theme::with_alpha(RMS_MID, 0.5),
-                        border_radius: 0.0,
+                        border_radius: 0.0, shadow_blur: 0.0,
                     });
                 }
             }
@@ -681,7 +681,7 @@ impl RightWindow {
                         position: [track_pos[0], red_top],
                         size: [track_size[0], red_h],
                         color: crate::theme::with_alpha(RMS_HIGH, 0.5),
-                        border_radius: 0.0,
+                        border_radius: 0.0, shadow_blur: 0.0,
                     });
                 }
             }
@@ -695,7 +695,7 @@ impl RightWindow {
                 position: [track_pos[0], peak_y - 1.0 * scale],
                 size: [track_size[0], 2.0 * scale],
                 color: crate::theme::with_alpha(settings.theme.text_primary, 0.7),
-                border_radius: 0.0,
+                border_radius: 0.0, shadow_blur: 0.0,
             });
         }
 
@@ -709,17 +709,17 @@ impl RightWindow {
             let y0 = layout.bracket_y0;
             let y1 = layout.bracket_y1;
             // Top-left
-            out.push(InstanceRaw { position: [x0, y0], size: [bracket_len, thick], color, border_radius: 0.0 });
-            out.push(InstanceRaw { position: [x0, y0], size: [thick, bracket_len], color, border_radius: 0.0 });
+            out.push(InstanceRaw { position: [x0, y0], size: [bracket_len, thick], color, border_radius: 0.0 , shadow_blur: 0.0 });
+            out.push(InstanceRaw { position: [x0, y0], size: [thick, bracket_len], color, border_radius: 0.0 , shadow_blur: 0.0 });
             // Top-right
-            out.push(InstanceRaw { position: [x1 - bracket_len, y0], size: [bracket_len, thick], color, border_radius: 0.0 });
-            out.push(InstanceRaw { position: [x1 - thick, y0], size: [thick, bracket_len], color, border_radius: 0.0 });
+            out.push(InstanceRaw { position: [x1 - bracket_len, y0], size: [bracket_len, thick], color, border_radius: 0.0 , shadow_blur: 0.0 });
+            out.push(InstanceRaw { position: [x1 - thick, y0], size: [thick, bracket_len], color, border_radius: 0.0 , shadow_blur: 0.0 });
             // Bottom-left
-            out.push(InstanceRaw { position: [x0, y1 - thick], size: [bracket_len, thick], color, border_radius: 0.0 });
-            out.push(InstanceRaw { position: [x0, y1 - bracket_len], size: [thick, bracket_len], color, border_radius: 0.0 });
+            out.push(InstanceRaw { position: [x0, y1 - thick], size: [bracket_len, thick], color, border_radius: 0.0 , shadow_blur: 0.0 });
+            out.push(InstanceRaw { position: [x0, y1 - bracket_len], size: [thick, bracket_len], color, border_radius: 0.0 , shadow_blur: 0.0 });
             // Bottom-right
-            out.push(InstanceRaw { position: [x1 - bracket_len, y1 - thick], size: [bracket_len, thick], color, border_radius: 0.0 });
-            out.push(InstanceRaw { position: [x1 - thick, y1 - bracket_len], size: [thick, bracket_len], color, border_radius: 0.0 });
+            out.push(InstanceRaw { position: [x1 - bracket_len, y1 - thick], size: [bracket_len, thick], color, border_radius: 0.0 , shadow_blur: 0.0 });
+            out.push(InstanceRaw { position: [x1 - thick, y1 - bracket_len], size: [thick, bracket_len], color, border_radius: 0.0 , shadow_blur: 0.0 });
         }
 
         // Fill anchored at 0 dB: extends up when volume > 0 dB, down when volume < 0 dB
@@ -732,7 +732,7 @@ impl RightWindow {
                 position: [track_pos[0], fill_top],
                 size: [track_size[0], fill_h],
                 color: settings.theme.accent,
-                border_radius: FADER_TRACK_W * 0.5 * scale,
+                border_radius: FADER_TRACK_W * 0.5 * scale, shadow_blur: 0.0,
             });
         }
 
@@ -760,7 +760,7 @@ impl RightWindow {
                 position: [tick_x, ty - 0.5 * scale],
                 size: [tick_w * scale, 1.0 * scale],
                 color: crate::theme::with_alpha(settings.theme.text_secondary, 0.7),
-                border_radius: 0.0,
+                border_radius: 0.0, shadow_blur: 0.0,
             });
         }
 
@@ -780,17 +780,17 @@ impl RightWindow {
             let y0 = pan_layout.bracket_y0;
             let y1 = pan_layout.bracket_y1;
             // Top-left
-            out.push(InstanceRaw { position: [x0, y0], size: [bracket_len, thick], color, border_radius: 0.0 });
-            out.push(InstanceRaw { position: [x0, y0], size: [thick, bracket_len], color, border_radius: 0.0 });
+            out.push(InstanceRaw { position: [x0, y0], size: [bracket_len, thick], color, border_radius: 0.0 , shadow_blur: 0.0 });
+            out.push(InstanceRaw { position: [x0, y0], size: [thick, bracket_len], color, border_radius: 0.0 , shadow_blur: 0.0 });
             // Top-right
-            out.push(InstanceRaw { position: [x1 - bracket_len, y0], size: [bracket_len, thick], color, border_radius: 0.0 });
-            out.push(InstanceRaw { position: [x1 - thick, y0], size: [thick, bracket_len], color, border_radius: 0.0 });
+            out.push(InstanceRaw { position: [x1 - bracket_len, y0], size: [bracket_len, thick], color, border_radius: 0.0 , shadow_blur: 0.0 });
+            out.push(InstanceRaw { position: [x1 - thick, y0], size: [thick, bracket_len], color, border_radius: 0.0 , shadow_blur: 0.0 });
             // Bottom-left
-            out.push(InstanceRaw { position: [x0, y1 - thick], size: [bracket_len, thick], color, border_radius: 0.0 });
-            out.push(InstanceRaw { position: [x0, y1 - bracket_len], size: [thick, bracket_len], color, border_radius: 0.0 });
+            out.push(InstanceRaw { position: [x0, y1 - thick], size: [bracket_len, thick], color, border_radius: 0.0 , shadow_blur: 0.0 });
+            out.push(InstanceRaw { position: [x0, y1 - bracket_len], size: [thick, bracket_len], color, border_radius: 0.0 , shadow_blur: 0.0 });
             // Bottom-right
-            out.push(InstanceRaw { position: [x1 - bracket_len, y1 - thick], size: [bracket_len, thick], color, border_radius: 0.0 });
-            out.push(InstanceRaw { position: [x1 - thick, y1 - bracket_len], size: [thick, bracket_len], color, border_radius: 0.0 });
+            out.push(InstanceRaw { position: [x1 - bracket_len, y1 - thick], size: [bracket_len, thick], color, border_radius: 0.0 , shadow_blur: 0.0 });
+            out.push(InstanceRaw { position: [x1 - thick, y1 - bracket_len], size: [thick, bracket_len], color, border_radius: 0.0 , shadow_blur: 0.0 });
         }
 
         // Solo/Mute buttons (all entity types except MainLayer)
@@ -815,7 +815,7 @@ impl RightWindow {
             position: rev_pos,
             size: rev_size,
             color: rev_color,
-            border_radius: 4.0 * scale,
+            border_radius: 4.0 * scale, shadow_blur: 0.0,
         });
 
         // Warp toggle button
@@ -832,7 +832,7 @@ impl RightWindow {
             position: btn_pos,
             size: btn_size,
             color: btn_color,
-            border_radius: 4.0 * scale,
+            border_radius: 4.0 * scale, shadow_blur: 0.0,
         });
 
         // Warp mode selector (only when warp is on)
@@ -847,7 +847,7 @@ impl RightWindow {
                 position: sel_pos,
                 size: sel_size,
                 color: sel_color,
-                border_radius: 4.0 * scale,
+                border_radius: 4.0 * scale, shadow_blur: 0.0,
             });
         }
 
@@ -863,7 +863,7 @@ impl RightWindow {
                 position: rbtn_pos,
                 size: rbtn_size,
                 color: rbtn_color,
-                border_radius: 4.0 * scale,
+                border_radius: 4.0 * scale, shadow_blur: 0.0,
             });
         }
 
@@ -878,17 +878,17 @@ impl RightWindow {
             let y0 = sl.bracket_y0;
             let y1 = sl.bracket_y1;
             // Top-left
-            out.push(InstanceRaw { position: [x0, y0], size: [bracket_len, thick], color, border_radius: 0.0 });
-            out.push(InstanceRaw { position: [x0, y0], size: [thick, bracket_len], color, border_radius: 0.0 });
+            out.push(InstanceRaw { position: [x0, y0], size: [bracket_len, thick], color, border_radius: 0.0 , shadow_blur: 0.0 });
+            out.push(InstanceRaw { position: [x0, y0], size: [thick, bracket_len], color, border_radius: 0.0 , shadow_blur: 0.0 });
             // Top-right
-            out.push(InstanceRaw { position: [x1 - bracket_len, y0], size: [bracket_len, thick], color, border_radius: 0.0 });
-            out.push(InstanceRaw { position: [x1 - thick, y0], size: [thick, bracket_len], color, border_radius: 0.0 });
+            out.push(InstanceRaw { position: [x1 - bracket_len, y0], size: [bracket_len, thick], color, border_radius: 0.0 , shadow_blur: 0.0 });
+            out.push(InstanceRaw { position: [x1 - thick, y0], size: [thick, bracket_len], color, border_radius: 0.0 , shadow_blur: 0.0 });
             // Bottom-left
-            out.push(InstanceRaw { position: [x0, y1 - thick], size: [bracket_len, thick], color, border_radius: 0.0 });
-            out.push(InstanceRaw { position: [x0, y1 - bracket_len], size: [thick, bracket_len], color, border_radius: 0.0 });
+            out.push(InstanceRaw { position: [x0, y1 - thick], size: [bracket_len, thick], color, border_radius: 0.0 , shadow_blur: 0.0 });
+            out.push(InstanceRaw { position: [x0, y1 - bracket_len], size: [thick, bracket_len], color, border_radius: 0.0 , shadow_blur: 0.0 });
             // Bottom-right
-            out.push(InstanceRaw { position: [x1 - bracket_len, y1 - thick], size: [bracket_len, thick], color, border_radius: 0.0 });
-            out.push(InstanceRaw { position: [x1 - thick, y1 - bracket_len], size: [thick, bracket_len], color, border_radius: 0.0 });
+            out.push(InstanceRaw { position: [x1 - bracket_len, y1 - thick], size: [bracket_len, thick], color, border_radius: 0.0 , shadow_blur: 0.0 });
+            out.push(InstanceRaw { position: [x1 - thick, y1 - bracket_len], size: [thick, bracket_len], color, border_radius: 0.0 , shadow_blur: 0.0 });
         }
 
         // Pitch text focus brackets
@@ -902,17 +902,17 @@ impl RightWindow {
             let y0 = pl.bracket_y0;
             let y1 = pl.bracket_y1;
             // Top-left
-            out.push(InstanceRaw { position: [x0, y0], size: [bracket_len, thick], color, border_radius: 0.0 });
-            out.push(InstanceRaw { position: [x0, y0], size: [thick, bracket_len], color, border_radius: 0.0 });
+            out.push(InstanceRaw { position: [x0, y0], size: [bracket_len, thick], color, border_radius: 0.0 , shadow_blur: 0.0 });
+            out.push(InstanceRaw { position: [x0, y0], size: [thick, bracket_len], color, border_radius: 0.0 , shadow_blur: 0.0 });
             // Top-right
-            out.push(InstanceRaw { position: [x1 - bracket_len, y0], size: [bracket_len, thick], color, border_radius: 0.0 });
-            out.push(InstanceRaw { position: [x1 - thick, y0], size: [thick, bracket_len], color, border_radius: 0.0 });
+            out.push(InstanceRaw { position: [x1 - bracket_len, y0], size: [bracket_len, thick], color, border_radius: 0.0 , shadow_blur: 0.0 });
+            out.push(InstanceRaw { position: [x1 - thick, y0], size: [thick, bracket_len], color, border_radius: 0.0 , shadow_blur: 0.0 });
             // Bottom-left
-            out.push(InstanceRaw { position: [x0, y1 - thick], size: [bracket_len, thick], color, border_radius: 0.0 });
-            out.push(InstanceRaw { position: [x0, y1 - bracket_len], size: [thick, bracket_len], color, border_radius: 0.0 });
+            out.push(InstanceRaw { position: [x0, y1 - thick], size: [bracket_len, thick], color, border_radius: 0.0 , shadow_blur: 0.0 });
+            out.push(InstanceRaw { position: [x0, y1 - bracket_len], size: [thick, bracket_len], color, border_radius: 0.0 , shadow_blur: 0.0 });
             // Bottom-right
-            out.push(InstanceRaw { position: [x1 - bracket_len, y1 - thick], size: [bracket_len, thick], color, border_radius: 0.0 });
-            out.push(InstanceRaw { position: [x1 - thick, y1 - bracket_len], size: [thick, bracket_len], color, border_radius: 0.0 });
+            out.push(InstanceRaw { position: [x1 - bracket_len, y1 - thick], size: [bracket_len, thick], color, border_radius: 0.0 , shadow_blur: 0.0 });
+            out.push(InstanceRaw { position: [x1 - thick, y1 - bracket_len], size: [thick, bracket_len], color, border_radius: 0.0 , shadow_blur: 0.0 });
         }
 
         } // end waveform-only controls
@@ -1474,7 +1474,7 @@ impl RightWindow {
             position: [pp[0] + 8.0 * scale, top - 6.0 * scale],
             size: [ps[0] - 16.0 * scale, 1.0 * scale],
             color: settings.theme.border_subtle,
-            border_radius: 0.0,
+            border_radius: 0.0, shadow_blur: 0.0,
         });
 
         // "Add Effect" button (shown even when no chain/no slots)
@@ -1488,7 +1488,7 @@ impl RightWindow {
             } else {
                 crate::theme::with_alpha(settings.theme.bg_elevated, 0.85)
             },
-            border_radius: 4.0 * scale,
+            border_radius: 4.0 * scale, shadow_blur: 0.0,
         });
 
         let Some(chain) = chain else { return out; };
@@ -1502,7 +1502,7 @@ impl RightWindow {
                     position: sp,
                     size: ss,
                     color: crate::theme::with_alpha(settings.theme.bg_surface, 0.35),
-                    border_radius: 4.0 * scale,
+                    border_radius: 4.0 * scale, shadow_blur: 0.0,
                 });
 
                 // Floating lifted copy follows cursor
@@ -1512,7 +1512,7 @@ impl RightWindow {
                     position: fp,
                     size: ss,
                     color: settings.theme.bg_menu,
-                    border_radius: 4.0 * scale,
+                    border_radius: 4.0 * scale, shadow_blur: 0.0,
                 });
 
                 // Bypass dot on floating copy
@@ -1528,7 +1528,7 @@ impl RightWindow {
                     position: bpf,
                     size: bs,
                     color: bypass_color,
-                    border_radius: bs[0] * 0.5,
+                    border_radius: bs[0] * 0.5, shadow_blur: 0.0,
                 });
             } else {
                 // Highlight target slot under cursor
@@ -1543,7 +1543,7 @@ impl RightWindow {
                     position: sp,
                     size: ss,
                     color: bg_color,
-                    border_radius: 4.0 * scale,
+                    border_radius: 4.0 * scale, shadow_blur: 0.0,
                 });
 
                 // Bypass indicator dot
@@ -1557,7 +1557,7 @@ impl RightWindow {
                     position: bp,
                     size: bs,
                     color: bypass_color,
-                    border_radius: bs[0] * 0.5,
+                    border_radius: bs[0] * 0.5, shadow_blur: 0.0,
                 });
             }
 
