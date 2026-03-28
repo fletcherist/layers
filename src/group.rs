@@ -41,6 +41,7 @@ pub(crate) fn bounding_box_of_selection(
     export_regions: &indexmap::IndexMap<EntityId, crate::regions::ExportRegion>,
     components: &indexmap::IndexMap<EntityId, crate::component::ComponentDef>,
     component_instances: &indexmap::IndexMap<EntityId, crate::component::ComponentInstance>,
+    groups: &indexmap::IndexMap<EntityId, Group>,
 ) -> Option<([f32; 2], [f32; 2])> {
     let mut min_x = f32::MAX;
     let mut min_y = f32::MAX;
@@ -63,7 +64,8 @@ pub(crate) fn bounding_box_of_selection(
                         .map(|def| (inst.position, def.size))
                 })
             }
-            HitTarget::Group(_) | HitTarget::Instrument(_) => None,
+            HitTarget::Group(id) => groups.get(id).map(|g| (g.position, g.size)),
+            HitTarget::Instrument(_) => None,
         };
         if let Some((p, s)) = pos_size {
             found = true;
@@ -81,6 +83,103 @@ pub(crate) fn bounding_box_of_selection(
         max_x - min_x,
         max_y - min_y,
     ]))
+}
+
+// ---------------------------------------------------------------------------
+// Nested-group helpers
+// ---------------------------------------------------------------------------
+
+/// Find the direct parent group containing `entity_id`, if any.
+pub(crate) fn parent_group_of(
+    entity_id: EntityId,
+    groups: &indexmap::IndexMap<EntityId, Group>,
+) -> Option<EntityId> {
+    groups.iter()
+        .find(|(_, g)| g.member_ids.contains(&entity_id))
+        .map(|(gid, _)| *gid)
+}
+
+/// Walk up the group hierarchy and return the chain of ancestor group IDs
+/// from the immediate parent to the root: `[parent, grandparent, ...]`.
+pub(crate) fn ancestor_chain(
+    entity_id: EntityId,
+    groups: &indexmap::IndexMap<EntityId, Group>,
+) -> Vec<EntityId> {
+    let mut chain = Vec::new();
+    let mut current = entity_id;
+    let mut visited = std::collections::HashSet::new();
+    loop {
+        match parent_group_of(current, groups) {
+            Some(pid) => {
+                if !visited.insert(pid) { break; } // cycle guard
+                chain.push(pid);
+                current = pid;
+            }
+            None => break,
+        }
+    }
+    chain
+}
+
+/// Recursively collect all leaf (non-group) members of a group.
+pub(crate) fn all_transitive_members(
+    group_id: EntityId,
+    groups: &indexmap::IndexMap<EntityId, Group>,
+) -> Vec<EntityId> {
+    let mut result = Vec::new();
+    let mut visited = std::collections::HashSet::new();
+    fn recurse(
+        gid: EntityId,
+        groups: &indexmap::IndexMap<EntityId, Group>,
+        result: &mut Vec<EntityId>,
+        visited: &mut std::collections::HashSet<EntityId>,
+    ) {
+        if !visited.insert(gid) { return; }
+        if let Some(group) = groups.get(&gid) {
+            for mid in &group.member_ids {
+                if groups.contains_key(mid) {
+                    recurse(*mid, groups, result, visited);
+                } else {
+                    result.push(*mid);
+                }
+            }
+        }
+    }
+    recurse(group_id, groups, &mut result, &mut visited);
+    result
+}
+
+/// Returns `true` if adding `candidate_id` as a member of `container_id`
+/// would create a cycle (i.e. `container_id` is already a transitive member
+/// of `candidate_id`, or they are the same entity).
+pub(crate) fn would_create_cycle(
+    container_id: EntityId,
+    candidate_id: EntityId,
+    groups: &indexmap::IndexMap<EntityId, Group>,
+) -> bool {
+    if container_id == candidate_id { return true; }
+    // Check if container_id is a transitive member of candidate_id
+    let mut visited = std::collections::HashSet::new();
+    fn is_transitive_member(
+        target: EntityId,
+        current_group: EntityId,
+        groups: &indexmap::IndexMap<EntityId, Group>,
+        visited: &mut std::collections::HashSet<EntityId>,
+    ) -> bool {
+        if !visited.insert(current_group) { return false; }
+        if let Some(group) = groups.get(&current_group) {
+            for mid in &group.member_ids {
+                if *mid == target { return true; }
+                if groups.contains_key(mid) {
+                    if is_transitive_member(target, *mid, groups, visited) {
+                        return true;
+                    }
+                }
+            }
+        }
+        false
+    }
+    is_transitive_member(container_id, candidate_id, groups, &mut visited)
 }
 
 /// Build rendering instances for a group (border + label badge).

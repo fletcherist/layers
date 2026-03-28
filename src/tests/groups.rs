@@ -1009,3 +1009,338 @@ fn alt_drag_group_deep_clones_members() {
     // Total: 2 original + 2 cloned = 4
     assert_eq!(app.waveforms.len(), 4, "should have 4 waveforms total");
 }
+
+// ---------------------------------------------------------------------------
+// Nested-group helpers
+// ---------------------------------------------------------------------------
+
+#[test]
+fn nested_group_parent_group_of() {
+    use crate::group::{self, Group};
+
+    let mut app = App::new_headless();
+
+    let wf1 = new_id();
+    let wf2 = new_id();
+    app.waveforms.insert(wf1, make_waveform(0.0, 0.0));
+    app.waveforms.insert(wf2, make_waveform(300.0, 0.0));
+
+    let child_group_id = new_id();
+    let child = Group::new(child_group_id, "Child".into(), [0.0, 0.0], [200.0, 80.0], vec![wf1, wf2]);
+    app.groups.insert(child_group_id, child);
+
+    let parent_group_id = new_id();
+    let parent = Group::new(parent_group_id, "Parent".into(), [0.0, 0.0], [500.0, 80.0], vec![child_group_id]);
+    app.groups.insert(parent_group_id, parent);
+
+    // wf1's direct parent is the child group
+    assert_eq!(group::parent_group_of(wf1, &app.groups), Some(child_group_id));
+    // child group's parent is the parent group
+    assert_eq!(group::parent_group_of(child_group_id, &app.groups), Some(parent_group_id));
+    // parent group has no parent
+    assert_eq!(group::parent_group_of(parent_group_id, &app.groups), None);
+}
+
+#[test]
+fn nested_group_ancestor_chain() {
+    use crate::group::{self, Group};
+
+    let mut app = App::new_headless();
+
+    let wf = new_id();
+    app.waveforms.insert(wf, make_waveform(0.0, 0.0));
+
+    let g1 = new_id();
+    app.groups.insert(g1, Group::new(g1, "G1".into(), [0.0, 0.0], [200.0, 80.0], vec![wf]));
+
+    let g2 = new_id();
+    app.groups.insert(g2, Group::new(g2, "G2".into(), [0.0, 0.0], [300.0, 80.0], vec![g1]));
+
+    let g3 = new_id();
+    app.groups.insert(g3, Group::new(g3, "G3".into(), [0.0, 0.0], [400.0, 80.0], vec![g2]));
+
+    // wf -> g1 -> g2 -> g3
+    let chain = group::ancestor_chain(wf, &app.groups);
+    assert_eq!(chain, vec![g1, g2, g3]);
+
+    // g1 -> g2 -> g3
+    let chain = group::ancestor_chain(g1, &app.groups);
+    assert_eq!(chain, vec![g2, g3]);
+
+    // g3 has no ancestors
+    let chain = group::ancestor_chain(g3, &app.groups);
+    assert!(chain.is_empty());
+
+    // entity not in any group
+    let orphan = new_id();
+    let chain = group::ancestor_chain(orphan, &app.groups);
+    assert!(chain.is_empty());
+}
+
+#[test]
+fn nested_group_all_transitive_members() {
+    use crate::group::{self, Group};
+
+    let mut app = App::new_headless();
+
+    let wf1 = new_id();
+    let wf2 = new_id();
+    let wf3 = new_id();
+    app.waveforms.insert(wf1, make_waveform(0.0, 0.0));
+    app.waveforms.insert(wf2, make_waveform(200.0, 0.0));
+    app.waveforms.insert(wf3, make_waveform(400.0, 0.0));
+
+    let child_a = new_id();
+    app.groups.insert(child_a, Group::new(child_a, "A".into(), [0.0, 0.0], [200.0, 80.0], vec![wf1]));
+
+    let child_b = new_id();
+    app.groups.insert(child_b, Group::new(child_b, "B".into(), [200.0, 0.0], [200.0, 80.0], vec![wf2, wf3]));
+
+    let parent = new_id();
+    app.groups.insert(parent, Group::new(parent, "Parent".into(), [0.0, 0.0], [600.0, 80.0], vec![child_a, child_b]));
+
+    let members = group::all_transitive_members(parent, &app.groups);
+    assert_eq!(members.len(), 3);
+    assert!(members.contains(&wf1));
+    assert!(members.contains(&wf2));
+    assert!(members.contains(&wf3));
+
+    // child_a has only wf1
+    let members = group::all_transitive_members(child_a, &app.groups);
+    assert_eq!(members, vec![wf1]);
+}
+
+#[test]
+fn nested_group_would_create_cycle() {
+    use crate::group::{self, Group};
+
+    let mut app = App::new_headless();
+
+    let g1 = new_id();
+    let g2 = new_id();
+    let g3 = new_id();
+
+    app.groups.insert(g1, Group::new(g1, "G1".into(), [0.0, 0.0], [100.0, 80.0], vec![]));
+    app.groups.insert(g2, Group::new(g2, "G2".into(), [0.0, 0.0], [200.0, 80.0], vec![g1]));
+    app.groups.insert(g3, Group::new(g3, "G3".into(), [0.0, 0.0], [300.0, 80.0], vec![g2]));
+
+    // Self-cycle
+    assert!(group::would_create_cycle(g1, g1, &app.groups));
+
+    // Direct cycle: g1 contains g2, adding g2 → g1 would cycle
+    // g3 -> g2 -> g1 ; adding g1 as member of g1 is self-cycle (already tested)
+    // adding g3 as member of g1 would create cycle (g1 is inside g2 which is inside g3)
+    assert!(group::would_create_cycle(g1, g3, &app.groups));
+
+    // No cycle: g1 and independent group
+    let g4 = new_id();
+    app.groups.insert(g4, Group::new(g4, "G4".into(), [0.0, 0.0], [100.0, 80.0], vec![]));
+    assert!(!group::would_create_cycle(g1, g4, &app.groups));
+    assert!(!group::would_create_cycle(g4, g1, &app.groups));
+
+    // OK to add g1 into g3 (g1 is already transitively inside g3 via g2, but adding directly is not a cycle issue — it's membership, not containment)
+    // Actually: g3 contains g2 which contains g1. Adding g1 to g3 directly is fine (g1 doesn't contain g3).
+    assert!(!group::would_create_cycle(g3, g1, &app.groups));
+}
+
+#[test]
+fn nested_group_create_subgroup() {
+    use crate::group::Group;
+    use crate::ui::palette::CommandAction;
+
+    let mut app = App::new_headless();
+
+    // Create two waveforms and group them
+    let wf1 = new_id();
+    let wf2 = new_id();
+    let wf3 = new_id();
+    app.waveforms.insert(wf1, make_waveform(0.0, 0.0));
+    app.waveforms.insert(wf2, make_waveform(250.0, 0.0));
+    app.waveforms.insert(wf3, make_waveform(500.0, 0.0));
+
+    // Create a parent group with all three
+    let parent_id = new_id();
+    let parent = Group::new(parent_id, "Parent".into(), [0.0, 0.0], [700.0, 80.0], vec![wf1, wf2, wf3]);
+    app.groups.insert(parent_id, parent);
+
+    // Select wf1 and wf2 (which are inside the parent group), and create a sub-group
+    app.selected = vec![HitTarget::Waveform(wf1), HitTarget::Waveform(wf2)];
+    app.execute_command(CommandAction::CreateGroup);
+
+    // Now there should be 2 groups
+    assert_eq!(app.groups.len(), 2, "should have parent + child group");
+
+    // Find the child group (not the parent)
+    let child_id = *app.groups.keys().find(|id| **id != parent_id).unwrap();
+
+    // Child group should have wf1 and wf2
+    let child = &app.groups[&child_id];
+    assert_eq!(child.member_ids.len(), 2);
+    assert!(child.member_ids.contains(&wf1));
+    assert!(child.member_ids.contains(&wf2));
+
+    // Parent group should now have child_id and wf3 (not wf1, wf2)
+    let parent = &app.groups[&parent_id];
+    assert!(parent.member_ids.contains(&child_id), "parent should contain child group");
+    assert!(parent.member_ids.contains(&wf3), "parent should still contain wf3");
+    assert!(!parent.member_ids.contains(&wf1), "wf1 should be moved to child");
+    assert!(!parent.member_ids.contains(&wf2), "wf2 should be moved to child");
+}
+
+#[test]
+fn nested_group_ungroup_child() {
+    use crate::group::Group;
+    use crate::ui::palette::CommandAction;
+
+    let mut app = App::new_headless();
+
+    let wf1 = new_id();
+    let wf2 = new_id();
+    let wf3 = new_id();
+    app.waveforms.insert(wf1, make_waveform(0.0, 0.0));
+    app.waveforms.insert(wf2, make_waveform(250.0, 0.0));
+    app.waveforms.insert(wf3, make_waveform(500.0, 0.0));
+
+    // Create child group with wf1, wf2
+    let child_id = new_id();
+    app.groups.insert(child_id, Group::new(child_id, "Child".into(), [0.0, 0.0], [450.0, 80.0], vec![wf1, wf2]));
+
+    // Create parent group with child_id and wf3
+    let parent_id = new_id();
+    app.groups.insert(parent_id, Group::new(parent_id, "Parent".into(), [0.0, 0.0], [700.0, 80.0], vec![child_id, wf3]));
+
+    // Select the child group and ungroup it
+    app.selected = vec![HitTarget::Group(child_id)];
+    app.execute_command(CommandAction::UngroupSelected);
+
+    // Child group should be removed
+    assert!(!app.groups.contains_key(&child_id), "child group should be deleted");
+
+    // Parent should now contain wf1, wf2, wf3 directly
+    let parent = &app.groups[&parent_id];
+    assert!(parent.member_ids.contains(&wf1));
+    assert!(parent.member_ids.contains(&wf2));
+    assert!(parent.member_ids.contains(&wf3));
+    assert_eq!(parent.member_ids.len(), 3);
+}
+
+#[test]
+fn nested_group_mute_parent_mutes_children() {
+    use crate::group::Group;
+
+    let mut app = App::new_headless();
+
+    let wf1 = new_id();
+    app.waveforms.insert(wf1, make_waveform(0.0, 0.0));
+
+    let child_id = new_id();
+    app.groups.insert(child_id, Group::new(child_id, "Child".into(), [0.0, 0.0], [200.0, 80.0], vec![wf1]));
+
+    let parent_id = new_id();
+    app.groups.insert(parent_id, Group::new(parent_id, "Parent".into(), [0.0, 0.0], [300.0, 80.0], vec![child_id]));
+
+    // Initially audible
+    assert!(crate::is_entity_audible(wf1, &app.solo_ids, &app.groups));
+
+    // Mute the parent group
+    app.groups.get_mut(&parent_id).unwrap().disabled = true;
+
+    // wf1 should not be audible (parent of its parent group is muted)
+    assert!(!crate::is_entity_audible(wf1, &app.solo_ids, &app.groups));
+}
+
+#[test]
+fn nested_group_solo_parent_solos_children() {
+    use crate::group::Group;
+
+    let mut app = App::new_headless();
+
+    let wf_in = new_id();
+    let wf_out = new_id();
+    app.waveforms.insert(wf_in, make_waveform(0.0, 0.0));
+    app.waveforms.insert(wf_out, make_waveform(500.0, 0.0));
+
+    let child_id = new_id();
+    app.groups.insert(child_id, Group::new(child_id, "Child".into(), [0.0, 0.0], [200.0, 80.0], vec![wf_in]));
+
+    let parent_id = new_id();
+    app.groups.insert(parent_id, Group::new(parent_id, "Parent".into(), [0.0, 0.0], [300.0, 80.0], vec![child_id]));
+
+    // Solo the parent group
+    app.solo_ids.insert(parent_id);
+
+    // wf_in (inside nested child) should be audible via parent solo
+    assert!(crate::is_entity_audible(wf_in, &app.solo_ids, &app.groups));
+
+    // wf_out (outside any group) should NOT be audible
+    assert!(!crate::is_entity_audible(wf_out, &app.solo_ids, &app.groups));
+}
+
+#[test]
+fn nested_group_update_bounds_propagates() {
+    use crate::group::Group;
+
+    let mut app = App::new_headless();
+
+    let wf1 = new_id();
+    app.waveforms.insert(wf1, make_waveform(100.0, 50.0));
+
+    let child_id = new_id();
+    app.groups.insert(child_id, Group::new(child_id, "Child".into(), [0.0, 0.0], [0.0, 0.0], vec![wf1]));
+
+    let parent_id = new_id();
+    app.groups.insert(parent_id, Group::new(parent_id, "Parent".into(), [0.0, 0.0], [0.0, 0.0], vec![child_id]));
+
+    // Update child bounds — should propagate to parent
+    app.update_group_bounds(child_id);
+
+    let child = &app.groups[&child_id];
+    assert_eq!(child.position, [100.0, 50.0]);
+    assert_eq!(child.size, [200.0, 80.0]);
+
+    // Parent should also have updated bounds (contains child group's bounds)
+    let parent = &app.groups[&parent_id];
+    assert_eq!(parent.position, [100.0, 50.0]);
+    assert_eq!(parent.size, [200.0, 80.0]);
+}
+
+#[test]
+fn nested_group_layer_tree() {
+    use crate::group::Group;
+
+    let mut app = App::new_headless();
+
+    let wf1 = new_id();
+    let wf2 = new_id();
+    app.waveforms.insert(wf1, make_waveform(0.0, 0.0));
+    app.waveforms.insert(wf2, make_waveform(200.0, 0.0));
+
+    let child_id = new_id();
+    app.groups.insert(child_id, Group::new(child_id, "Inner".into(), [0.0, 0.0], [200.0, 80.0], vec![wf1]));
+
+    let parent_id = new_id();
+    app.groups.insert(parent_id, Group::new(parent_id, "Outer".into(), [0.0, 0.0], [400.0, 80.0], vec![child_id, wf2]));
+
+    let tree = crate::layers::build_default_tree(
+        &app.instruments, &app.midi_clips, &app.waveforms, &app.groups,
+    );
+
+    // Only the parent should be at root level (child group is nested)
+    let group_roots: Vec<_> = tree.iter()
+        .filter(|n| n.kind == crate::layers::LayerNodeKind::Group)
+        .collect();
+    assert_eq!(group_roots.len(), 1, "only parent group at root");
+    assert_eq!(group_roots[0].entity_id, parent_id);
+
+    // Parent should have 2 children: child_id (group) and wf2
+    let parent_node = &group_roots[0];
+    assert_eq!(parent_node.children.len(), 2);
+
+    // Find child group node
+    let child_node = parent_node.children.iter()
+        .find(|c| c.entity_id == child_id)
+        .expect("child group should be a child of parent in tree");
+    assert_eq!(child_node.kind, crate::layers::LayerNodeKind::Group);
+    assert_eq!(child_node.children.len(), 1);
+    assert_eq!(child_node.children[0].entity_id, wf1);
+}

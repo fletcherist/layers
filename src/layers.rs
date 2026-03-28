@@ -62,8 +62,10 @@ fn member_kind(
     instruments: &IndexMap<EntityId, crate::instruments::Instrument>,
     midi_clips: &IndexMap<EntityId, crate::midi::MidiClip>,
     waveforms: &IndexMap<EntityId, crate::ui::waveform::WaveformView>,
+    groups: &IndexMap<EntityId, crate::group::Group>,
 ) -> Option<LayerNodeKind> {
-    if instruments.contains_key(&id) { Some(LayerNodeKind::Instrument) }
+    if groups.contains_key(&id) { Some(LayerNodeKind::Group) }
+    else if instruments.contains_key(&id) { Some(LayerNodeKind::Instrument) }
     else if midi_clips.contains_key(&id) { Some(LayerNodeKind::MidiClip) }
     else if waveforms.contains_key(&id) { Some(LayerNodeKind::Waveform) }
     else { None }
@@ -133,14 +135,42 @@ pub fn build_default_tree(
         });
     }
 
-    // Groups
-    for (&group_id, group) in groups.iter() {
+    // Groups — only root-level groups (not members of another group)
+    let child_group_ids: std::collections::HashSet<EntityId> = groups.values()
+        .flat_map(|g| g.member_ids.iter().copied())
+        .filter(|mid| groups.contains_key(mid))
+        .collect();
+
+    for (&group_id, _) in groups.iter() {
+        if child_group_ids.contains(&group_id) { continue; }
+        let mut visited = std::collections::HashSet::new();
+        tree.push(build_group_subtree(group_id, groups, instruments, midi_clips, waveforms, &mut visited));
+    }
+
+    tree
+}
+
+/// Recursively build a LayerNode for a group and all its children (including nested groups).
+fn build_group_subtree(
+    group_id: EntityId,
+    groups: &IndexMap<EntityId, crate::group::Group>,
+    instruments: &IndexMap<EntityId, crate::instruments::Instrument>,
+    midi_clips: &IndexMap<EntityId, crate::midi::MidiClip>,
+    waveforms: &IndexMap<EntityId, crate::ui::waveform::WaveformView>,
+    visited: &mut std::collections::HashSet<EntityId>,
+) -> LayerNode {
+    visited.insert(group_id);
+    let children = if let Some(group) = groups.get(&group_id) {
         let member_set: std::collections::HashSet<EntityId> = group.member_ids.iter().copied().collect();
-        let children: Vec<LayerNode> = group.member_ids.iter().filter_map(|mid| {
-            let kind = member_kind(*mid, instruments, midi_clips, waveforms);
+        group.member_ids.iter().filter_map(|mid| {
+            // Nested group — recurse
+            if groups.contains_key(mid) {
+                if visited.contains(mid) { return None; } // cycle guard
+                return Some(build_group_subtree(*mid, groups, instruments, midi_clips, waveforms, visited));
+            }
+            let kind = member_kind(*mid, instruments, midi_clips, waveforms, groups);
             kind.and_then(|k| {
                 // Skip MIDI clips whose parent instrument is also in this group
-                // (they will appear as sub-children of that instrument instead)
                 if k == LayerNodeKind::MidiClip {
                     if let Some(mc) = midi_clips.get(mid) {
                         if let Some(inst_id) = mc.instrument_id {
@@ -163,16 +193,16 @@ pub fn build_default_tree(
                 }
                 Some(node)
             })
-        }).collect();
-        tree.push(LayerNode {
-            entity_id: group_id,
-            kind: LayerNodeKind::Group,
-            expanded: true,
-            children,
-        });
+        }).collect()
+    } else {
+        Vec::new()
+    };
+    LayerNode {
+        entity_id: group_id,
+        kind: LayerNodeKind::Group,
+        expanded: true,
+        children,
     }
-
-    tree
 }
 
 /// Flatten a tree of LayerNodes into display rows, respecting expanded state.
@@ -296,6 +326,12 @@ pub fn sync_tree(
         .flat_map(|g| g.member_ids.iter().copied())
         .collect();
 
+    // Child group IDs — groups that are members of another group
+    let child_group_ids: std::collections::HashSet<EntityId> = groups.values()
+        .flat_map(|g| g.member_ids.iter().copied())
+        .filter(|mid| groups.contains_key(mid))
+        .collect();
+
     // Collect all child take IDs — these should not appear as root nodes
     let child_take_ids: std::collections::HashSet<EntityId> = waveforms.iter()
         .filter_map(|(_, wf)| wf.take_group.as_ref())
@@ -305,6 +341,10 @@ pub fn sync_tree(
     // Phase 1: remove stale root nodes + remove root entries that belong to a group or are child takes
     tree.retain(|node| {
         if node.kind != LayerNodeKind::Group && grouped_ids.contains(&node.entity_id) {
+            return false;
+        }
+        // Groups that are children of another group should not be at root level
+        if node.kind == LayerNodeKind::Group && child_group_ids.contains(&node.entity_id) {
             return false;
         }
         if node.kind == LayerNodeKind::Waveform && child_take_ids.contains(&node.entity_id) {
@@ -319,100 +359,10 @@ pub fn sync_tree(
         }
     });
 
-    // Phase 2: sync children and track seen IDs
+    // Phase 2: sync children and track seen IDs (recursive for groups)
     for node in tree.iter_mut() {
         seen_ids.insert(node.entity_id);
-
-        if node.kind == LayerNodeKind::Instrument {
-            node.children.retain(|c| midi_clips.contains_key(&c.entity_id));
-            for c in &node.children { seen_ids.insert(c.entity_id); }
-            let node_id = node.entity_id;
-            let existing: std::collections::HashSet<EntityId> = node.children.iter().map(|c| c.entity_id).collect();
-            for (&mc_id, mc) in midi_clips.iter() {
-                if mc.instrument_id == Some(node_id) && !existing.contains(&mc_id) {
-                    node.children.push(LayerNode {
-                        entity_id: mc_id, kind: LayerNodeKind::MidiClip, expanded: false, children: Vec::new(),
-                    });
-                }
-            }
-            for c in &node.children { seen_ids.insert(c.entity_id); }
-        } else if node.kind == LayerNodeKind::Waveform {
-            // Sync take children for waveforms with a take_group
-            if let Some(wf) = waveforms.get(&node.entity_id) {
-                if let Some(tg) = &wf.take_group {
-                    // Retain only children that are still in take_ids
-                    let take_set: std::collections::HashSet<EntityId> = tg.take_ids.iter().copied().collect();
-                    node.children.retain(|c| take_set.contains(&c.entity_id));
-                    let existing: std::collections::HashSet<EntityId> = node.children.iter().map(|c| c.entity_id).collect();
-                    for &cid in &tg.take_ids {
-                        if !existing.contains(&cid) && waveforms.contains_key(&cid) {
-                            node.children.push(LayerNode {
-                                entity_id: cid, kind: LayerNodeKind::Waveform, expanded: false, children: Vec::new(),
-                            });
-                        }
-                    }
-                    if !node.children.is_empty() && !node.expanded {
-                        node.expanded = true; // auto-expand when takes exist
-                    }
-                    for c in &node.children { seen_ids.insert(c.entity_id); }
-                } else {
-                    // No take_group anymore — remove stale children
-                    node.children.clear();
-                }
-            }
-        } else if node.kind == LayerNodeKind::Group {
-            if let Some(group) = groups.get(&node.entity_id) {
-                let member_set: std::collections::HashSet<EntityId> = group.member_ids.iter().copied().collect();
-                // Retain only children whose member still exists in some entity map
-                // and skip MIDI clips whose instrument is also in this group
-                node.children.retain(|c| {
-                    let k = member_kind(c.entity_id, instruments, midi_clips, waveforms);
-                    if k.is_none() { return false; }
-                    if k == Some(LayerNodeKind::MidiClip) {
-                        if let Some(mc) = midi_clips.get(&c.entity_id) {
-                            if let Some(inst_id) = mc.instrument_id {
-                                if member_set.contains(&inst_id) { return false; }
-                            }
-                        }
-                    }
-                    true
-                });
-                let existing: std::collections::HashSet<EntityId> = node.children.iter().map(|c| c.entity_id).collect();
-                for mid in &group.member_ids {
-                    if !existing.contains(mid) {
-                        if let Some(k) = member_kind(*mid, instruments, midi_clips, waveforms) {
-                            // Skip MIDI clips whose instrument is also in this group
-                            if k == LayerNodeKind::MidiClip {
-                                if let Some(mc) = midi_clips.get(mid) {
-                                    if let Some(inst_id) = mc.instrument_id {
-                                        if member_set.contains(&inst_id) { continue; }
-                                    }
-                                }
-                            }
-                            node.children.push(LayerNode { entity_id: *mid, kind: k, expanded: false, children: Vec::new() });
-                        }
-                    }
-                }
-                // Sync MIDI clip sub-children for instrument members inside this group
-                for child in &mut node.children {
-                    if child.kind == LayerNodeKind::Instrument {
-                        child.children.retain(|c| midi_clips.contains_key(&c.entity_id));
-                        let child_id = child.entity_id;
-                        let existing_mc: std::collections::HashSet<EntityId> = child.children.iter().map(|c| c.entity_id).collect();
-                        for (&mc_id, mc) in midi_clips.iter() {
-                            if mc.instrument_id == Some(child_id) && !existing_mc.contains(&mc_id) {
-                                child.children.push(LayerNode {
-                                    entity_id: mc_id, kind: LayerNodeKind::MidiClip, expanded: false, children: Vec::new(),
-                                });
-                            }
-                        }
-                        if !child.children.is_empty() { child.expanded = true; }
-                        for c in &child.children { seen_ids.insert(c.entity_id); }
-                    }
-                }
-                for c in &node.children { seen_ids.insert(c.entity_id); }
-            }
-        }
+        sync_node_children(node, instruments, midi_clips, waveforms, groups, &mut seen_ids);
     }
 
     // Phase 3: add new root-level entities not yet in the tree
@@ -429,10 +379,8 @@ pub fn sync_tree(
             seen_ids.insert(id);
         }
     }
-    // InstrumentRegion fallback removed — instruments are the sole source
     for &id in waveforms.keys() {
         if !seen_ids.contains(&id) && !grouped_ids.contains(&id) && !child_take_ids.contains(&id) {
-            // If this waveform has takes, add children
             let children = if let Some(tg) = waveforms.get(&id).and_then(|wf| wf.take_group.as_ref()) {
                 tg.take_ids.iter().filter_map(|&cid| {
                     if waveforms.contains_key(&cid) {
@@ -448,42 +396,117 @@ pub fn sync_tree(
             seen_ids.insert(id);
         }
     }
-    for (&id, group) in groups.iter() {
-        if !seen_ids.contains(&id) {
-            let member_set: std::collections::HashSet<EntityId> = group.member_ids.iter().copied().collect();
-            let children: Vec<LayerNode> = group.member_ids.iter().filter_map(|mid| {
-                if seen_ids.contains(mid) { return None; }
-                let k = member_kind(*mid, instruments, midi_clips, waveforms)?;
-                // Skip MIDI clips whose instrument is also in this group
-                if k == LayerNodeKind::MidiClip {
-                    if let Some(mc) = midi_clips.get(mid) {
-                        if let Some(inst_id) = mc.instrument_id {
-                            if member_set.contains(&inst_id) { return None; }
-                        }
-                    }
-                }
-                seen_ids.insert(*mid);
-                let mut node = LayerNode { entity_id: *mid, kind: k, expanded: false, children: Vec::new() };
-                // Instruments inside groups get their MIDI clip sub-children
-                if k == LayerNodeKind::Instrument {
-                    node.children = midi_clips.iter()
-                        .filter(|(_, mc)| mc.instrument_id == Some(*mid))
-                        .map(|(&mc_id, _)| {
-                            seen_ids.insert(mc_id);
-                            LayerNode { entity_id: mc_id, kind: LayerNodeKind::MidiClip, expanded: false, children: Vec::new() }
-                        })
-                        .collect();
-                    if !node.children.is_empty() { node.expanded = true; }
-                }
-                Some(node)
-            }).collect();
-            tree.push(LayerNode { entity_id: id, kind: LayerNodeKind::Group, expanded: true, children });
-            seen_ids.insert(id);
+    // Only add root-level groups (not child groups)
+    for (&id, _) in groups.iter() {
+        if !seen_ids.contains(&id) && !child_group_ids.contains(&id) {
+            let mut visited = std::collections::HashSet::new();
+            let node = build_group_subtree(id, groups, instruments, midi_clips, waveforms, &mut visited);
+            // Mark all nodes in subtree as seen
+            collect_ids_recursive(&node, &mut seen_ids);
+            tree.push(node);
         }
     }
 }
 
-/// Move a root-level node up by one position. Returns true if moved.
+/// Collect all entity IDs in a node subtree.
+fn collect_ids_recursive(node: &LayerNode, seen: &mut std::collections::HashSet<EntityId>) {
+    seen.insert(node.entity_id);
+    for child in &node.children {
+        collect_ids_recursive(child, seen);
+    }
+}
+
+/// Recursively sync children for a single node (used by sync_tree).
+fn sync_node_children(
+    node: &mut LayerNode,
+    instruments: &IndexMap<EntityId, crate::instruments::Instrument>,
+    midi_clips: &IndexMap<EntityId, crate::midi::MidiClip>,
+    waveforms: &IndexMap<EntityId, crate::ui::waveform::WaveformView>,
+    groups: &IndexMap<EntityId, crate::group::Group>,
+    seen_ids: &mut std::collections::HashSet<EntityId>,
+) {
+    if node.kind == LayerNodeKind::Instrument {
+        node.children.retain(|c| midi_clips.contains_key(&c.entity_id));
+        for c in &node.children { seen_ids.insert(c.entity_id); }
+        let node_id = node.entity_id;
+        let existing: std::collections::HashSet<EntityId> = node.children.iter().map(|c| c.entity_id).collect();
+        for (&mc_id, mc) in midi_clips.iter() {
+            if mc.instrument_id == Some(node_id) && !existing.contains(&mc_id) {
+                node.children.push(LayerNode {
+                    entity_id: mc_id, kind: LayerNodeKind::MidiClip, expanded: false, children: Vec::new(),
+                });
+            }
+        }
+        for c in &node.children { seen_ids.insert(c.entity_id); }
+    } else if node.kind == LayerNodeKind::Waveform {
+        if let Some(wf) = waveforms.get(&node.entity_id) {
+            if let Some(tg) = &wf.take_group {
+                let take_set: std::collections::HashSet<EntityId> = tg.take_ids.iter().copied().collect();
+                node.children.retain(|c| take_set.contains(&c.entity_id));
+                let existing: std::collections::HashSet<EntityId> = node.children.iter().map(|c| c.entity_id).collect();
+                for &cid in &tg.take_ids {
+                    if !existing.contains(&cid) && waveforms.contains_key(&cid) {
+                        node.children.push(LayerNode {
+                            entity_id: cid, kind: LayerNodeKind::Waveform, expanded: false, children: Vec::new(),
+                        });
+                    }
+                }
+                if !node.children.is_empty() && !node.expanded {
+                    node.expanded = true;
+                }
+                for c in &node.children { seen_ids.insert(c.entity_id); }
+            } else {
+                node.children.clear();
+            }
+        }
+    } else if node.kind == LayerNodeKind::Group {
+        if let Some(group) = groups.get(&node.entity_id) {
+            let member_set: std::collections::HashSet<EntityId> = group.member_ids.iter().copied().collect();
+            // Retain only valid children
+            node.children.retain(|c| {
+                let k = member_kind(c.entity_id, instruments, midi_clips, waveforms, groups);
+                if k.is_none() { return false; }
+                if !member_set.contains(&c.entity_id) { return false; }
+                if k == Some(LayerNodeKind::MidiClip) {
+                    if let Some(mc) = midi_clips.get(&c.entity_id) {
+                        if let Some(inst_id) = mc.instrument_id {
+                            if member_set.contains(&inst_id) { return false; }
+                        }
+                    }
+                }
+                true
+            });
+            // Add missing members
+            let existing: std::collections::HashSet<EntityId> = node.children.iter().map(|c| c.entity_id).collect();
+            for mid in &group.member_ids {
+                if !existing.contains(mid) {
+                    if groups.contains_key(mid) {
+                        // Nested group — build subtree
+                        let mut visited = std::collections::HashSet::new();
+                        let child_node = build_group_subtree(*mid, groups, instruments, midi_clips, waveforms, &mut visited);
+                        node.children.push(child_node);
+                    } else if let Some(k) = member_kind(*mid, instruments, midi_clips, waveforms, groups) {
+                        if k == LayerNodeKind::MidiClip {
+                            if let Some(mc) = midi_clips.get(mid) {
+                                if let Some(inst_id) = mc.instrument_id {
+                                    if member_set.contains(&inst_id) { continue; }
+                                }
+                            }
+                        }
+                        node.children.push(LayerNode { entity_id: *mid, kind: k, expanded: false, children: Vec::new() });
+                    }
+                }
+            }
+            // Recursively sync children (including nested group children)
+            for child in &mut node.children {
+                seen_ids.insert(child.entity_id);
+                sync_node_children(child, instruments, midi_clips, waveforms, groups, seen_ids);
+            }
+        }
+    }
+}
+
+/// Move a node up by one position within its parent. Returns true if moved.
 pub fn move_node_up(tree: &mut Vec<LayerNode>, entity_id: EntityId) -> bool {
     if let Some(idx) = tree.iter().position(|n| n.entity_id == entity_id) {
         if idx > 0 {
@@ -491,19 +514,22 @@ pub fn move_node_up(tree: &mut Vec<LayerNode>, entity_id: EntityId) -> bool {
             return true;
         }
     }
-    // Try children
     for node in tree.iter_mut() {
         if let Some(idx) = node.children.iter().position(|c| c.entity_id == entity_id) {
             if idx > 0 {
                 node.children.swap(idx, idx - 1);
                 return true;
             }
+            return false;
+        }
+        if move_node_up(&mut node.children, entity_id) {
+            return true;
         }
     }
     false
 }
 
-/// Move a root-level node down by one position. Returns true if moved.
+/// Move a node down by one position within its parent. Returns true if moved.
 pub fn move_node_down(tree: &mut Vec<LayerNode>, entity_id: EntityId) -> bool {
     if let Some(idx) = tree.iter().position(|n| n.entity_id == entity_id) {
         if idx + 1 < tree.len() {
@@ -517,24 +543,23 @@ pub fn move_node_down(tree: &mut Vec<LayerNode>, entity_id: EntityId) -> bool {
                 node.children.swap(idx, idx + 1);
                 return true;
             }
+            return false;
+        }
+        if move_node_down(&mut node.children, entity_id) {
+            return true;
         }
     }
     false
 }
 
-/// Toggle expanded state for a node.
+/// Toggle expanded state for a node at any depth.
 pub fn toggle_expanded(tree: &mut [LayerNode], entity_id: EntityId) {
     for node in tree.iter_mut() {
         if node.entity_id == entity_id {
             node.expanded = !node.expanded;
             return;
         }
-        for child in node.children.iter_mut() {
-            if child.entity_id == entity_id {
-                child.expanded = !child.expanded;
-                return;
-            }
-        }
+        toggle_expanded(&mut node.children, entity_id);
     }
 }
 
@@ -579,8 +604,7 @@ pub fn compute_drop_target(
         if row.entity_id == dragged_id {
             return None;
         }
-        let child_count = tree.iter()
-            .find(|n| n.entity_id == row.entity_id)
+        let child_count = find_node(tree, row.entity_id)
             .map(|n| n.children.len())
             .unwrap_or(0);
         return Some(DropTarget::InsideGroup {
@@ -593,7 +617,7 @@ pub fn compute_drop_target(
     if row.depth > 0 {
         // Find the parent group
         if let Some(parent_group_id) = find_parent_group(tree, row.entity_id) {
-            if let Some(group_node) = tree.iter().find(|n| n.entity_id == parent_group_id) {
+            if let Some(group_node) = find_node(tree, parent_group_id) {
                 if let Some(child_idx) = group_node.children.iter().position(|c| c.entity_id == row.entity_id) {
                     if y_fraction < 0.5 {
                         return Some(DropTarget::InsideGroup {
@@ -627,26 +651,49 @@ pub fn compute_drop_target(
     }
 }
 
-/// Find which group (if any) contains the given entity as a direct child.
-pub fn find_parent_group(tree: &[LayerNode], entity_id: EntityId) -> Option<EntityId> {
+/// Find a node by entity_id at any depth (read-only).
+fn find_node(tree: &[LayerNode], entity_id: EntityId) -> Option<&LayerNode> {
     for node in tree {
-        if node.children.iter().any(|c| c.entity_id == entity_id) {
-            return Some(node.entity_id);
+        if node.entity_id == entity_id { return Some(node); }
+        if let Some(found) = find_node(&node.children, entity_id) {
+            return Some(found);
         }
     }
     None
 }
 
-/// Remove a node from the tree (root level or as a child) and return it.
+/// Find a node by entity_id at any depth (mutable).
+fn find_node_mut(tree: &mut [LayerNode], entity_id: EntityId) -> Option<&mut LayerNode> {
+    for node in tree.iter_mut() {
+        if node.entity_id == entity_id { return Some(node); }
+        if let Some(found) = find_node_mut(&mut node.children, entity_id) {
+            return Some(found);
+        }
+    }
+    None
+}
+
+/// Find which group (if any) contains the given entity as a direct child (recursive).
+pub fn find_parent_group(tree: &[LayerNode], entity_id: EntityId) -> Option<EntityId> {
+    for node in tree {
+        if node.children.iter().any(|c| c.entity_id == entity_id) {
+            return Some(node.entity_id);
+        }
+        if let Some(found) = find_parent_group(&node.children, entity_id) {
+            return Some(found);
+        }
+    }
+    None
+}
+
+/// Remove a node from the tree at any depth and return it.
 fn remove_node(tree: &mut Vec<LayerNode>, entity_id: EntityId) -> Option<LayerNode> {
-    // Check root level
     if let Some(idx) = tree.iter().position(|n| n.entity_id == entity_id) {
         return Some(tree.remove(idx));
     }
-    // Check children
     for node in tree.iter_mut() {
-        if let Some(idx) = node.children.iter().position(|c| c.entity_id == entity_id) {
-            return Some(node.children.remove(idx));
+        if let Some(found) = remove_node(&mut node.children, entity_id) {
+            return Some(found);
         }
     }
     None
@@ -669,7 +716,7 @@ pub fn execute_drop(tree: &mut Vec<LayerNode>, target: &DropTarget, dragged_id: 
             tree.push(node);
         }
         DropTarget::InsideGroup { group_id, child_index } => {
-            if let Some(group_node) = tree.iter_mut().find(|n| n.entity_id == *group_id) {
+            if let Some(group_node) = find_node_mut(tree, *group_id) {
                 let insert_idx = (*child_index).min(group_node.children.len());
                 group_node.children.insert(insert_idx, node);
             } else {
@@ -715,21 +762,20 @@ pub fn drop_target_indicator(
 
 pub fn tree_to_stored(tree: &[LayerNode]) -> Vec<crate::storage::StoredLayerNode> {
     let mut out = Vec::new();
-    for node in tree {
+    fn store_recursive(node: &LayerNode, parent_id: &str, out: &mut Vec<crate::storage::StoredLayerNode>) {
         out.push(crate::storage::StoredLayerNode {
             entity_id: node.entity_id.to_string(),
             kind_tag: node.kind.tag().to_string(),
-            parent_entity_id: String::new(),
+            parent_entity_id: parent_id.to_string(),
             expanded: node.expanded,
         });
+        let pid = node.entity_id.to_string();
         for child in &node.children {
-            out.push(crate::storage::StoredLayerNode {
-                entity_id: child.entity_id.to_string(),
-                kind_tag: child.kind.tag().to_string(),
-                parent_entity_id: node.entity_id.to_string(),
-                expanded: child.expanded,
-            });
+            store_recursive(child, &pid, out);
         }
+    }
+    for node in tree {
+        store_recursive(node, "", &mut out);
     }
     out
 }
@@ -737,11 +783,12 @@ pub fn tree_to_stored(tree: &[LayerNode]) -> Vec<crate::storage::StoredLayerNode
 pub fn tree_from_stored(stored: &[crate::storage::StoredLayerNode]) -> Vec<LayerNode> {
     use crate::entity_id;
 
-    let mut roots: Vec<LayerNode> = Vec::new();
-    let mut children_map: std::collections::HashMap<EntityId, Vec<LayerNode>> = std::collections::HashMap::new();
+    let mut nodes_map: std::collections::HashMap<EntityId, LayerNode> = std::collections::HashMap::new();
+    let mut children_map: std::collections::HashMap<EntityId, Vec<EntityId>> = std::collections::HashMap::new();
+    let mut root_ids: Vec<EntityId> = Vec::new();
 
     for s in stored {
-        let entity_id = match s.entity_id.parse::<EntityId>() {
+        let eid = match s.entity_id.parse::<EntityId>() {
             Ok(id) => id,
             Err(_) => continue,
         };
@@ -749,23 +796,40 @@ pub fn tree_from_stored(stored: &[crate::storage::StoredLayerNode]) -> Vec<Layer
             Some(k) => k,
             None => continue,
         };
-        let node = LayerNode { entity_id, kind, expanded: s.expanded, children: Vec::new() };
+        let node = LayerNode { entity_id: eid, kind, expanded: s.expanded, children: Vec::new() };
+        nodes_map.insert(eid, node);
 
         if s.parent_entity_id.is_empty() {
-            roots.push(node);
+            root_ids.push(eid);
         } else {
             let parent_id = s.parent_entity_id.parse::<EntityId>()
                 .unwrap_or_else(|_| entity_id::new_id());
-            children_map.entry(parent_id).or_default().push(node);
+            children_map.entry(parent_id).or_default().push(eid);
         }
     }
 
-    // Attach children
-    for root in &mut roots {
-        if let Some(kids) = children_map.remove(&root.entity_id) {
-            root.children = kids;
+    // Recursively attach children
+    fn attach_children(
+        node_id: EntityId,
+        nodes_map: &mut std::collections::HashMap<EntityId, LayerNode>,
+        children_map: &std::collections::HashMap<EntityId, Vec<EntityId>>,
+    ) -> Option<LayerNode> {
+        let mut node = nodes_map.remove(&node_id)?;
+        if let Some(child_ids) = children_map.get(&node_id) {
+            for &cid in child_ids {
+                if let Some(child) = attach_children(cid, nodes_map, children_map) {
+                    node.children.push(child);
+                }
+            }
         }
+        Some(node)
     }
 
+    let mut roots = Vec::new();
+    for rid in root_ids {
+        if let Some(root) = attach_children(rid, &mut nodes_map, &children_map) {
+            roots.push(root);
+        }
+    }
     roots
 }

@@ -469,26 +469,64 @@ pub(crate) fn is_entity_audible(
     solo_ids: &std::collections::HashSet<EntityId>,
     groups: &IndexMap<EntityId, crate::group::Group>,
 ) -> bool {
-    // Check group disabled — members of a disabled group should not play
-    for group in groups.values() {
-        if group.member_ids.contains(&id) && group.disabled {
-            return false;
+    // Check disabled — walk up entire ancestor chain
+    {
+        let mut current = id;
+        let mut visited = std::collections::HashSet::new();
+        loop {
+            let parent = groups.values().find(|g| g.member_ids.contains(&current));
+            match parent {
+                Some(g) => {
+                    if g.disabled { return false; }
+                    if !visited.insert(g.id) { break; }
+                    current = g.id;
+                }
+                None => break,
+            }
         }
     }
+
     // If no solos active, play everything
     if solo_ids.is_empty() {
         return true;
     }
+
     // Check direct solo
     if solo_ids.contains(&id) {
         return true;
     }
-    // Check group solo — members of a soloed group should play
-    for group in groups.values() {
-        if group.member_ids.contains(&id) && solo_ids.contains(&group.id) {
-            return true;
+
+    // Check if any ancestor group is soloed
+    {
+        let mut current = id;
+        let mut visited = std::collections::HashSet::new();
+        loop {
+            let parent = groups.values().find(|g| g.member_ids.contains(&current));
+            match parent {
+                Some(g) => {
+                    if solo_ids.contains(&g.id) { return true; }
+                    if !visited.insert(g.id) { break; }
+                    current = g.id;
+                }
+                None => break,
+            }
         }
     }
+
+    // If entity is a group, check if any transitive descendant is soloed
+    if groups.contains_key(&id) {
+        let transitive = group::all_transitive_members(id, groups);
+        for mid in &transitive {
+            if solo_ids.contains(mid) { return true; }
+        }
+        // Also check if any child group is soloed
+        for g in groups.values() {
+            if group::ancestor_chain(g.id, groups).contains(&id) && solo_ids.contains(&g.id) {
+                return true;
+            }
+        }
+    }
+
     false
 }
 
@@ -686,14 +724,27 @@ impl App {
             | HitTarget::TextNote(id) | HitTarget::Object(id) | HitTarget::LoopRegion(id)
             | HitTarget::ExportRegion(id) | HitTarget::ComponentDef(id)
             | HitTarget::ComponentInstance(id) => id,
-            HitTarget::Group(_) | HitTarget::Instrument(_) => return target,
+            HitTarget::Group(id) => id,
+            HitTarget::Instrument(_) => return target,
         };
-        for (gid, group) in &self.groups {
-            if group.member_ids.contains(&entity_id) && self.editing_group != Some(*gid) {
-                return HitTarget::Group(*gid);
+        // Walk up the group hierarchy to find the outermost non-entered group
+        let mut current = entity_id;
+        let mut result = target;
+        let mut visited = std::collections::HashSet::new();
+        loop {
+            let parent = self.groups.iter()
+                .find(|(_, g)| g.member_ids.contains(&current))
+                .map(|(gid, _)| *gid);
+            match parent {
+                Some(gid) if self.editing_group != Some(gid) => {
+                    if !visited.insert(gid) { break; }
+                    result = HitTarget::Group(gid);
+                    current = gid;
+                }
+                _ => break,
             }
         }
-        target
+        result
     }
 
     /// If shift is held, toggle `target` in selection; otherwise clear and set.
@@ -1951,6 +2002,11 @@ impl App {
 
     /// Recompute a group's bounding box from its member entities.
     pub(crate) fn update_group_bounds(&mut self, group_id: EntityId) {
+        self.update_group_bounds_inner(group_id, &mut std::collections::HashSet::new());
+    }
+
+    fn update_group_bounds_inner(&mut self, group_id: EntityId, visited: &mut std::collections::HashSet<EntityId>) {
+        if !visited.insert(group_id) { return; }
         let member_ids = if let Some(g) = self.groups.get(&group_id) {
             g.member_ids.clone()
         } else {
@@ -1961,7 +2017,8 @@ impl App {
         }
         // Build HitTargets from member IDs by checking entity maps
         let targets: Vec<HitTarget> = member_ids.iter().flat_map(|id| {
-            if self.waveforms.contains_key(id) { vec![HitTarget::Waveform(*id)] }
+            if self.groups.contains_key(id) { vec![HitTarget::Group(*id)] }
+            else if self.waveforms.contains_key(id) { vec![HitTarget::Waveform(*id)] }
             else if self.midi_clips.contains_key(id) { vec![HitTarget::MidiClip(*id)] }
             else if self.text_notes.contains_key(id) { vec![HitTarget::TextNote(*id)] }
             else if self.objects.contains_key(id) { vec![HitTarget::Object(*id)] }
@@ -1982,15 +2039,20 @@ impl App {
             &self.waveforms, &self.midi_clips,
             &self.text_notes, &self.objects, &self.loop_regions,
             &self.export_regions, &self.components, &self.component_instances,
+            &self.groups,
         ) {
             if let Some(g) = self.groups.get_mut(&group_id) {
                 g.position = pos;
                 g.size = size;
             }
         }
+        // Propagate upward to parent groups
+        if let Some(parent_id) = group::parent_group_of(group_id, &self.groups) {
+            self.update_group_bounds_inner(parent_id, visited);
+        }
     }
 
-    /// Update bounds for all groups that contain the given entity.
+    /// Update bounds for all groups that contain the given entity (propagates upward).
     fn update_groups_containing(&mut self, entity_id: EntityId) {
         let group_ids: Vec<EntityId> = self.groups.iter()
             .filter(|(_, g)| g.member_ids.contains(&entity_id))
@@ -2497,19 +2559,63 @@ impl App {
     /// Whether a group bus should be active (not disabled, and passes solo check).
     #[cfg(feature = "native")]
     fn should_play_group(&self, gid: EntityId) -> bool {
-        if self.groups.get(&gid).map_or(false, |g| g.disabled) {
-            return false;
+        // Check if this group or any ancestor is disabled
+        {
+            let mut current = gid;
+            let mut visited = std::collections::HashSet::new();
+            visited.insert(current);
+            if self.groups.get(&current).map_or(false, |g| g.disabled) {
+                return false;
+            }
+            loop {
+                let parent = self.groups.values().find(|g| g.member_ids.contains(&current));
+                match parent {
+                    Some(g) => {
+                        if g.disabled { return false; }
+                        if !visited.insert(g.id) { break; }
+                        current = g.id;
+                    }
+                    None => break,
+                }
+            }
         }
+
         if self.solo_ids.is_empty() {
             return true;
         }
-        // Group is soloed, or any member is soloed
+
+        // Group is soloed, or any ancestor is soloed
         if self.solo_ids.contains(&gid) {
             return true;
         }
+        {
+            let mut current = gid;
+            let mut visited = std::collections::HashSet::new();
+            visited.insert(current);
+            loop {
+                let parent = self.groups.values().find(|g| g.member_ids.contains(&current));
+                match parent {
+                    Some(g) => {
+                        if self.solo_ids.contains(&g.id) { return true; }
+                        if !visited.insert(g.id) { break; }
+                        current = g.id;
+                    }
+                    None => break,
+                }
+            }
+        }
+
+        // Any transitive descendant is soloed
+        let transitive = group::all_transitive_members(gid, &self.groups);
+        for mid in &transitive {
+            if self.solo_ids.contains(mid) {
+                return true;
+            }
+        }
+        // Any child group is soloed
         if let Some(group) = self.groups.get(&gid) {
             for mid in &group.member_ids {
-                if self.solo_ids.contains(mid) {
+                if self.groups.contains_key(mid) && self.solo_ids.contains(mid) {
                     return true;
                 }
             }
@@ -2727,27 +2833,7 @@ impl App {
             // Build group → bus_index mapping and collect group bus data.
             // Allocate a bus when the group has FX plugins OR has audio members
             // (so group volume/pan always applies).
-            let mut group_id_to_bus_idx: std::collections::HashMap<EntityId, usize> = std::collections::HashMap::new();
-            let mut group_buses: Vec<audio::GroupBus> = Vec::new();
-            for (&gid, group) in &self.groups {
-                if !self.should_play_group(gid) {
-                    continue;
-                }
-                let plugins = self.collect_group_chain_plugins(gid);
-                let has_audio_member = group.member_ids.iter().any(|mid| {
-                    self.waveforms.get(mid).map_or(false, |wf| !wf.disabled && self.audio_clips.contains_key(mid))
-                });
-                let has_instrument_member = group.member_ids.iter().any(|mid| {
-                    self.instruments.get(mid).map_or(false, |inst| inst.has_plugin())
-                });
-                if plugins.is_empty() && !has_audio_member && !has_instrument_member {
-                    continue;
-                }
-                let latency = Self::collect_chain_latency(&plugins);
-                let bus_idx = group_buses.len();
-                group_id_to_bus_idx.insert(gid, bus_idx);
-                group_buses.push(audio::GroupBus { entity_id: gid, plugins, latency_samples: latency, volume: group.volume, pan: group.pan });
-            }
+            let (group_id_to_bus_idx, group_buses) = self.build_group_bus_data();
 
             let mut positions: Vec<[f32; 2]> = Vec::new();
             let mut sizes: Vec<[f32; 2]> = Vec::new();
@@ -2850,9 +2936,7 @@ impl App {
 
                 let bus_idx = group_of.get(&wf_id)
                     .and_then(|gid| group_id_to_bus_idx.get(gid).copied());
-                let group_latency = bus_idx
-                    .map(|idx| group_buses[idx].latency_samples)
-                    .unwrap_or(0);
+                let group_latency = audio::ancestor_bus_latency(&group_buses, bus_idx);
 
                 if is_shared {
                     let chain_bus_idx = wf.effect_chain_id
@@ -2913,9 +2997,7 @@ impl App {
 
                                 let bus_idx = group_of.get(&wf_id)
                                     .and_then(|gid| group_id_to_bus_idx.get(gid).copied());
-                                let group_latency = bus_idx
-                                    .map(|idx| group_buses[idx].latency_samples)
-                                    .unwrap_or(0);
+                                let group_latency = audio::ancestor_bus_latency(&group_buses, bus_idx);
 
                                 if is_shared {
                                     let chain_bus_idx = wf.effect_chain_id
@@ -3187,9 +3269,7 @@ impl App {
                 let chain_latency = Self::collect_chain_latency(&inst_chain_plugins);
                 let bus_idx = group_of.get(&inst_id)
                     .and_then(|gid| group_id_to_bus_idx.get(gid).copied());
-                let group_latency = bus_idx
-                    .map(|idx| group_buses[idx].latency_samples)
-                    .unwrap_or(0);
+                let group_latency = audio::ancestor_bus_latency(&group_buses, bus_idx);
                 audio_instruments.push(audio::AudioInstrument {
                     id: inst_id,
                     x_start_px: x_min,
@@ -3222,10 +3302,12 @@ impl App {
                 continue;
             }
             let plugins = self.collect_group_chain_plugins(gid);
-            let has_audio_member = group.member_ids.iter().any(|mid| {
+            // Check transitive members for audio content (supports nested groups)
+            let transitive = group::all_transitive_members(gid, &self.groups);
+            let has_audio_member = transitive.iter().any(|mid| {
                 self.waveforms.get(mid).map_or(false, |wf| !wf.disabled && self.audio_clips.contains_key(mid))
             });
-            let has_instrument_member = group.member_ids.iter().any(|mid| {
+            let has_instrument_member = transitive.iter().any(|mid| {
                 self.instruments.get(mid).map_or(false, |inst| inst.has_plugin())
             });
             if plugins.is_empty() && !has_audio_member && !has_instrument_member {
@@ -3234,7 +3316,17 @@ impl App {
             let latency = Self::collect_chain_latency(&plugins);
             let bus_idx = group_buses.len();
             group_id_to_bus_idx.insert(gid, bus_idx);
-            group_buses.push(audio::GroupBus { entity_id: gid, plugins, latency_samples: latency, volume: group.volume, pan: group.pan });
+            group_buses.push(audio::GroupBus { entity_id: gid, plugins, latency_samples: latency, volume: group.volume, pan: group.pan, parent_bus_index: None });
+        }
+        // Set parent_bus_index for nested groups
+        for (&gid, _) in &self.groups {
+            if let Some(&bus_idx) = group_id_to_bus_idx.get(&gid) {
+                if let Some(parent_gid) = group::parent_group_of(gid, &self.groups) {
+                    if let Some(&parent_bus_idx) = group_id_to_bus_idx.get(&parent_gid) {
+                        group_buses[bus_idx].parent_bus_index = Some(parent_bus_idx);
+                    }
+                }
+            }
         }
         (group_id_to_bus_idx, group_buses)
     }
@@ -4095,25 +4187,42 @@ impl App {
             HitTarget::ComponentInstance(i) => { if let Some(c) = self.component_instances.get_mut(i) { c.position = pos; } }
             HitTarget::MidiClip(i) => { if let Some(m) = self.midi_clips.get_mut(i) { m.position = pos; } }
             HitTarget::Group(i) => {
-                let (member_ids, dx, dy) = {
+                let (dx, dy) = {
                     if let Some(g) = self.groups.get_mut(i) {
                         let dx = pos[0] - g.position[0];
                         let dy = pos[1] - g.position[1];
                         g.position = pos;
-                        (g.member_ids.clone(), dx, dy)
+                        (dx, dy)
                     } else { return; }
                 };
-                for mid in &member_ids {
-                    if let Some(wf) = self.waveforms.get_mut(mid) { wf.position[0] += dx; wf.position[1] += dy; }
-                    else if let Some(mc) = self.midi_clips.get_mut(mid) { mc.position[0] += dx; mc.position[1] += dy; }
-                    else if let Some(tn) = self.text_notes.get_mut(mid) { tn.position[0] += dx; tn.position[1] += dy; }
-                    else if let Some(obj) = self.objects.get_mut(mid) { obj.position[0] += dx; obj.position[1] += dy; }
-                    else if let Some(lr) = self.loop_regions.get_mut(mid) { lr.position[0] += dx; }
-                    else if let Some(xr) = self.export_regions.get_mut(mid) { xr.position[0] += dx; xr.position[1] += dy; }
-                    else if let Some(c) = self.components.get_mut(mid) { c.position[0] += dx; c.position[1] += dy; }
-                }
+                self.move_group_members_recursive(*i, dx, dy, &mut std::collections::HashSet::new());
             }
             HitTarget::Instrument(_) => {}
+        }
+    }
+
+    /// Recursively move all members of a group (including nested child groups) by a delta.
+    fn move_group_members_recursive(&mut self, group_id: EntityId, dx: f32, dy: f32, visited: &mut std::collections::HashSet<EntityId>) {
+        if !visited.insert(group_id) { return; }
+        let member_ids = if let Some(g) = self.groups.get(&group_id) {
+            g.member_ids.clone()
+        } else { return; };
+        for mid in &member_ids {
+            if self.groups.contains_key(mid) {
+                // Child group: move its position and recurse
+                if let Some(cg) = self.groups.get_mut(mid) {
+                    cg.position[0] += dx;
+                    cg.position[1] += dy;
+                }
+                self.move_group_members_recursive(*mid, dx, dy, visited);
+            }
+            else if let Some(wf) = self.waveforms.get_mut(mid) { wf.position[0] += dx; wf.position[1] += dy; }
+            else if let Some(mc) = self.midi_clips.get_mut(mid) { mc.position[0] += dx; mc.position[1] += dy; }
+            else if let Some(tn) = self.text_notes.get_mut(mid) { tn.position[0] += dx; tn.position[1] += dy; }
+            else if let Some(obj) = self.objects.get_mut(mid) { obj.position[0] += dx; obj.position[1] += dy; }
+            else if let Some(lr) = self.loop_regions.get_mut(mid) { lr.position[0] += dx; }
+            else if let Some(xr) = self.export_regions.get_mut(mid) { xr.position[0] += dx; xr.position[1] += dy; }
+            else if let Some(c) = self.components.get_mut(mid) { c.position[0] += dx; c.position[1] += dy; }
         }
     }
 

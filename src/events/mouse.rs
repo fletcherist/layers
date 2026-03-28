@@ -3145,6 +3145,16 @@ impl App {
 
                     if drag_active {
                         if let Some(target) = drop_target {
+                            // Cycle prevention: don't drop a group into itself or its descendants
+                            if let crate::layers::DropTarget::InsideGroup { group_id, .. } = &target {
+                                if self.groups.contains_key(&entity_id) {
+                                    if crate::group::would_create_cycle(*group_id, entity_id, &self.groups) {
+                                        self.request_redraw();
+                                        return;
+                                    }
+                                }
+                            }
+
                             // Snapshot destination group before-state (if dropping into a group)
                             let dest_group_before = if let crate::layers::DropTarget::InsideGroup { group_id, .. } = &target {
                                 self.groups.get(group_id).map(|g| (*group_id, g.clone()))

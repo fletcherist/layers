@@ -474,6 +474,7 @@ impl App {
                         &self.export_regions,
                         &self.components,
                         &self.component_instances,
+                        &self.groups,
                     ) {
                         let mut member_ids: Vec<crate::entity_id::EntityId> = Vec::new();
                         let mut seen = std::collections::HashSet::new();
@@ -503,9 +504,33 @@ impl App {
                         }
                         let group_id = crate::entity_id::new_id();
                         let group_name = format!("Group {}", self.groups.len() + 1);
-                        let group = crate::group::Group::new(group_id, group_name, pos, size, member_ids);
+
+                        // Query parents BEFORE inserting the new group, otherwise
+                        // parent_group_of will find the new group itself as parent.
+                        let parents: std::collections::HashSet<Option<EntityId>> = member_ids.iter()
+                            .map(|mid| crate::group::parent_group_of(*mid, &self.groups))
+                            .collect();
+
+                        let group = crate::group::Group::new(group_id, group_name, pos, size, member_ids.clone());
                         self.groups.insert(group_id, group.clone());
                         self.push_op(operations::Operation::CreateGroup { id: group_id, data: group, was_soloed: false, was_monitoring: false });
+                        if parents.len() == 1 {
+                            if let Some(Some(parent_id)) = parents.iter().next() {
+                                let parent_id = *parent_id;
+                                if parent_id != group_id {
+                                    let parent_before = self.groups.get(&parent_id).unwrap().clone();
+                                    if let Some(parent) = self.groups.get_mut(&parent_id) {
+                                        // Remove members from parent's member_ids
+                                        parent.member_ids.retain(|mid| !member_ids.contains(mid));
+                                        // Add new group as member of parent
+                                        parent.member_ids.push(group_id);
+                                    }
+                                    let parent_after = self.groups.get(&parent_id).unwrap().clone();
+                                    self.push_op(operations::Operation::UpdateGroup { id: parent_id, before: parent_before, after: parent_after });
+                                }
+                            }
+                        }
+
                         self.selected.clear();
                         self.selected.push(HitTarget::Group(group_id));
                         self.mark_dirty();
@@ -517,6 +542,9 @@ impl App {
                     if let HitTarget::Group(id) = t { Some(*id) } else { None }
                 });
                 if let Some(group_id) = group_target {
+                    // Check if this group has a parent group (for nested ungroup)
+                    let parent_id = crate::group::parent_group_of(group_id, &self.groups);
+
                     let was_soloed = self.solo_ids.contains(&group_id);
                     let was_monitoring = self.monitoring_group_id == Some(group_id);
                     self.cleanup_group_monitoring(group_id);
@@ -524,6 +552,24 @@ impl App {
                     if let Some(group) = self.groups.shift_remove(&group_id) {
                         let member_ids = group.member_ids.clone();
                         self.push_op(operations::Operation::DeleteGroup { id: group_id, data: group, was_soloed, was_monitoring });
+
+                        // If ungrouping a child group, move members into the parent group
+                        if let Some(pid) = parent_id {
+                            let parent_before = self.groups.get(&pid).unwrap().clone();
+                            if let Some(parent) = self.groups.get_mut(&pid) {
+                                // Replace the child group entry with its members
+                                if let Some(pos) = parent.member_ids.iter().position(|id| *id == group_id) {
+                                    parent.member_ids.remove(pos);
+                                    for (i, mid) in member_ids.iter().enumerate() {
+                                        parent.member_ids.insert(pos + i, *mid);
+                                    }
+                                }
+                            }
+                            self.update_group_bounds(pid);
+                            let parent_after = self.groups.get(&pid).unwrap().clone();
+                            self.push_op(operations::Operation::UpdateGroup { id: pid, before: parent_before, after: parent_after });
+                        }
+
                         self.selected.clear();
                         for mid in &member_ids {
                             // Try to figure out the HitTarget type for each member

@@ -162,6 +162,19 @@ pub struct GroupBus {
     pub latency_samples: u32,
     pub volume: f32,
     pub pan: f32,
+    /// Index of the parent group bus (for nested group routing).
+    pub parent_bus_index: Option<usize>,
+}
+
+/// Sum latency from a bus and all its ancestor group buses.
+pub fn ancestor_bus_latency(buses: &[GroupBus], start: Option<usize>) -> u32 {
+    let mut total = 0u32;
+    let mut cur = start;
+    while let Some(idx) = cur {
+        total += buses[idx].latency_samples;
+        cur = buses[idx].parent_bus_index;
+    }
+    total
 }
 
 pub struct AudioEffectRegion {
@@ -1037,32 +1050,33 @@ impl AudioEngine {
                         }
                     }
 
-                    // Pass 3: grouped clips → optional clip FX → group bus
-                    // Pass 4: group FX on each bus → dry_mix
+                    // Pass 3: grouped clips → optional clip FX → per-bus buffers
+                    // Pass 4: group FX on each bus (topological order) → parent bus or dry_mix
                     if let Ok(buses_guard) = gb.try_lock() {
-                        if !buses_guard.is_empty() {
-                            for (bus_idx, bus) in buses_guard.iter().enumerate() {
-                                group_bus_l[..frames].fill(0.0);
-                                group_bus_r[..frames].fill(0.0);
+                        let num_buses = buses_guard.len();
+                        if num_buses > 0 {
+                            // Allocate per-bus L/R buffers
+                            let mut all_bus_l: Vec<Vec<f32>> = (0..num_buses).map(|_| vec![0.0f32; frames]).collect();
+                            let mut all_bus_r: Vec<Vec<f32>> = (0..num_buses).map(|_| vec![0.0f32; frames]).collect();
 
+                            // Pass 3: accumulate clips into their bus buffers
+                            for (bus_idx, _bus) in buses_guard.iter().enumerate() {
                                 for (ci, clip) in clips_ref.iter().enumerate() {
                                     if clip.group_bus_index != Some(bus_idx) {
                                         continue;
                                     }
                                     if clip.chain_plugins.is_empty() {
                                         if clip.warp_code == 4 {
-                                            // Complex: render stretched into group bus
                                             render_clip_stretched(clip, frames, current_time, sr, &mut clip_dry);
                                             let mut csq = 0.0f64;
                                             for j in 0..frames {
-                                                group_bus_l[j] += clip_dry[j][0];
-                                                group_bus_r[j] += clip_dry[j][1];
+                                                all_bus_l[bus_idx][j] += clip_dry[j][0];
+                                                all_bus_r[bus_idx][j] += clip_dry[j][1];
                                                 let mono = ((clip_dry[j][0] + clip_dry[j][1]) * 0.5) as f64;
                                                 csq += mono * mono;
                                             }
                                             clip_sum_sq[ci] += csq;
                                         } else {
-                                        // No clip-level FX: render dry directly into group bus
                                         let latency_offset_secs = clip.chain_latency_samples as f64 / sr;
                                         for i in 0..frames {
                                             let t = current_time + i as f64 / sr;
@@ -1078,8 +1092,8 @@ impl AudioEngine {
                                                     let pan_angle = auto_pan * std::f32::consts::FRAC_PI_2;
                                                     let sl = sample * pan_angle.cos();
                                                     let sr_s = sample * pan_angle.sin();
-                                                    group_bus_l[i] += sl;
-                                                    group_bus_r[i] += sr_s;
+                                                    all_bus_l[bus_idx][i] += sl;
+                                                    all_bus_r[bus_idx][i] += sr_s;
                                                     let mono = ((sl + sr_s) * 0.5) as f64;
                                                     clip_sum_sq[ci] += mono * mono;
                                                 }
@@ -1087,7 +1101,6 @@ impl AudioEngine {
                                         }
                                         }
                                     } else {
-                                        // Clip-level FX: render dry/stretched → clip FX → group bus
                                         if clip.warp_code == 4 {
                                             render_clip_stretched(clip, frames, current_time, sr, &mut clip_dry);
                                         } else {
@@ -1097,8 +1110,8 @@ impl AudioEngine {
                                             &mut fx_buf_l, &mut fx_buf_r, &mut fx_out_l, &mut fx_out_r);
                                         let mut csq = 0.0f64;
                                         for j in 0..frames {
-                                            group_bus_l[j] += clip_dry[j][0];
-                                            group_bus_r[j] += clip_dry[j][1];
+                                            all_bus_l[bus_idx][j] += clip_dry[j][0];
+                                            all_bus_r[bus_idx][j] += clip_dry[j][1];
                                             let mono = ((clip_dry[j][0] + clip_dry[j][1]) * 0.5) as f64;
                                             csq += mono * mono;
                                         }
@@ -1110,18 +1123,40 @@ impl AudioEngine {
                                 if bus_idx < num_group_buses {
                                     let base = bus_idx * frames;
                                     for j in 0..frames {
-                                        group_bus_l[j] += inst_per_bus_l[base + j];
-                                        group_bus_r[j] += inst_per_bus_r[base + j];
+                                        all_bus_l[bus_idx][j] += inst_per_bus_l[base + j];
+                                        all_bus_r[bus_idx][j] += inst_per_bus_r[base + j];
                                     }
                                 }
+                            }
 
-                                // Pass 4: process group bus through group FX
+                            // Pass 4: process buses in topological order (children before parents)
+                            // Build processing order: buses with no children first
+                            let mut topo_order: Vec<usize> = (0..num_buses).collect();
+                            // Sort: leaf buses (no children pointing to them) first,
+                            // parent buses later. A simple approach: count depth.
+                            let mut depth: Vec<usize> = vec![0; num_buses];
+                            for bi in 0..num_buses {
+                                let mut d = 0;
+                                let mut cur = bi;
+                                while let Some(parent_idx) = buses_guard[cur].parent_bus_index {
+                                    d += 1;
+                                    cur = parent_idx;
+                                    if d > num_buses { break; } // cycle guard
+                                }
+                                depth[bi] = d;
+                            }
+                            topo_order.sort_by(|a, b| depth[*b].cmp(&depth[*a]));
+
+                            for &bus_idx in &topo_order {
+                                let bus = &buses_guard[bus_idx];
+
+                                // Process group FX
                                 if !bus.plugins.is_empty() {
                                     for block_start in (0..frames).step_by(effect_block_size) {
                                         let block_end = (block_start + effect_block_size).min(frames);
                                         let block_len = block_end - block_start;
-                                        fx_buf_l[..block_len].copy_from_slice(&group_bus_l[block_start..block_end]);
-                                        fx_buf_r[..block_len].copy_from_slice(&group_bus_r[block_start..block_end]);
+                                        fx_buf_l[..block_len].copy_from_slice(&all_bus_l[bus_idx][block_start..block_end]);
+                                        fx_buf_r[..block_len].copy_from_slice(&all_bus_r[bus_idx][block_start..block_end]);
                                         #[allow(unused_mut)]
                                         let (mut src_l, mut src_r, mut dst_l, mut dst_r) = (
                                             &mut fx_buf_l, &mut fx_buf_r, &mut fx_out_l, &mut fx_out_r,
@@ -1140,26 +1175,41 @@ impl AudioEngine {
                                             std::mem::swap(src_r, dst_r);
                                         }
                                         for j in 0..block_len {
-                                            group_bus_l[block_start + j] = src_l[j];
-                                            group_bus_r[block_start + j] = src_r[j];
+                                            all_bus_l[bus_idx][block_start + j] = src_l[j];
+                                            all_bus_r[bus_idx][block_start + j] = src_r[j];
                                         }
                                     }
                                 }
 
-                                // Apply group-level volume and stereo balance (linear law)
+                                // Apply group-level volume and stereo balance
                                 let gv = bus.volume;
                                 let gp = bus.pan.clamp(0.0, 1.0);
                                 let l_mul = (2.0 * (1.0 - gp)).min(1.0) * gv;
                                 let r_mul = (2.0 * gp).min(1.0) * gv;
                                 let mut grp_sq = 0.0f64;
-                                for j in 0..frames {
-                                    let gl = group_bus_l[j] * l_mul;
-                                    let gr = group_bus_r[j] * r_mul;
-                                    dry_mix[j][0] += gl;
-                                    dry_mix[j][1] += gr;
-                                    let mono = ((gl + gr) * 0.5) as f64;
-                                    grp_sq += mono * mono;
+
+                                if let Some(parent_idx) = bus.parent_bus_index {
+                                    // Route to parent bus (nested group)
+                                    for j in 0..frames {
+                                        let gl = all_bus_l[bus_idx][j] * l_mul;
+                                        let gr = all_bus_r[bus_idx][j] * r_mul;
+                                        all_bus_l[parent_idx][j] += gl;
+                                        all_bus_r[parent_idx][j] += gr;
+                                        let mono = ((gl + gr) * 0.5) as f64;
+                                        grp_sq += mono * mono;
+                                    }
+                                } else {
+                                    // Route to dry_mix (root-level group)
+                                    for j in 0..frames {
+                                        let gl = all_bus_l[bus_idx][j] * l_mul;
+                                        let gr = all_bus_r[bus_idx][j] * r_mul;
+                                        dry_mix[j][0] += gl;
+                                        dry_mix[j][1] += gr;
+                                        let mono = ((gl + gr) * 0.5) as f64;
+                                        grp_sq += mono * mono;
+                                    }
                                 }
+
                                 if frames > 0 {
                                     entity_rms_local.insert(bus.entity_id, (grp_sq / frames as f64).sqrt());
                                 }

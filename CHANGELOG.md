@@ -1,3 +1,4 @@
+- 2026-03-28: feat: nested groups — groups inside groups with cascading volume/pan/effects, recursive solo/mute, Figma-style nesting (56.5k loc)
 - double-click instrument in browser to add it to canvas (55.8k loc)
 - ui: reduce left padding for plugin list items in browser (55.8k loc)
 - fix: crash on Escape when text input cursor out of bounds (55.8k loc)
