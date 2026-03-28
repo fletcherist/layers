@@ -967,6 +967,7 @@ impl App {
             stored_midi_clips,
             stored_layer_tree,
             restored_text_notes,
+            restored_groups,
         ) = match loaded {
             Some(state) => {
                 println!(
@@ -1112,6 +1113,7 @@ impl App {
                     storage::midi_clips_from_stored(state.midi_clips),
                     state.layer_tree,
                     storage::text_notes_from_stored(state.text_notes),
+                    storage::groups_from_stored(state.groups),
                 )
             }
             None => {
@@ -1134,6 +1136,7 @@ impl App {
                     Vec::new(),  // stored_midi_clips
                     Vec::new(),  // stored_layer_tree
                     IndexMap::new(),  // text_notes
+                    IndexMap::new(),  // groups
                 )
             }
         };
@@ -1306,7 +1309,7 @@ impl App {
                 &IndexMap::new(), // no instruments in old format yet
                 &restored_midi_clips,
                 &waveforms,
-                &IndexMap::new(), // no groups in old format
+                &restored_groups,
             );
             tree
         };
@@ -1380,7 +1383,7 @@ impl App {
             select_area: None,
             component_def_hover: ComponentDefHover::None,
             master: master::Master::default(),
-            groups: IndexMap::new(),
+            groups: restored_groups,
             group_hover: GroupHover::None,
             text_notes: restored_text_notes,
             text_note_hover: TextNoteHover::None,
@@ -3335,30 +3338,33 @@ impl App {
 
         let is_on = self.monitoring_group_id.is_some();
 
-        // Reset ring buffer so stale data from a previous session is gone.
-        // Don't prefill with silence — the output callback will wait for the
-        // input stream to accumulate enough real data before consuming
-        // (handles hardware startup latency).
         if is_on {
+            // 1. Reset ring buffer so stale data from a previous session is gone.
             if let Some(ref engine) = self.audio_engine {
                 engine.monitor_ring().reset_and_prefill(0);
             }
-        }
-
-        // Set engine flag so the output callback starts consuming from the ring
-        if let Some(ref engine) = self.audio_engine {
-            engine.set_monitoring_enabled(is_on);
-        }
-
-        if let Some(ref mut recorder) = self.recorder {
-            if let Some(err) = recorder.set_monitoring(is_on) {
-                eprintln!("  ERROR: Failed to start monitoring: {}", err);
-                self.toast_manager.push(err, ui::toast::ToastKind::Error);
-                // Revert monitoring state
-                self.monitoring_group_id = None;
-                if let Some(ref engine) = self.audio_engine {
-                    engine.set_monitoring_enabled(false);
+            // 2. Ensure input stream is running (no-op if already active from
+            //    a previous toggle).  The stream stays alive across toggles so
+            //    we never tear down / recreate CoreAudio resources.
+            if let Some(ref mut recorder) = self.recorder {
+                if let Some(err) = recorder.set_monitoring(true) {
+                    eprintln!("  ERROR: Failed to start monitoring: {}", err);
+                    self.toast_manager.push(err, ui::toast::ToastKind::Error);
+                    self.monitoring_group_id = None;
+                    self.sync_monitor_effects();
+                    self.request_redraw();
+                    return;
                 }
+            }
+            // 3. Enable output consumption (Release ordering).
+            if let Some(ref engine) = self.audio_engine {
+                engine.set_monitoring_enabled(true);
+            }
+        } else {
+            // Disable: only stop the output from reading the ring.
+            // The input stream stays alive so re-enabling is instant.
+            if let Some(ref engine) = self.audio_engine {
+                engine.set_monitoring_enabled(false);
             }
         }
 
@@ -3393,10 +3399,12 @@ impl App {
         {
             if let Some(ref engine) = self.audio_engine {
                 engine.monitor_ring().reset_and_prefill(0);
-                engine.set_monitoring_enabled(true);
             }
             if let Some(ref mut recorder) = self.recorder {
                 let _ = recorder.set_monitoring(true);
+            }
+            if let Some(ref engine) = self.audio_engine {
+                engine.set_monitoring_enabled(true);
             }
         }
         self.sync_monitor_effects();

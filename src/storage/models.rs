@@ -173,6 +173,7 @@ surreal_derive! {
         pub effect_chain_id: String,
         pub volume: f32,
         pub pan: f32,
+        pub disabled: bool,
     }
 }
 

@@ -643,7 +643,7 @@ impl AudioEngine {
                         .ok()
                         .map_or(false, |g| !g.is_empty());
 
-                    let mon_active = mon_en.load(Ordering::Relaxed);
+                    let mon_active = mon_en.load(Ordering::Acquire);
                     let preview_active = preview_p.load(Ordering::Relaxed);
                     if !is_playing && !has_instruments && !mon_active && !preview_active {
                         data.fill(0.0);
@@ -1341,7 +1341,7 @@ impl AudioEngine {
                     }
 
                     // Input monitoring: direct ring buffer → output, no processing.
-                    if mon_en.load(Ordering::Relaxed) {
+                    if mon_active {
                         let in_ch = mon_in_ch.load(Ordering::Relaxed).max(1);
                         let samples_needed = frames * in_ch;
                         let pop_len = samples_needed.min(mon_raw.len());
@@ -1833,7 +1833,7 @@ impl AudioEngine {
     }
 
     pub fn set_monitoring_enabled(&self, enabled: bool) {
-        self.monitoring_enabled.store(enabled, Ordering::Relaxed);
+        self.monitoring_enabled.store(enabled, Ordering::Release);
     }
 
     pub fn set_monitor_volume(&self, v: f32) {
@@ -1869,6 +1869,10 @@ pub struct AudioRecorder {
     channels: usize,
     recording: Arc<AtomicBool>,
     monitoring: Arc<AtomicBool>,
+    /// When true the input stream stays alive even when monitoring output is
+    /// toggled off.  Only set to false on full cleanup (group deletion / device
+    /// change) so that toggling monitoring on/off never tears down the stream.
+    monitor_stream_active: bool,
     monitor_ring: Option<Arc<MonitorRingBuffer>>,
     monitor_input_channels: Option<Arc<AtomicUsize>>,
     monitor_input_sample_rate: Option<Arc<AtomicU64>>,
@@ -2102,6 +2106,7 @@ impl AudioRecorder {
             channels,
             recording: Arc::new(AtomicBool::new(false)),
             monitoring: Arc::new(AtomicBool::new(false)),
+            monitor_stream_active: false,
             monitor_ring: None,
             monitor_input_channels: None,
             monitor_input_sample_rate: None,
@@ -2207,7 +2212,6 @@ impl AudioRecorder {
         let buf = Arc::new(Mutex::new(Vec::<f32>::new()));
         self.buffer = buf.clone();
         let rec = self.recording.clone();
-        let mon = self.monitoring.clone();
         let mon_ring = self.monitor_ring.clone();
         let effective_ch = self.channels;
 
@@ -2223,10 +2227,12 @@ impl AudioRecorder {
                             guard.extend_from_slice(data);
                         }
                     }
-                    if mon.load(Ordering::Relaxed) {
-                        if let Some(ref ring) = mon_ring {
-                            ring.push(data);
-                        }
+                    // Always push to ring — the output callback decides whether
+                    // to consume via its own monitoring_enabled flag.  Keeping
+                    // the ring fed avoids tearing down / recreating the input
+                    // stream on every monitoring toggle.
+                    if let Some(ref ring) = mon_ring {
+                        ring.push(data);
                     }
                 } else {
                     // Slow path: extract first effective_ch channels from each frame
@@ -2242,12 +2248,10 @@ impl AudioRecorder {
                             }
                         }
                     }
-                    if mon.load(Ordering::Relaxed) {
-                        if let Some(ref ring) = mon_ring {
-                            for f in 0..num_frames {
-                                let base = f * device_channels;
-                                ring.push(&data[base..base + effective_ch]);
-                            }
+                    if let Some(ref ring) = mon_ring {
+                        for f in 0..num_frames {
+                            let base = f * device_channels;
+                            ring.push(&data[base..base + effective_ch]);
                         }
                     }
                 }
@@ -2281,13 +2285,14 @@ impl AudioRecorder {
 
     /// Drop the input stream if neither recording nor monitoring need it.
     fn maybe_drop_stream(&mut self) {
-        if !self.is_recording() && !self.monitoring.load(Ordering::Relaxed) {
+        if !self.is_recording() && !self.monitor_stream_active {
             self.stream = None;
         }
     }
 
     pub fn set_monitoring(&mut self, enabled: bool) -> Option<String> {
         println!("  set_monitoring({}) ring={} flag={}", enabled, self.monitor_ring.is_some(), self.monitoring.load(Ordering::Relaxed));
+        self.monitor_stream_active = enabled;
         if enabled {
             let result = self.ensure_stream();
             println!("  ensure_stream -> {} stream={}", result.is_ok(), self.stream.is_some());

@@ -235,6 +235,7 @@ pub fn groups_to_stored(
             effect_chain_id: g.effect_chain_id.map(|eid| entity_id_to_string(eid)).unwrap_or_default(),
             volume: g.volume,
             pan: g.pan,
+            disabled: g.disabled,
         })
         .collect()
 }
@@ -263,7 +264,7 @@ pub fn groups_from_stored(
                 },
                 volume: if s.volume == 0.0 { 1.0 } else { s.volume },
                 pan: if s.pan == 0.0 { 0.5 } else { s.pan },
-                disabled: false,
+                disabled: s.disabled,
             };
             (id, g)
         })

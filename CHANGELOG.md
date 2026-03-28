@@ -1,3 +1,5 @@
+- fix: monitoring throttling on re-enable — input stream stays alive across toggles, only mixer flag changes (55.8k loc)
+- fix: recording groups now persist across project save/load (55.8k loc)
 - fix: properly tear down old monitoring stream before rebuilding audio infrastructure on settings change (55.8k loc)
 - fix: monitoring state now restored after changing buffer size, output device, or input device in settings (55.7k loc)
 - refactor: simplified monitoring — direct ring buffer→output, removed adaptive resampling/effects/warmup (55.7k loc)
