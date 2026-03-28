@@ -54,8 +54,8 @@ impl App {
             return;
         }
 
-        // Share button hover (always update)
-        {
+        // Share button hover — only when right panel is closed
+        if self.right_window.is_none() {
             let (scr_w, _scr_h, scale) = self.screen_info();
             let (sbp, sbs) = crate::share_button_rect(scr_w, scale);
             let pos = self.mouse_pos;
@@ -67,6 +67,9 @@ impl App {
             if self.share_button_hovered != was_hovered {
                 self.request_redraw();
             }
+        } else if self.share_button_hovered {
+            self.share_button_hovered = false;
+            self.request_redraw();
         }
 
         if let Some((initial_bpm, initial_y)) = self.dragging_bpm {

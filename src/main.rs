@@ -202,8 +202,7 @@ pub(crate) const MIDI_AUTO_EDIT_ZOOM_THRESHOLD: f32 = 2.0;
 pub(crate) fn share_button_rect(screen_w: f32, scale: f32) -> ([f32; 2], [f32; 2]) {
     let w = 72.0 * scale;
     let h = 28.0 * scale;
-    let right_panel = ui::right_window::RIGHT_WINDOW_WIDTH * scale;
-    let x = screen_w - right_panel - w - 12.0 * scale;
+    let x = screen_w - w - 12.0 * scale;
     let y = 10.0 * scale;
     ([x, y], [w, h])
 }
@@ -3509,8 +3508,14 @@ impl App {
             };
 
             // Determine recording position
+            let snapped_click_x = snap_to_grid(
+                self.last_canvas_click_world[0],
+                &self.settings,
+                self.camera.zoom,
+                self.bpm,
+            );
             let (rec_x, rec_y) = if let Some(group_id) = selected_group_id {
-                // Record into selected group — position below last member
+                // Record into selected group — position below last member, at click X
                 if let Some(group) = self.groups.get(&group_id) {
                     let mut bottom_y = group.position[1];
                     for mid in &group.member_ids {
@@ -3521,10 +3526,10 @@ impl App {
                             }
                         }
                     }
-                    (group.position[0] + 10.0, bottom_y + 5.0)
+                    (snapped_click_x, bottom_y + 5.0)
                 } else {
                     let world = self.last_canvas_click_world;
-                    (world[0], world[1] - height * 0.5)
+                    (snapped_click_x, world[1] - height * 0.5)
                 }
             } else if let Some(parent_id) = selected_wf_id {
                 if let Some(parent) = self.waveforms.get(&parent_id) {
@@ -3538,11 +3543,11 @@ impl App {
                     (parent.position[0], child_y)
                 } else {
                     let world = self.last_canvas_click_world;
-                    (world[0], world[1] - height * 0.5)
+                    (snapped_click_x, world[1] - height * 0.5)
                 }
             } else {
                 let world = self.last_canvas_click_world;
-                (world[0], world[1] - height * 0.5)
+                (snapped_click_x, world[1] - height * 0.5)
             };
 
             // Determine filename

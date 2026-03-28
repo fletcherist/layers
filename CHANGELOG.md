@@ -1,3 +1,6 @@
+- fix: Join Session input — Cmd+V paste from system clipboard, cursor blink, Cmd+A/Cmd+Backspace (54.3k loc)
+- fix: share button pinned to exact top-right corner; hidden when right panel opens (54.2k loc)
+- 2026-03-28: fix: recording start position now uses canvas click location (snapped) instead of group left edge (54.2k loc)
 - fix: monitoring clipping — CoreAudio aggregate device for OS-level drift compensation; warm-up gate; prefer 48kHz; fade-to-zero on underrun (54.2k loc)
 - fix: audio input device dropdown selection actually applied — AudioRecorder::new_with_device, reconnect on settings change (53.5k loc)
 - 2026-03-27: fix: Windows microphone permission check via registry consent store + toast errors (53.2k loc)

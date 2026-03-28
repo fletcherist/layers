@@ -1514,10 +1514,20 @@ impl CommandPalette {
                     } else {
                         "e.g. https://layers.audio/projects/..."
                     };
-                    (placeholder.to_string(), crate::theme::RuntimeTheme::text_u8(theme.text_dim, 120))
+                    let display = if self.cursor_blink_visible {
+                        format!("{}|", placeholder)
+                    } else {
+                        placeholder.to_string()
+                    };
+                    (display, crate::theme::RuntimeTheme::text_u8(theme.text_dim, 120))
                 } else {
+                    let display = if self.cursor_blink_visible {
+                        format!("{}|", self.session_input)
+                    } else {
+                        self.session_input.clone()
+                    };
                     (
-                        format!("{}|", self.session_input),
+                        display,
                         crate::theme::RuntimeTheme::text_u8(theme.text_primary, 255),
                     )
                 };

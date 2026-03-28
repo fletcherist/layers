@@ -1220,13 +1220,19 @@ impl App {
 
                 if matches!(fader_mode, Some(PaletteMode::ShareSession | PaletteMode::JoinSession)) {
                     let is_share = matches!(fader_mode, Some(PaletteMode::ShareSession));
+                    let cmd = self.cmd_held();
                     match &event.logical_key {
                         Key::Named(NamedKey::Escape) => {
                             self.command_palette = None;
                         }
                         Key::Named(NamedKey::Backspace) => {
                             if let Some(p) = &mut self.command_palette {
-                                p.session_input.pop();
+                                if cmd {
+                                    p.session_input.clear();
+                                } else {
+                                    p.session_input.pop();
+                                }
+                                p.reset_cursor_blink();
                             }
                         }
                         Key::Named(NamedKey::Enter) => {
@@ -1241,9 +1247,35 @@ impl App {
                         Key::Named(NamedKey::Space) => {
                             // spaces not allowed in session names — ignore
                         }
-                        Key::Character(ch) if !self.cmd_held() => {
+                        Key::Character(ch) if cmd => {
+                            match ch.as_ref() {
+                                "v" => {
+                                    // Paste from system clipboard
+                                    #[cfg(feature = "native")]
+                                    if let Some(text) = self.read_system_clipboard_text() {
+                                        let cleaned: String = text.chars()
+                                            .filter(|c| !c.is_whitespace())
+                                            .collect();
+                                        if let Some(p) = &mut self.command_palette {
+                                            p.session_input.push_str(&cleaned);
+                                            p.reset_cursor_blink();
+                                        }
+                                    }
+                                }
+                                "a" => {
+                                    // Select all — clear for easy replacement
+                                    if let Some(p) = &mut self.command_palette {
+                                        p.session_input.clear();
+                                        p.reset_cursor_blink();
+                                    }
+                                }
+                                _ => {}
+                            }
+                        }
+                        Key::Character(ch) if !cmd => {
                             if let Some(p) = &mut self.command_palette {
                                 p.session_input.push_str(ch.as_ref());
+                                p.reset_cursor_blink();
                             }
                         }
                         _ => {}

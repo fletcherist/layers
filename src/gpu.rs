@@ -884,8 +884,8 @@ impl Gpu {
             overlay_instances.extend(ew.build_instances(settings, w, h, self.scale_factor));
         }
 
-        // Share button (floating pill, top-right corner) — always rendered
-        {
+        // Share button (floating pill, top-right corner) — hidden when right panel is open
+        if right_window.is_none() {
             let (sbp, sbs) = crate::share_button_rect(w, self.scale_factor);
             let btn_color = if share_button_hovered {
                 settings.theme.bg_elevated
@@ -1174,8 +1174,8 @@ impl Gpu {
 
         // Context menu text is rendered in the top overlay layer — see top_text_buffers below
 
-        // Share button text
-        {
+        // Share button text — hidden when right panel is open
+        if right_window.is_none() {
             let (sbp, sbs) = crate::share_button_rect(w, scale);
             let te = TextEntry {
                 text: "Share".to_string(),

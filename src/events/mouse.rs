@@ -455,8 +455,8 @@ impl App {
                     return;
                 }
 
-                // Share button click
-                {
+                // Share button click — only when right panel is closed
+                if self.right_window.is_none() {
                     let (scr_w, _scr_h, scale) = self.screen_info();
                     let (sbp, sbs) = crate::share_button_rect(scr_w, scale);
                     let on_btn = self.mouse_pos[0] >= sbp[0]

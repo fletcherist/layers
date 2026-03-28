@@ -1077,4 +1077,10 @@ impl App {
         }
         println!("Deleted selected items");
     }
+
+    /// Read text from the system clipboard (for paste into text fields).
+    #[cfg(feature = "native")]
+    pub(crate) fn read_system_clipboard_text(&self) -> Option<String> {
+        arboard::Clipboard::new().ok()?.get_text().ok()
+    }
 }
